@@ -8,10 +8,12 @@ import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
+import zlib from 'zlib';
 import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions } from './transport.interface.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
+  public currentQR: string | null = null;
   private socket: WASocket | null = null;
   private connected: boolean = false;
   private authDir: string;
@@ -31,8 +33,25 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   public async start(): Promise<void> {
     this.printSafetyWarning();
 
-    // If running in Cloud (Render, Fly.io) with SESSION_CREDS_BASE64, restore creds.json automatically
-    if (process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    // 1. Support complete session bundle (SESSION_BUNDLE_BASE64)
+    if (process.env.SESSION_BUNDLE_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+      try {
+        if (!fs.existsSync(this.authDir)) {
+          fs.mkdirSync(this.authDir, { recursive: true });
+        }
+        const compressed = Buffer.from(process.env.SESSION_BUNDLE_BASE64, 'base64');
+        const jsonStr = zlib.gunzipSync(compressed).toString('utf8');
+        const bundle = JSON.parse(jsonStr);
+        for (const [filename, content] of Object.entries(bundle)) {
+          fs.writeFileSync(path.join(this.authDir, filename), content as string, 'utf8');
+        }
+        console.log(`✅ [WhatsAppBaileys] Si guul leh ayaa loo soo celiyay ${Object.keys(bundle).length} auth files oo buuxa!`);
+      } catch (err: any) {
+        console.error('⚠️ [WhatsAppBaileys] Failed to restore SESSION_BUNDLE_BASE64:', err.message);
+      }
+    }
+    // 2. Fallback to single creds.json (SESSION_CREDS_BASE64)
+    else if (process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
@@ -62,6 +81,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        this.currentQR = qr;
         console.log('\n======================================================');
         console.log('  SCAN THIS QR CODE IN WHATSAPP TO LINK ABARSO AI:   ');
         console.log('======================================================');
@@ -79,6 +99,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
       } else if (connection === 'open') {
         this.connected = true;
+        this.currentQR = null;
         this.lastActivityTimestamp = Date.now();
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
       }
