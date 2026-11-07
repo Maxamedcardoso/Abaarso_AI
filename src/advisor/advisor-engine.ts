@@ -77,8 +77,8 @@ export class StudentAdvisorEngine {
       };
     }
 
-    // 6. Retrieve student's isolated conversation history (max 10 turns to save tokens)
-    const storedHistory = await this.memory.getConversationHistory(student.studentId, 10);
+    // 6. Retrieve student's isolated conversation history (max 14 turns for deep context)
+    const storedHistory = await this.memory.getConversationHistory(student.studentId, 14);
     const aiHistory: ConversationMessage[] = storedHistory.map(m => ({
       role: m.role,
       content: m.content,
