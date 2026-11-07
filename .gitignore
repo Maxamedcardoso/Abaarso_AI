@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables & secrets
+.env
+.env.local
+*.key
+*.pem
+
+# WhatsApp session data (contains private auth credentials)
+baileys_auth_info/
+auth_info_baileys/
+*.session
+
+# Local SQLite databases
+data/*.db
+data/*.db-journal
+data/*.sqlite
+data/*.sqlite3
+
+# Build output
+dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db
+

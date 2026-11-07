@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: abarso-ai-bot
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MESSAGING_MODE
+        value: baileys
+      - key: GEMINI_MODEL
+        value: gemini-flash-lite-latest
+      - key: BOT_PREFIX
+        value: "!abaarso"
+      - key: ALLOWED_GROUPS
+        value: ""
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SESSION_CREDS_BASE64
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        sync: false
+
