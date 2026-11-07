@@ -157,18 +157,21 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const lowerText = text.toLowerCase();
         const hasAbaarsoMention = lowerText.includes('@abaarso') || lowerText.includes('@abarso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso');
 
-        // Allow user to test from their own phone if it starts with !abaarso / !abarso OR if replying to bot
-        const isSelfCommand = msg.key.fromMe && (hasAbaarsoMention || isReplyingToBot);
+        // Allow host to test from their own phone:
+        // - In 1-on-1 private chat: any human message typed by host (not sent by bot)
+        // - In group chat: only if explicitly mentioning @abaarso or replying to bot
+        const isHumanHostMessage = Boolean(msg.key.fromMe && (!msg.key.id || !this.botSentMessageIds.has(msg.key.id)));
+        const isSelfCommand = isHumanHostMessage && (!isGroup || hasAbaarsoMention || isReplyingToBot);
 
-        // Never respond to our own normal messages to avoid infinite loops
+        // Never respond to bot-sent messages or random host group chatter to avoid loops
         if (msg.key.fromMe && !isSelfCommand) {
-          console.log(`ℹ️ [Ignored] Fariintan adiga ayaa taleefankaaga ka dirtay. Haddii aad rabto inaad tijaabiso, ku bilow "@abaarso" ama "!abaarso" ama Reply dheh fariin bot-ka ka timid.`);
           continue;
         }
 
-        // Check if bot was @mentioned in group OR user replied to bot's message
+        // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @abaarso!
+        // In group chats: must be @mentioned, prefixed, or replied to.
         const mentionedJids = contextInfo?.mentionedJid || [];
-        const isMentioned = isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasAbaarsoMention;
+        const isMentioned = !isGroup || isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasAbaarsoMention;
 
         const incoming: IncomingMessage = {
           id: msg.key.id || `baileys_${Date.now()}`,
