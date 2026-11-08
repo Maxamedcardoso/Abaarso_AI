@@ -47,7 +47,17 @@ export class VoiceReplyService {
     const clean = this.cleanTextForSpeech(text);
     if (!clean) return null;
 
-    const voiceName = language === 'en' ? 'en-US-ChristopherNeural' : 'so-SO-MuuseNeural';
+    // Select the best native Edge Neural TTS voice for the detected language
+    let voiceName = 'so-SO-MuuseNeural'; // Default: Somali
+    if (language === 'en') {
+      voiceName = 'en-US-ChristopherNeural'; // English
+    } else if (language === 'ar') {
+      voiceName = 'ar-SA-HamedNeural'; // Arabic
+    } else if (language === 'fr') {
+      voiceName = 'fr-FR-HenriNeural'; // French
+    } else if (language === 'tr') {
+      voiceName = 'tr-TR-AhmetNeural'; // Turkish
+    }
 
     return new Promise((resolve) => {
       const tts = new MsEdgeTTS();

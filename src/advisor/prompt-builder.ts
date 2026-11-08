@@ -1,5 +1,6 @@
 import { DetectedLanguage } from './language-detector.js';
 import { findTechnicalTermsInText } from './somali-dictionary.js';
+import { EmotionResult, EmotionDetector } from './emotion-detector.js';
 
 export interface PromptContext {
   studentName?: string;
@@ -8,6 +9,7 @@ export interface PromptContext {
   userOccupation?: string;  // User's job/profession if shared
   detectedLanguage: DetectedLanguage;
   isGroupChat?: boolean;
+  emotionResult?: EmotionResult; // Detected emotional tone
 }
 
 export class PromptBuilder {
@@ -15,7 +17,7 @@ export class PromptBuilder {
    * Constructs the master system instruction for CARDOSO AI.
    */
   public static buildSystemInstruction(context: PromptContext): string {
-    const { detectedLanguage, isGroupChat, userName, userInterests, userOccupation } = context;
+    const { detectedLanguage, isGroupChat, userName, userInterests, userOccupation, emotionResult } = context;
 
     // Build dynamic personalization block
     let personalizationBlock = '';
@@ -262,16 +264,62 @@ LANGUAGE DIRECTIVE: ENGLISH
 - The user is writing in English. Reply in clear, natural, engaging, and friendly English.
 - Use structured bullet points or clear headings only when the content genuinely needs them.
 `;
-    } else {
+    } else if (detectedLanguage === 'ar') {
+      languageDirective = `
+LANGUAGE DIRECTIVE: ARABIC (العربية)
+- المستخدم يكتب باللغة العربية. رد عليه باللغة العربية الفصيحة أو العامية حسب أسلوبه.
+- اجعل ردودك طبيعية، واضحة، ودودة ومناسبة للسياق.
+- لا تردّ أبداً بلغة أخرى إلا إذا طلب المستخدم ذلك صراحةً.
+- CREATOR INFO IN ARABIC: إذا سأل المستخدم عن من صنع CARDOSO AI، أخبره بما يلي:
+  "🌟 *مُنشئ CARDOSO AI*
+  CARDOSO AI صمّمه وطوّره *محمد داهر (Maxamed Daahir)*، مهندس برمجيات حاصل على درجة البكالوريوس في علوم الحاسوب من جامعة أبارسو التقنية (Abaarso Tech University)، وتخرّج بمرتبة الشرف. 🎓🏆
+  يقيم في مدينة *بربرة* التاريخية الساحلية، في حي *جمالية*. 🌊📍
+  *محمد داهر — يجمع بين المعرفة والابتكار والرؤية التقنية لصناعة مستقبل مختلف.* 🚀"
+`;
+    } else if (detectedLanguage === 'fr') {
+      languageDirective = `
+LANGUAGE DIRECTIVE: FRENCH (FRANÇAIS)
+- L'utilisateur écrit en français. Réponds en français naturel, clair et amical.
+- N'utilise pas d'autre langue sauf si l'utilisateur le demande.
+- CREATOR INFO EN FRANÇAIS: Si on te demande qui a créé CARDOSO AI, réponds:
+  "🌟 *Le Créateur de CARDOSO AI*
+  CARDOSO AI a été conçu et développé par *Mohamed Dahir*, ingénieur logiciel titulaire d'un Bachelor en Informatique de l'Université Abaarso Tech, diplômé avec mention. 🎓🏆
+  Il réside à *Berbera* (quartier Jamalaaye). 🌊📍"
+`;
+    } else if (detectedLanguage === 'tr') {
+      languageDirective = `
+LANGUAGE DIRECTIVE: TURKISH (TÜRKÇE)
+- Kullanıcı Türkçe yazıyor. Doğal, açık ve samimi Türkçe ile yanıt ver.
+- Kullanıcı açıkça istemediği sürece başka bir dil kullanma.
+- CREATOR INFO IN TURKISH: Eğer CARDOSO AI'ı kimin oluşturduğu sorulursa:
+  "🌟 *CARDOSO AI'ın Yaratıcısı*
+  CARDOSO AI, Abaarso Tech Üniversitesi'nden Bilgisayar Bilimi Lisans derecesiyle (onur derecesiyle) mezun olan yazılım mühendisi *Mohamed Dahir* tarafından tasarlanmıştır. 🎓🏆
+  Berbera şehrinin Jamalaaye mahallesinde yaşamaktadır. 🌊📍"
+`;
+    } else if (detectedLanguage === 'mixed') {
       languageDirective = `
 LANGUAGE DIRECTIVE: BILINGUAL MIXED (SOMALI + ENGLISH)
 - The user is using mixed Somali and English.
 - Reply naturally in the same mixed style: concepts in Somali, technical terms and code in English.
 - Do NOT repeat canned introductions. Answer the question directly.
 `;
+    } else {
+      // 'other' — unknown script/language: let Gemini mirror it perfectly
+      languageDirective = `
+LANGUAGE DIRECTIVE: AUTO-MIRROR
+- CRITICAL RULE: Detect exactly what language the user is writing in and reply in that SAME language.
+- Do NOT switch to Somali, English, or Arabic unless that is what the user used.
+- Mirror the user's exact language, dialect, tone, and formality level.
+- If you cannot reliably detect the language, reply in English as a neutral fallback.
+- CREATOR INFO: If asked who created CARDOSO AI, translate the following into the user's language:
+  "CARDOSO AI was created by Mohamed Dahir, a Software Engineer with a Bachelor's in Computer Science from Abaarso Tech University (Honors graduate). He lives in Berbera, Jamalaaye neighborhood."
+`;
     }
 
-    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}`;
+    // ── Emotion-aware instruction block ───────────────────────────────────────
+    const emotionGuidance = emotionResult ? EmotionDetector.getEmotionGuidance(emotionResult) : '';
+
+    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}`;
   }
 
   /**

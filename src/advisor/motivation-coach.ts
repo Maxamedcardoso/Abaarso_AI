@@ -16,7 +16,7 @@ export class MotivationCoach {
   /**
    * Compassionate boundary disclaimer providing real human support resources.
    */
-  public static getCrisisSupportMessage(language: 'so' | 'en' | 'mixed'): string {
+  public static getCrisisSupportMessage(language: string): string {
     if (language === 'en') {
       return `
 *❤️ Compassionate Notice from CARDOSO AI:*

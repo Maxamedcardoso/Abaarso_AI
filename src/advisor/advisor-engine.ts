@@ -12,6 +12,7 @@ import { UserProfiler } from '../services/user-profiler.service.js';
 import { ImageGeneratorService } from '../services/image-generator.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { ResponseCacheService } from '../services/response-cache.service.js';
+import { EmotionDetector } from './emotion-detector.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -52,9 +53,15 @@ export class StudentAdvisorEngine {
     // 2. Classify intent
     const intentResult = IntentClassifier.classify(content);
 
-    // 3. Detect language (Somali, English, Mixed)
+    // 3. Detect language (Somali, English, Arabic, French, Turkish, mixed, or other)
     const langResult = this.detector.detect(content);
     const lang = langResult.language;
+
+    // 3.5. Detect emotional tone — used to shape empathetic AI responses
+    const emotionResult = EmotionDetector.detect(content);
+    if (emotionResult.tone !== 'neutral') {
+      console.log(`💚 [Emotion] Detected: ${emotionResult.tone} (${emotionResult.intensity}) — keywords: [${emotionResult.keywords.join(', ')}]`);
+    }
 
     // 4. Handle Privacy / Right-to-be-Forgotten command
     if (intentResult.intent === 'privacy_forget') {
@@ -211,44 +218,56 @@ export class StudentAdvisorEngine {
       };
     }
 
-    // 7.5. Handle Creator / Author inquiry ("Yaa ku sameeyey?", "Who created you?", "Halkee buu joogaa?")
+    // 7.5. Handle Creator / Author inquiry — reply in the SAME language the user asked
     if (intentResult.intent === 'creator') {
-      const clean = content.toLowerCase().trim();
-      const isEnglish = lang === 'en' || /^(who|whom|where)/i.test(clean) || /(created|made|built|developer|creator|live|located)\s+you/i.test(clean);
-      const isLocationQuery = /(halkee|meelkee|halkuu|xaggee|xagguu|where\s+(does|is))/i.test(clean);
-
-      let creatorReply: string;
-      if (isLocationQuery) {
-        creatorReply = isEnglish
-          ? `📍 *Creator's Location*\n\n*Mohamed Dahir* is based and lives in the historic coastal city of *Berbera*, specifically in the *Jamalaaye neighborhood*! 🌊🏢`
-          : `📍 *Goobta Uu Joogo Qofka I Sameeyay*\n\n*Maxamed Daahir* wuxuu joogaa oo uu ku nool yahay magaalada qadiimiga ah ee *Berbera*, gaar ahaan *Xaafadda Jamalaaye*! 🌊📍`;
-      } else {
-        creatorReply = isEnglish
-          ? `🌟 *MEET THE CREATOR OF CARDOSO AI*\n\nCARDOSO AI was envisioned, designed, and developed by *Mohamed Dahir*, a Software Engineer holding a *Bachelor's Degree in Computer Science* from Abaarso Tech University, where he studied in the *Faculty of Software Engineering and graduated with Honors*. 🎓🏆\n\nHe is an ambitious technology innovator driven by creativity, dedication, and a passion for building intelligent solutions that make technology and knowledge more accessible to everyone. He resides in *Berbera (Jamalaaye neighborhood)*.\n\n*Mohamed Dahir — combining knowledge, innovation, and vision to create technology that makes a difference.* 🚀`
-          : `🌟 *QOFKA KA DAMBEEYA CARDOSO AI*\n\nCARDOSO AI waxaa hindisay, naqshadeeyay, isla markaana horumariyay *Maxamed Daahir*, oo ah Software Engineer haysta shahaadada *Bachelor's Degree in Computer Science*, kana tirsanaa *Faculty of Software Engineering* ee Jaamacadda Abaarso Tech University, halkaas oo uu ku qalin-jabiyay sharaf (Honors). 🎓🏆\n\nWaa hal-abuur leh aragti fog, dadaal iyo jacayl uu u qabo teknoolojiyadda. Himiladiisu waa inuu awoodda Artificial Intelligence iyo teknoolojiyadda casriga ah ka dhigo kuwo bulshada anfaca, aqoontana qof walba u fududeeya. Wuxuu ku nool yahay magaalada *Berbera (Xaafadda Jamalaaye)*.\n\n*Maxamed Daahir — aqoon, hal-abuur iyo himilo teknoolojiyadeed oo mustaqbalka wax ka beddeli karta.* 🚀`;
+      // Somali & English: fast hardcoded polished answers
+      if (lang === 'so') {
+        const isLocationQuery = /(halkee|meelkee|halkuu|xaggee|xagguu)/i.test(content);
+        const creatorReply = isLocationQuery
+          ? `📍 *Goobta Uu Joogo Qofka I Sameeyay*\n\n*Maxamed Daahir* wuxuu joogaa oo uu ku nool yahay magaalada qadiimiga ah ee *Berbera*, gaar ahaan *Xaafadda Jamalaaye*! 🌊📍`
+          : `🌟 *QOFKA KA DAMBEEYA CARDOSO AI*\n\nCARDOSO AI waxaa hindisay, naqshadeeyay, isla markaana horumariyay *Maxamed Daahir*, oo ah Software Engineer haysta shahaadada *Bachelor's Degree in Computer Science*, kana tirsanaa *Faculty of Software Engineering* ee Jaamacadda Abaarso Tech University, halkaas oo uu ku qalin-jabiyay sharaf (Honors). 🎓🏆\n\nWaa hal-abuur leh aragti fog, dadaal iyo jacayl uu u qabo teknoolojiyadda. Wuxuu ku nool yahay magaalada *Berbera (Xaafadda Jamalaaye)*.\n\n*Maxamed Daahir — aqoon, hal-abuur iyo himilo teknoolojiyadeed oo mustaqbalka wax ka beddeli karta.* 🚀`;
+        return { replyText: creatorReply, studentId: student.studentId, intent: 'creator', language: 'so', latencyMs: Date.now() - startTime };
       }
-
-      return {
-        replyText: creatorReply,
-        studentId: student.studentId,
-        intent: 'creator',
-        language: isEnglish ? 'en' : 'so',
-        latencyMs: Date.now() - startTime,
-      };
+      if (lang === 'en') {
+        const isLocationQuery = /(where\s+(does|is)|located|live)/i.test(content);
+        const creatorReply = isLocationQuery
+          ? `📍 *Creator's Location*\n\n*Mohamed Dahir* is based and lives in the historic coastal city of *Berbera*, specifically in the *Jamalaaye neighborhood*! 🌊🏢`
+          : `🌟 *MEET THE CREATOR OF CARDOSO AI*\n\nCARDOSO AI was envisioned, designed, and developed by *Mohamed Dahir*, a Software Engineer holding a *Bachelor's Degree in Computer Science* from Abaarso Tech University, where he studied in the *Faculty of Software Engineering and graduated with Honors*. 🎓🏆\n\nHe is an ambitious technology innovator driven by creativity, dedication, and a passion for building intelligent solutions. He resides in *Berbera (Jamalaaye neighborhood)*.\n\n*Mohamed Dahir — combining knowledge, innovation, and vision to create technology that makes a difference.* 🚀`;
+        return { replyText: creatorReply, studentId: student.studentId, intent: 'creator', language: 'en', latencyMs: Date.now() - startTime };
+      }
+      if (lang === 'ar') {
+        const isLocationQuery = /(أين|فين|مكان|يسكن|يقيم|يعيش)/i.test(content);
+        const creatorReply = isLocationQuery
+          ? `📍 *موقع المبدع*\n\n*محمد داهر (Maxamed Daahir)* يقيم ويسكن في مدينة *بربرة* الساحلية التاريخية، تحديداً في *حي جمالية*! 🌊📍`
+          : `🌟 *مُنشئ CARDOSO AI*\n\nCARDOSO AI صمّمه وطوّره *محمد داهر (Maxamed Daahir)*، مهندس برمجيات حاصل على درجة البكالوريوس في علوم الحاسوب من جامعة *Abaarso Tech University*، من كلية هندسة البرمجيات، وتخرّج بمرتبة الشرف. 🎓🏆\n\nيمتلك رؤية تقنية طموحة، ويسعى لجعل الذكاء الاصطناعي والتقنية في متناول الجميع. يقيم في مدينة *بربرة (حي جمالية)*. 🌊📍\n\n*محمد داهر — يجمع بين المعرفة والابتكار والرؤية لصناعة مستقبل مختلف.* 🚀`;
+        return { replyText: creatorReply, studentId: student.studentId, intent: 'creator', language: 'ar', latencyMs: Date.now() - startTime };
+      }
+      // French, Turkish, or any other language — Gemini translates from the system prompt
+      const creatorSys = PromptBuilder.buildSystemInstruction({ detectedLanguage: lang, isGroupChat: isGroup, emotionResult });
+      const creatorPrompt = `The user wants to know who created CARDOSO AI. Reply warmly in the SAME language the user is using (detected: ${lang}). Include: Mohamed Dahir, Software Engineer, Bachelor's CS with Honors, Abaarso Tech University, Faculty of Software Engineering, lives in Berbera Jamalaaye. Format nicely for WhatsApp with emojis.`;
+      const aiCreator = await this.ai.generateResponse(creatorPrompt, [], { systemInstruction: creatorSys, studentId: student.studentId });
+      return { replyText: aiCreator.text, studentId: student.studentId, intent: 'creator', language: lang, latencyMs: Date.now() - startTime };
     }
 
-    // 8. Handle Help command
+    // 8. Handle Help command — reply in user's language
     if (intentResult.intent === 'help') {
-      const helpText = lang === 'en'
-        ? `*🌟 CARDOSO AI — Your Intelligent Assistant*\nI can help you with anything — ask me freely!\n• Questions, advice, explanations on any topic.\n• Science, math, history, religion, technology, health, relationships, and more.\n• 🎙️ Voice notes, 🖼️ images, and 📄 documents — I can read them!\n• 🌐 Live web search for news, sports scores, exchange rates and more.\n• ⏰ Set reminders (say "remind me in 30 minutes to study").\n• Somali, English, or mixed language — I adapt to you.\n\n*Commands:*\n• \`!tirtir\` or \`!clear\` — Delete your conversation history.`
-        : `*🌟 CARDOSO AI — La-Taliyahaaga Caqliga*\nWaxaad i weydiin kartaa wax kasta — xoriyad buuxda!\n• Su'aalo, talo, sharaxaad mawduuc kasta ah.\n• Sayniska, xisaabta, taariikhda, diinta, teknoolajiyada, caafimaadka, xiriirka, iwm.\n• 🎙️ Codadka, 🖼️ Sawirrada, iyo 📄 Dukumentiyada — waan akhriyaa!\n• 🌐 Baadhi tooska ah wararka, cayaaraha, sarifka lacagta, iwm.\n• ⏰ Xasuusin-dejin (dheh "i xasuusi 30 daqiiqo gudahood").\n• Af-Soomaali, Ingiriis, ama isku qas — waxaan kuu qabsadaa.\n\n*Awaamiirta:*\n• \`!tirtir\` ama \`!clear\` — Si aad u tirtirto dhammaan xogtaada wada-hadalka.`;
-      return {
-        replyText: helpText,
-        studentId: student.studentId,
-        intent: 'help',
-        language: lang,
-        latencyMs: Date.now() - startTime,
-      };
+      if (lang === 'so') {
+        const helpText = `*🌟 CARDOSO AI — La-Taliyahaaga Caqliga*\nWaxaad i weydiin kartaa wax kasta — xoriyad buuxda!\n• Su'aalo, talo, sharaxaad mawduuc kasta ah.\n• Sayniska, xisaabta, taariikhda, diinta, teknoolajiyada, caafimaadka, xiriirka, iwm.\n• 🎙️ Codadka, 🖼️ Sawirrada, iyo 📄 Dukumentiyada — waan akhriyaa!\n• 🌐 Baadhi tooska ah wararka, cayaaraha, sarifka lacagta, iwm.\n• ⏰ Xasuusin-dejin (dheh "i xasuusi 30 daqiiqo gudahood").\n• Af-Soomaali, Ingiriis, Carabi — waxaan kuu qabsadaa.\n\n*Awaamiirta:*\n• \`!tirtir\` ama \`!clear\` — Si aad u tirtirto dhammaan xogtaada wada-hadalka.`;
+        return { replyText: helpText, studentId: student.studentId, intent: 'help', language: lang, latencyMs: Date.now() - startTime };
+      }
+      if (lang === 'en') {
+        const helpText = `*🌟 CARDOSO AI — Your Intelligent Assistant*\nI can help you with anything — ask me freely!\n• Questions, advice, explanations on any topic.\n• Science, math, history, religion, technology, health, relationships, and more.\n• 🎙️ Voice notes, 🖼️ images, and 📄 documents — I can read them!\n• 🌐 Live web search for news, sports scores, exchange rates and more.\n• ⏰ Set reminders (say "remind me in 30 minutes to study").\n• Somali, English, Arabic, French — I adapt to you.\n\n*Commands:*\n• \`!tirtir\` or \`!clear\` — Delete your conversation history.`;
+        return { replyText: helpText, studentId: student.studentId, intent: 'help', language: lang, latencyMs: Date.now() - startTime };
+      }
+      if (lang === 'ar') {
+        const helpText = `*🌟 CARDOSO AI — مساعدك الذكي*\nيمكنك أن تسألني عن أي شيء — بحرية تامة!\n• أسئلة، نصائح، شرح لأي موضوع.\n• العلوم، الرياضيات، التاريخ، الدين، التقنية، الصحة، العلاقات، وأكثر.\n• 🎙️ الرسائل الصوتية، 🖼️ الصور، و📄 المستندات — أستطيع قراءتها!\n• 🌐 بحث مباشر عن الأخبار، المباريات، أسعار الصرف.\n• ⏰ تذكيرات — قل "ذكّرني بعد 30 دقيقة".\n• العربية، الصومالية، الإنجليزية — أتكيّف معك.\n\n*الأوامر:*\n• \`!tirtir\` أو \`!clear\` — لحذف سجل محادثتك.`;
+        return { replyText: helpText, studentId: student.studentId, intent: 'help', language: lang, latencyMs: Date.now() - startTime };
+      }
+      // Other language — Gemini generates help in that language
+      const helpSys = PromptBuilder.buildSystemInstruction({ detectedLanguage: lang, isGroupChat: isGroup, emotionResult });
+      const helpPrompt = `Generate a WhatsApp-formatted help/feature list for CARDOSO AI in the user's language (detected: ${lang}). Include: answers any question, reads voice notes/images/documents, live web search, reminders, multi-language. Use bullet points and bold headers. Keep it clean and friendly.`;
+      const aiHelp = await this.ai.generateResponse(helpPrompt, [], { systemInstruction: helpSys, studentId: student.studentId });
+      return { replyText: aiHelp.text, studentId: student.studentId, intent: 'help', language: lang, latencyMs: Date.now() - startTime };
     }
 
     // 8.5. Detect and persist user profile data from this message
@@ -275,13 +294,14 @@ export class StudentAdvisorEngine {
       currentStudent = { ...student, ...profileUpdates };
     }
 
-    // 9. Build system instruction
+    // 9. Build system instruction (includes language directive + emotion guidance)
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
       userName: currentStudent.firstName,
       userInterests: currentStudent.interests,
       userOccupation: currentStudent.occupation,
+      emotionResult,
     });
 
     // 10. Enrich prompt with glossary hints and optional web search context
