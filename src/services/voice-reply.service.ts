@@ -76,13 +76,13 @@ export class VoiceReplyService {
     clean = clean.replace(/\s+/g, ' ').trim();
 
     // Allow comprehensive, full-length voice explanations as requested by user.
-    // Up to 2,500 characters allows natural 3-4 minute in-depth voice notes without artificial cutoff.
-    if (clean.length > 2500) {
-      const sentenceEnd = clean.slice(0, 2500).lastIndexOf('.');
-      if (sentenceEnd > 1500) {
+    // Up to 4,000 characters allows natural 4-6 minute in-depth voice notes without artificial cutoff.
+    if (clean.length > 4000) {
+      const sentenceEnd = clean.slice(0, 4000).lastIndexOf('.');
+      if (sentenceEnd > 2500) {
         clean = clean.slice(0, sentenceEnd + 1);
       } else {
-        clean = clean.slice(0, 2500) + '...';
+        clean = clean.slice(0, 4000) + '...';
       }
     }
 
@@ -131,14 +131,14 @@ export class VoiceReplyService {
       const tts = new MsEdgeTTS();
       let isResolved = false;
 
-      // 45-second timeout per attempt to allow full-length voice notes to stream completely
+      // 60-second timeout per attempt to allow full-length extended voice notes to stream completely
       const timer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
           try { tts.close(); } catch {}
           resolve(null);
         }
-      }, 45000);
+      }, 60000);
 
       (async () => {
         try {

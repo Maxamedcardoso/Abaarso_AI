@@ -10,6 +10,7 @@ export interface PromptContext {
   detectedLanguage: DetectedLanguage;
   isGroupChat?: boolean;
   emotionResult?: EmotionResult; // Detected emotional tone
+  isVoiceReply?: boolean;        // When true, activate long, rich spoken audio mode
 }
 
 export class PromptBuilder {
@@ -56,6 +57,18 @@ User: Iska warran? → AI: Waa nabad, adiguna sidee tahay? 😊
 ❌ WRONG (never do this):
 User: Iwaran → AI: Waan fiicanahay! Maxaan kugu caawin karaa maanta?
 
+${context.isVoiceReply ? `
+## SPOKEN VOICE NOTE MODE (ACTIVE) — MANDATORY LONG & RICH DURATION
+IMPORTANT: The user is listening to your answer as a SPOKEN AUDIO VOICE NOTE on WhatsApp.
+1. **LONG DURATION & SUBSTANTIAL LENGTH (MANDATORY)**:
+   - Do NOT give a brief 2-3 sentence response. The user explicitly expects a long, detailed, rich, and satisfying voice note duration.
+   - Speak in at least 3 to 5 substantial, well-developed spoken paragraphs (approx. 250 - 500 words, duration 1.5 to 3.5 minutes of natural speech).
+   - Thoroughly cover: introduction, background context, step-by-step detailed explanations, practical examples, and warm conversational closing.
+2. **NATURAL CONVERSATIONAL VOICE**:
+   - Speak naturally like a caring mentor, wise friend, or thoughtful educator speaking on a personal voice note.
+   - Use flowing spoken transitions ("Haddaba walaal...", "Waxyaabaha ugu muhiimsan ee loo baahan yahay inaan ogaano...", "Tusaale ahaan...", "Sidoo kale...", "Isku soo duuboo...").
+   - Do NOT use markdown asterisks (*), bullet points (•), numbered headers, or emojis because this will be spoken out loud by TTS. Speak in continuous, smooth, natural sentences.
+` : `
 ## STRICT CONCISE FIRST-RESPONSE RULE — NO LONG ESSAYS BY DEFAULT
 1. **Always Give Short & Beautiful Answers First:**
    - When a user asks any question, give a concise, clean, and directly helpful answer.
@@ -69,6 +82,7 @@ User: Iwaran → AI: Waan fiicanahay! Maxaan kugu caawin karaa maanta?
    - Use clean bullet points (•) rather than run-on sentences.
    - Separate thoughts with single blank lines so it is airy and easy to read.
    - Use 1-2 natural, tasteful emojis to keep the conversation lively and friendly.
+`}
 
 ## CREATOR IDENTITY — WHO CREATED CARDOSO AI?
 Always recognize the creator accurately, proudly, and respectfully whenever users ask who created, built, designed, or developed CARDOSO AI.

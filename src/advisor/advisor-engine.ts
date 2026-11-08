@@ -136,7 +136,7 @@ export class StudentAdvisorEngine {
     // 5.55. Handle pure Voice-Note request (e.g. "@cod", "!cod", "@cardoso cod isoo duub")
     // If user asked a specific question with @cod (e.g. "@cod sidee wax loo bartaa?"),
     // we want Gemini to answer the actual question, then synthesize voice at step 11.5!
-    // We only trigger this pure short greeting reply if there is NO specific question attached.
+    // We only trigger this pure greeting reply if there is NO specific question attached.
     const cleanNoCod = content.replace(/@?cod\b/gi, '').replace(/[!.,?،\s]/g, '').trim();
     const isPureVoiceRequest =
       !media &&
@@ -144,9 +144,14 @@ export class StudentAdvisorEngine {
        /^(?:@?cod|!cod|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan\s*(?:ku\s+jawaab)?|cod\s+iigu\s+(?:soo\s+)?jawaab|codka?\s*(?:ah\s+ku\s+jawaab)?|voice\s+note|send\s+(?:a\s+)?voice(?:\s+note)?)[.!،\s]*$/i.test(content.trim()));
     if (isPureVoiceRequest) {
       const voicePrompt = lang === 'en'
-        ? 'Give me a warm, natural, engaging conversational spoken reply welcoming the user and asking how you can help them.'
-        : 'Jawaab diirran, dabiici ah, oo maqal ahaan u wanaagsan oo Af-Soomaali ah bixi, adigoo qofka si wanaagsan u soo dhaweynaya una weydiinaya waxa uu u baahan yahay.';
-      const sysInstruction = `You are CARDOSO AI. Speak naturally, warmly, and thoroughly in a conversational voice-note tone. Reply in ${lang === 'en' ? 'English' : 'Somali'}.`;
+        ? 'You are recording a rich, warm, engaging spoken WhatsApp voice note welcoming the user (duration around 45 to 60 seconds). Greet them with great warmth and respect, introduce yourself as CARDOSO AI created by Mohamed Dahir, describe the wide range of questions and topics you can help with (learning, advice, science, general knowledge, web searches, languages, images), ask how their day is going, and invite them to speak or ask about anything on their mind. Speak naturally in 3 substantial conversational paragraphs.'
+        : 'Waxaad duubaysaa cod WhatsApp ah oo diirran, qoto dheer oo soconaya muddo fiican (qiyaastii 45 ilaa 60 ilbiriqsi). Qofka si heer sare ah oo saaxiibtinimo leh u soo dhawee, is-bar adigoo ah CARDOSO AI oo uu sameeyay Maxamed Daahir, u sharax waxyaabaha ballaadhan ee aad qaban karto (suaalo kasta, cilmiga, waxbarashada, talooyinka, baadhista tooska ah ee internet-ka, sawirrada), weydii sida uu maanta yahay, kuna dhiirrigeli inuu suxool kasta ama mawduuc kasta cod ama qoraal kuula wadaago. U hadal si dabiici ah oo cod maqal ah u macaan oo 3 cutub oo faahfaahsan ka kooban.';
+      const sysInstruction = PromptBuilder.buildSystemInstruction({
+        detectedLanguage: lang,
+        isGroupChat: isGroup,
+        isVoiceReply: true,
+        emotionResult,
+      });
       const aiVoiceResult = await this.ai.generateResponse(voicePrompt, [], { systemInstruction: sysInstruction, studentId: student.studentId });
       const voiceReply = await VoiceReplyService.synthesizeVoice(aiVoiceResult.text, lang);
       return {
@@ -354,7 +359,17 @@ export class StudentAdvisorEngine {
       currentStudent = { ...student, ...profileUpdates };
     }
 
-    // 9. Build system instruction (includes language directive + emotion guidance)
+    // 8.9. Detect early whether this response will be delivered as an audio voice note
+    // Triggers voice reply when:
+    //   • input.forceVoiceReply is true (e.g. user invoked with @cod or !cod)
+    //   • User sent an audio/voice note (media.type === 'audio')
+    //   • User explicitly asked for voice in Somali or English text
+    const wantsVoice =
+      Boolean(input.forceVoiceReply) ||
+      media?.type === 'audio' ||
+      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
+
+    // 9. Build system instruction (includes language directive + emotion guidance + extended voice mode)
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
@@ -362,10 +377,24 @@ export class StudentAdvisorEngine {
       userInterests: currentStudent.interests,
       userOccupation: currentStudent.occupation,
       emotionResult,
+      isVoiceReply: wantsVoice,
     });
 
     // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context
     let enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
+
+    // Spoken Voice Note Duration Extension:
+    // If user requested voice, instruct Gemini to provide a rich, detailed, full-length spoken explanation.
+    if (wantsVoice) {
+      enrichedPrompt = `[🎙️ MANDATORY EXTENDED VOICE NOTE MODE — LONG DURATION REQUIRED]:
+The user is listening to your response as an AUDIO VOICE NOTE on WhatsApp.
+The user explicitly wants a LONGER, SUBSTANTIAL, FULL-LENGTH DURATION (not a brief 2-sentence reply).
+- You MUST provide a rich, detailed, comprehensive explanation (at least 250 - 450 words, 3 to 5 thorough spoken paragraphs).
+- Provide background, core concepts, detailed points/examples, and thoughtful closing remarks.
+- Do NOT abbreviate or cut your answer short. Speak fully so the voice note lasts 1.5 to 3 minutes!
+
+${enrichedPrompt}`;
+    }
 
     // Audio Understanding Enhancement:
     // If incoming message contains an audio voice note, instruct Gemini with high-accuracy speech comprehension.
@@ -407,6 +436,7 @@ You are listening directly to an authentic human voice message (spoken audio).
     const aiResult = await this.ai.generateResponse(enrichedPrompt, aiHistory, {
       systemInstruction,
       studentId: student.studentId,
+      maxOutputTokens: wantsVoice ? 2000 : 1000,
       media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
 
@@ -419,27 +449,6 @@ You are listening directly to an authentic human voice message (spoken audio).
     // Also respond with voice when user is replying in a group via voice (media.type === 'audio').
     let replyMedia: OutgoingMedia | undefined;
 
-    // ─── Voice Request Detection ───────────────────────────────────────────────
-    // Triggers voice reply when:
-    //   • input.forceVoiceReply is true (e.g. user invoked with @cod or !cod)
-    //   • User sent an audio/voice note (media.type === 'audio')
-    //   • User explicitly asked for voice in Somali or English text
-    //
-    // Somali phrases covered:
-    //   "@cod" / "!cod"       → short trigger requested by user!
-    //   "cod isoo duub"       → record me a voice
-    //   "cod ii duub"         → record voice for me
-    //   "cod ahaan"           → in voice / as voice
-    //   "cod ku jawaab"       → reply in voice
-    //   "cod iigu soo jawaab" → reply to me by voice
-    //   "cod ka hadal"        → speak by voice
-    //   "codka"               → (the) voice
-    //   "voice note"          → English
-    //   "reply in voice"      → English
-    const wantsVoice =
-      Boolean(input.forceVoiceReply) ||
-      media?.type === 'audio' ||
-      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
     if (wantsVoice) {
       console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
       try {
