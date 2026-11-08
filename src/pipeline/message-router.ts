@@ -155,31 +155,41 @@ export class MessageRouter {
     }
 
     // 5. Group Mention / Prefix Filter
-    // In groups, only respond if @mentioned (@cardoso), short voice trigger (@cod / !cod), prefixed, or isMentioned=true
+    // In groups, only respond if @mentioned (@cardoso), short triggers (@cod, @sawir), prefixed, or isMentioned=true
     // (isMentioned is set to true by the transport when user swipe-replies to bot's message).
     // For voice notes (media with no text): isMentioned=true is the only signal — allow it through.
     const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
-    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!cod') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || hasVoiceCommand;
+    const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
+    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!cod') || lowerText.startsWith('!sawir') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
+    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || hasVoiceCommand || hasImageCommand;
     const isMediaWithNoText = !text && !!(message as any).media;
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
-      // Always pass through if isMentioned or hasVoiceCommand (covers voice note replies and @cod trigger)
+      // Always pass through if isMentioned or has special command (covers voice note replies, @cod, and @sawir trigger)
       if (!hasMention && !hasPrefix && !isMediaWithNoText) {
-        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso', '@cod' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
+        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso', '@cod', '@sawir' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
         return { handled: false, reason: 'Group message without mention or prefix' };
       }
     }
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!cardoso', '@cardoso', '!cod', '@cod', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '@cardoso', '!cod', '@cod', '!sawir', '@sawir', '!image', '@image', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
-    // Also strip inline mentions like "@cardoso" and "@cod"
-    queryText = queryText.replace(/@cardoso\b/gi, '').replace(/@cod\b/gi, '').trim();
+    // Also strip inline mentions like "@cardoso", "@cod", "@sawir"
+    queryText = queryText.replace(/@cardoso\b/gi, '').replace(/@cod\b/gi, '').replace(/@sawir\b/gi, '').replace(/@image\b/gi, '').trim();
+
+    // If user initiated with @sawir or !sawir, preserve image command context
+    if (hasImageCommand) {
+      if (!queryText) {
+        queryText = '@sawir';
+      } else {
+        queryText = 'sawir ' + queryText;
+      }
+    }
 
     // For voice notes (media with empty text), set a meaningful placeholder so the AI engine
     // knows to transcribe/respond to the audio. The actual audio bytes are in message.media.
@@ -229,9 +239,15 @@ export class MessageRouter {
     if (advisorResult.replyMedia && transport.sendMedia) {
       if (advisorResult.replyMedia.type === 'image') {
         // Send generated image with caption
-        await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
+        const sent = await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
           replyToMessageId: message.id,
         });
+        if (!sent) {
+          console.warn('[Router] Image upload failed, notifying user with fallback');
+          await transport.sendMessage(message.chatId, `⚠️ ${advisorResult.replyText}\n\n*(Cilad yar oo xidhiidhka ah ayaa ku timid soo diridda sawirka, fadlan mar kale tijaabi)*`, {
+            replyToMessageId: message.id,
+          });
+        }
       } else if (advisorResult.replyMedia.type === 'audio') {
         // Send ONLY the voice note (no duplicated text message, as explicitly requested by user)
         const sent = await transport.sendMedia(message.chatId, advisorResult.replyMedia, {

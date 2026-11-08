@@ -185,10 +185,44 @@ export class StudentAdvisorEngine {
       };
     }
 
-    // 5.6. Handle Image Generation request ("ii samee sawir...", "create an image of...")
+    // 5.6. Handle Image Generation request ("@sawir...", "!sawir...", "ii samee sawir...")
     if (ImageGeneratorService.isImageRequest(content)) {
       const prompt = ImageGeneratorService.extractPrompt(content);
-      const generated = await ImageGeneratorService.generateImage(prompt);
+
+      // If user typed only "@sawir" without a description, guide them warmly with examples
+      if (!prompt || prompt.length < 2) {
+        const guideText = lang === 'en'
+          ? `🎨 *How to create AI Images with CARDOSO AI:*\nType *@sawir* followed by what you want to see!\n\n*Examples:*\n• *@sawir a majestic lion in the savanna*\n• *@sawir a futuristic red sports car*\n• *@sawir Berbera coastal city sunset*\n• *@sawir cute kitten playing*\n\nTry it right now! ✨`
+          : `🎨 *Sida Sawir Loogu Sameeyo CARDOSO AI:*\nQor *@sawir* iyo waxa aad rabto in laguu sawiro!\n\n*Tusaalayaal:*\n• *@sawir libaax weyn oo duurka jooga*\n• *@sawir baabuur cas oo xawaare ku socda*\n• *@sawir xeebta Berbera xilliga qorrax-u-dhaca*\n• *@sawir arday buug akhrinaya*\n\nToos hadda u tijaabi! ✨`;
+
+        return {
+          replyText: guideText,
+          studentId: student.studentId,
+          intent: 'image_generation',
+          language: lang,
+          latencyMs: Date.now() - startTime,
+        };
+      }
+
+      // Translate non-English prompts to rich English descriptors for Flux/SDXL photorealistic output
+      let renderPrompt = prompt;
+      if (lang !== 'en') {
+        try {
+          const tr = await this.ai.generateResponse(
+            `Translate this image description into a rich, vivid English prompt for an AI image generator (Flux/SDXL). Return ONLY the English prompt in one sentence, no quotes or meta text:\n"${prompt}"`,
+            [],
+            { temperature: 0.2, maxOutputTokens: 60 }
+          );
+          if (tr?.text && tr.text.length > 3 && !tr.text.includes('Error')) {
+            renderPrompt = tr.text.replace(/["\n]/g, '').trim();
+          }
+        } catch {
+          // If translation fails, use original prompt
+          renderPrompt = prompt;
+        }
+      }
+
+      const generated = await ImageGeneratorService.generateImage(renderPrompt);
       if (generated) {
         const caption = lang === 'en'
           ? `🎨 *Generated Image:* "${prompt}"\nCreated by CARDOSO AI ✨`
@@ -206,6 +240,19 @@ export class StudentAdvisorEngine {
             mimeType: generated.mimeType,
             caption,
           },
+        };
+      } else {
+        // If image server timed out, inform user clearly so they can retry
+        const retryNotice = lang === 'en'
+          ? `⚠️ *[CARDOSO AI]*: Could not generate the image at this moment due to heavy server traffic. Please try again: *@sawir ${prompt}* ✨`
+          : `⚠️ *[CARDOSO AI]*: Ma suurtagelin in sawirka la soo saaro xilligan sababtoo ah server-ka ayaa mashquul ah. Fadlan mar kale tijaabi: *@sawir ${prompt}* ✨`;
+
+        return {
+          replyText: retryNotice,
+          studentId: student.studentId,
+          intent: 'image_generation',
+          language: lang,
+          latencyMs: Date.now() - startTime,
         };
       }
     }

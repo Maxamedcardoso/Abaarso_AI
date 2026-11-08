@@ -307,13 +307,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           continue;
         }
 
-        // Detect bot triggers: '@cardoso', '!cardoso', or short voice triggers '@cod', '!cod'
+        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', or image trigger '@sawir'/'!sawir'
         const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
-        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso') || hasVoiceCommand;
+        const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
+        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso') || hasVoiceCommand || hasImageCommand;
 
         // 4. Strict fromMe Handling:
         // Any message sent by the bot or from the host phone (fromMe):
-        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso', '@cardoso', or '@cod' to test the bot.
+        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso', '@cardoso', '@cod', or '@sawir' to test the bot.
         if (msg.key.fromMe) {
           if (!hasCardosoMention) {
             continue;
@@ -467,22 +468,42 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         let sentMediaMsg: any = undefined;
 
         if (media.type === 'image') {
-          sentMediaMsg = await this.socket!.sendMessage(
-            chatId,
-            { image: media.dataBuffer, caption: media.caption },
-            rawQuoted ? { quoted: rawQuoted } : undefined
-          );
+          try {
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              { image: media.dataBuffer, caption: media.caption },
+              rawQuoted ? { quoted: rawQuoted } : undefined
+            );
+          } catch (quotedErr) {
+            console.warn('[WhatsAppBaileys] Quoted image send failed, falling back to direct send:', quotedErr);
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              { image: media.dataBuffer, caption: media.caption }
+            );
+          }
         } else if (media.type === 'audio') {
           // Send universally playable audio note for WhatsApp (MP3 format natively supported across iOS, Android, and Web)
-          sentMediaMsg = await this.socket!.sendMessage(
-            chatId,
-            {
-              audio: media.dataBuffer,
-              mimetype: media.mimeType || 'audio/mpeg',
-              fileName: 'cardoso-codka.mp3',
-            },
-            rawQuoted ? { quoted: rawQuoted } : undefined
-          );
+          try {
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              {
+                audio: media.dataBuffer,
+                mimetype: media.mimeType || 'audio/mpeg',
+                fileName: 'cardoso-codka.mp3',
+              },
+              rawQuoted ? { quoted: rawQuoted } : undefined
+            );
+          } catch (quotedErr) {
+            console.warn('[WhatsAppBaileys] Quoted audio send failed, falling back to direct send:', quotedErr);
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              {
+                audio: media.dataBuffer,
+                mimetype: media.mimeType || 'audio/mpeg',
+                fileName: 'cardoso-codka.mp3',
+              }
+            );
+          }
         }
 
         // Track bot-sent media IDs so students can quote or reply to them in groups
