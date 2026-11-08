@@ -11,6 +11,7 @@ import { MessageMedia, OutgoingMedia } from '../transports/transport.interface.j
 import { UserProfiler } from '../services/user-profiler.service.js';
 import { ImageGeneratorService } from '../services/image-generator.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
+import { ResponseCacheService } from '../services/response-cache.service.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -134,15 +135,20 @@ export class StudentAdvisorEngine {
       content: m.content,
     }));
 
-    // 7. Handle pure greeting intent — always short reply, regardless of history
+    // 7. Handle pure greeting intent — with warm onboarding for first-time users
     if (intentResult.intent === 'greeting') {
       const clean = content.toLowerCase().trim();
+      const isFirstTime = student.totalMessagesCount <= 1;
       let greetingReply: string;
 
       if (/^(hello|hi|hey|how\s+are\s+you|good\s+(morning|afternoon|evening)|wassup|whats\s*up|howdy)/i.test(clean)) {
-        greetingReply = 'Hi! How are you? 😊';
+        greetingReply = isFirstTime
+          ? 'Hi! Welcome to *CARDOSO AI*! 🌟 I am your smart personal companion — feel free to ask me anything, send voice notes, photos, or ask me to generate images. How are you? 😊'
+          : 'Hi! How are you? 😊';
       } else if (/^(asc|assalamu|assalaamu|salaam|salaan)/i.test(clean)) {
-        greetingReply = 'Wcs! Waan fiicanahay. Adiguna? 😊';
+        greetingReply = isFirstTime
+          ? 'Wcs! Waan fiicanahay, ku soo dhawow *CARDOSO AI*! 🌟 Waxaan ahay saaxiibkaaga caqliga badan — i weydii wax kasta, iigu soo dir codadka/sawirrada, ama iga codso inaan sawir kuu sameeyo. Adiguna sidee tahay? 😊'
+          : 'Wcs! Waan fiicanahay. Adiguna? 😊';
       } else if (/^(iska\s*warr?an|iskawarr?an)/i.test(clean)) {
         greetingReply = 'Waa nabad, adiguna sidee tahay? 😊';
       } else {
@@ -244,12 +250,31 @@ export class StudentAdvisorEngine {
       }
     }
 
+    // 10.5. Check Smart Response Cache (Instant response, saves quota for mass users)
+    if (!media && ResponseCacheService.isCacheable(content)) {
+      const cached = ResponseCacheService.get(content, lang);
+      if (cached) {
+        return {
+          replyText: cached,
+          studentId: student.studentId,
+          intent: intentResult.intent,
+          language: lang,
+          latencyMs: Date.now() - startTime,
+        };
+      }
+    }
+
     // 11. Call AI provider (with optional media attachment for voice/image/document)
     const aiResult = await this.ai.generateResponse(enrichedPrompt, aiHistory, {
       systemInstruction,
       studentId: student.studentId,
       media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
+
+    // Store successful generic responses in cache for subsequent users
+    if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error')) {
+      ResponseCacheService.set(content, lang, aiResult.text);
+    }
 
     // 11.5. Synthesize voice reply if user sent a voice note or requested voice
     let replyMedia: OutgoingMedia | undefined;

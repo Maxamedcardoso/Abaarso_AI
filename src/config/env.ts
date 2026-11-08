@@ -9,6 +9,7 @@ export interface AppConfig {
   nodeEnv: string;
   gemini: {
     apiKey: string;
+    apiKeys: string[];
     model: string;
     dailyLimit: number;
     rpmLimit: number;
@@ -57,9 +58,13 @@ function parseAllowedGroups(raw?: string): string[] {
 export const config: AppConfig = {
   nodeEnv: process.env.NODE_ENV || 'development',
   gemini: {
-    apiKey: process.env.GEMINI_API_KEY || '',
+    apiKey: process.env.GEMINI_API_KEY || (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',')[0].trim() : ''),
+    apiKeys: (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean),
     model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_LATEST,
-    dailyLimit: parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS,
+    dailyLimit: (parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS) * Math.max(1, (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',').filter(Boolean).length : 1)),
     rpmLimit: parseInt(process.env.REQUESTS_PER_MINUTE_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_RPM,
   },
   llamaFallback: {

@@ -5,31 +5,51 @@ import { executeWithRetry } from './retry-handler.js';
 
 export class GeminiProvider implements IAIProvider {
   public readonly name = 'gemini';
-  private apiKey: string;
+  private apiKeys: string[] = [];
+  private currentKeyIndex: number = 0;
   private modelName: string;
   private quotaTracker: QuotaTracker;
-  private client: GoogleGenerativeAI | null = null;
+  private clients: GoogleGenerativeAI[] = [];
 
-  constructor(apiKey: string, modelName: string = 'gemini-2.0-flash', quotaTracker?: QuotaTracker) {
-    this.apiKey = apiKey;
+  constructor(apiKeyOrKeys: string | string[], modelName: string = 'gemini-flash-latest', quotaTracker?: QuotaTracker) {
+    if (Array.isArray(apiKeyOrKeys)) {
+      this.apiKeys = apiKeyOrKeys.filter(Boolean);
+    } else if (apiKeyOrKeys) {
+      this.apiKeys = [apiKeyOrKeys];
+    }
     this.modelName = modelName;
     this.quotaTracker = quotaTracker || new QuotaTracker();
+    this.initClients();
+  }
 
-    if (this.apiKey) {
-      this.client = new GoogleGenerativeAI(this.apiKey);
+  private initClients(): void {
+    this.clients = this.apiKeys.map(k => new GoogleGenerativeAI(k));
+  }
+
+  public rotateKey(): boolean {
+    if (this.clients.length > 1) {
+      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.clients.length;
+      console.log(`🔄 [GeminiProvider] Auto-rotated to API key #${this.currentKeyIndex + 1} of ${this.clients.length}`);
+      return true;
     }
+    return false;
   }
 
   public get isAvailable(): boolean {
-    return Boolean(this.apiKey && this.client);
+    return this.clients.length > 0;
+  }
+
+  public get currentClient(): GoogleGenerativeAI | null {
+    return this.clients[this.currentKeyIndex] || null;
   }
 
   public async initialize(): Promise<boolean> {
-    if (!this.apiKey) {
+    if (this.apiKeys.length === 0) {
       console.warn('[GeminiProvider] Warning: GEMINI_API_KEY is not set. Gemini AI provider is disabled.');
       return false;
     }
-    this.client = new GoogleGenerativeAI(this.apiKey);
+    this.initClients();
+    console.log(`🔑 [GeminiProvider] Initialized with ${this.clients.length} API key(s) in rotation pool.`);
     return true;
   }
 
@@ -51,7 +71,7 @@ export class GeminiProvider implements IAIProvider {
       };
     }
 
-    if (!this.isAvailable || !this.client) {
+    if (!this.isAvailable || !this.currentClient) {
       return {
         text: '⚠️ [CARDOSO AI Configuration]: Google Gemini API key is missing or invalid. Please configure GEMINI_API_KEY in your .env file.',
         provider: 'gemini',
@@ -74,7 +94,8 @@ export class GeminiProvider implements IAIProvider {
     try {
       const responseText = await executeWithRetry(
         async () => {
-          const modelInstance = this.client!.getGenerativeModel({
+          const client = this.currentClient!;
+          const modelInstance = client.getGenerativeModel({
             model: this.modelName,
             systemInstruction,
             generationConfig: {
@@ -109,6 +130,10 @@ export class GeminiProvider implements IAIProvider {
         {
           onRetry: (attempt, delayMs, err) => {
             console.warn(`[GeminiProvider] Retry attempt ${attempt} in ${delayMs}ms due to: ${err.message}`);
+            // If rate-limited or quota hit, rotate to next key in pool
+            if (err.message.includes('429') || err.message.includes('quota') || err.message.includes('ResourceExhausted')) {
+              this.rotateKey();
+            }
           },
         }
       );

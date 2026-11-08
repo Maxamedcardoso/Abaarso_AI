@@ -12,6 +12,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingMedia } from './transport.interface.js';
 import { MediaProcessorService } from '../services/media-processor.service.js';
+import { OutboundQueue } from './outbound-queue.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
@@ -23,6 +24,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private lastActivityTimestamp: number | null = null;
   private rawMessages: Map<string, any> = new Map();
   private botSentMessageIds: Set<string> = new Set();
+  private outboundQueue: OutboundQueue = new OutboundQueue(600, 1200);
 
   constructor(authDir: string = './baileys_auth_info') {
     this.authDir = authDir;
@@ -253,41 +255,43 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return false;
     }
 
-    try {
-      // Human-like anti-ban typing delay (1 to 2 seconds)
-      await this.socket.sendPresenceUpdate('composing', chatId);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      await this.socket.sendPresenceUpdate('paused', chatId);
-
-      const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
-
-      let sentMsg: any = undefined;
+    return this.outboundQueue.enqueue(async () => {
       try {
-        if (rawQuoted) {
-          sentMsg = await this.socket.sendMessage(chatId, { text }, { quoted: rawQuoted });
-        } else {
-          sentMsg = await this.socket.sendMessage(chatId, { text });
-        }
-      } catch (sendErr) {
-        // Fallback: if sending with quoted fails, send as plain text without quote
-        console.warn('[WhatsAppBaileys] Quoted send failed, falling back to direct send:', sendErr);
-        sentMsg = await this.socket.sendMessage(chatId, { text });
-      }
+        // Human-like anti-ban typing delay
+        await this.socket!.sendPresenceUpdate('composing', chatId);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        await this.socket!.sendPresenceUpdate('paused', chatId);
 
-      if (sentMsg?.key?.id) {
-        this.botSentMessageIds.add(sentMsg.key.id);
-        if (this.botSentMessageIds.size > 500) {
-          const oldest = this.botSentMessageIds.keys().next().value;
-          if (oldest) this.botSentMessageIds.delete(oldest);
-        }
-      }
+        const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
 
-      this.lastActivityTimestamp = Date.now();
-      return true;
-    } catch (err) {
-      console.error('[WhatsAppBaileys] Send error:', err);
-      return false;
-    }
+        let sentMsg: any = undefined;
+        try {
+          if (rawQuoted) {
+            sentMsg = await this.socket!.sendMessage(chatId, { text }, { quoted: rawQuoted });
+          } else {
+            sentMsg = await this.socket!.sendMessage(chatId, { text });
+          }
+        } catch (sendErr) {
+          // Fallback: if sending with quoted fails, send as plain text without quote
+          console.warn('[WhatsAppBaileys] Quoted send failed, falling back to direct send:', sendErr);
+          sentMsg = await this.socket!.sendMessage(chatId, { text });
+        }
+
+        if (sentMsg?.key?.id) {
+          this.botSentMessageIds.add(sentMsg.key.id);
+          if (this.botSentMessageIds.size > 500) {
+            const oldest = this.botSentMessageIds.keys().next().value;
+            if (oldest) this.botSentMessageIds.delete(oldest);
+          }
+        }
+
+        this.lastActivityTimestamp = Date.now();
+        return true;
+      } catch (err) {
+        console.error('[WhatsAppBaileys] Send error:', err);
+        return false;
+      }
+    });
   }
 
   public async sendMedia(chatId: string, media: OutgoingMedia, options?: OutgoingMessageOptions): Promise<boolean> {
@@ -296,30 +300,32 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return false;
     }
 
-    try {
-      const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
+    return this.outboundQueue.enqueue(async () => {
+      try {
+        const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
 
-      if (media.type === 'image') {
-        await this.socket.sendMessage(
-          chatId,
-          { image: media.dataBuffer, caption: media.caption },
-          rawQuoted ? { quoted: rawQuoted } : undefined
-        );
-      } else if (media.type === 'audio') {
-        // Send authentic WhatsApp voice note (ptt: true)
-        await this.socket.sendMessage(
-          chatId,
-          { audio: media.dataBuffer, mimetype: 'audio/mp4', ptt: media.ptt ?? true },
-          rawQuoted ? { quoted: rawQuoted } : undefined
-        );
+        if (media.type === 'image') {
+          await this.socket!.sendMessage(
+            chatId,
+            { image: media.dataBuffer, caption: media.caption },
+            rawQuoted ? { quoted: rawQuoted } : undefined
+          );
+        } else if (media.type === 'audio') {
+          // Send authentic WhatsApp voice note (ptt: true)
+          await this.socket!.sendMessage(
+            chatId,
+            { audio: media.dataBuffer, mimetype: 'audio/mp4', ptt: media.ptt ?? true },
+            rawQuoted ? { quoted: rawQuoted } : undefined
+          );
+        }
+
+        this.lastActivityTimestamp = Date.now();
+        return true;
+      } catch (err) {
+        console.error('[WhatsAppBaileys] Error sending media:', err);
+        return false;
       }
-
-      this.lastActivityTimestamp = Date.now();
-      return true;
-    } catch (err) {
-      console.error('[WhatsAppBaileys] Error sending media:', err);
-      return false;
-    }
+    });
   }
 
   public onMessage(handler: (message: IncomingMessage) => Promise<void>): void {

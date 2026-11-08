@@ -11,7 +11,8 @@ export class AIOrchestrator {
 
   constructor(config: AppConfig, quotaTracker?: QuotaTracker) {
     this.quotaTracker = quotaTracker || new QuotaTracker(config.gemini.dailyLimit, config.gemini.rpmLimit);
-    this.geminiProvider = new GeminiProvider(config.gemini.apiKey, config.gemini.model, this.quotaTracker);
+    const keys = config.gemini.apiKeys.length > 0 ? config.gemini.apiKeys : config.gemini.apiKey;
+    this.geminiProvider = new GeminiProvider(keys, config.gemini.model, this.quotaTracker);
     this.llamaProvider = new LlamaProvider(
       config.llamaFallback.enabled,
       config.llamaFallback.url,
