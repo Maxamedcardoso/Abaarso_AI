@@ -12,6 +12,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingMedia } from './transport.interface.js';
 import { MediaProcessorService } from '../services/media-processor.service.js';
+import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
@@ -106,6 +107,43 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.currentQR = null;
         this.lastActivityTimestamp = Date.now();
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
+      }
+    });
+
+    // ─── Incoming Call Handler (Auto-reject & Voice Redirect) ────────────────
+    this.socket.ev.on('call', async (calls) => {
+      for (const call of calls) {
+        if (call.status === 'offer') {
+          console.log(`\n📞 [Incoming Call] Wicitaan laga helay: ${call.from} (ID: ${call.id})`);
+          try {
+            // 1. Gracefully reject the incoming call
+            await this.socket?.rejectCall(call.id, call.from);
+
+            // 2. Prepare friendly redirect message
+            const callNotice = `Waan ka xumahay walaal, ma qaban karo wicitaan toos ah hadda. 📵\nFadlan iigu soo duub *Cod (Voice Note)* su'aashaada, aniguna isla markiiba cod baan kuugu soo jawaabayaa! 🎙️✨`;
+
+            // 3. Synthesize natural Somali voice note so the user hears voice immediately
+            try {
+              const voiceResult = await VoiceReplyService.synthesizeVoice(callNotice, 'so');
+              if (voiceResult) {
+                await this.sendMedia(call.from, {
+                  type: 'audio',
+                  dataBuffer: voiceResult.buffer,
+                  mimeType: 'audio/mp4',
+                  ptt: true,
+                });
+              }
+            } catch (vErr) {
+              console.warn('[WhatsAppBaileys] Voice synthesis for call redirect failed:', vErr);
+            }
+
+            // 4. Also send text notice
+            await this.sendMessage(call.from, callNotice);
+            console.log(`✅ [Call Handled] Qofkii soo wacay waxaa loo diray cod iyo qoraal codsanaya Voice Note!`);
+          } catch (err) {
+            console.error('[WhatsAppBaileys] Error handling call:', err);
+          }
+        }
       }
     });
 
