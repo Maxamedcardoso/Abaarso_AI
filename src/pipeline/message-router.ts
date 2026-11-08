@@ -155,30 +155,31 @@ export class MessageRouter {
     }
 
     // 5. Group Mention / Prefix Filter
-    // In groups, only respond if @mentioned (@cardoso), prefixed with !cardoso, or isMentioned=true
+    // In groups, only respond if @mentioned (@cardoso), short voice trigger (@cod / !cod), prefixed, or isMentioned=true
     // (isMentioned is set to true by the transport when user swipe-replies to bot's message).
     // For voice notes (media with no text): isMentioned=true is the only signal — allow it through.
-    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || lowerText.includes('@cardoso');
+    const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
+    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!cod') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
+    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || hasVoiceCommand;
     const isMediaWithNoText = !text && !!(message as any).media;
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
-      // Always pass through if isMentioned (covers voice note replies to bot)
+      // Always pass through if isMentioned or hasVoiceCommand (covers voice note replies and @cod trigger)
       if (!hasMention && !hasPrefix && !isMediaWithNoText) {
-        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
+        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso', '@cod' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
         return { handled: false, reason: 'Group message without mention or prefix' };
       }
     }
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!cardoso', '@cardoso', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '@cardoso', '!cod', '@cod', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
-    // Also strip inline mentions like "@cardoso"
-    queryText = queryText.replace(/@cardoso\b/gi, '').trim();
+    // Also strip inline mentions like "@cardoso" and "@cod"
+    queryText = queryText.replace(/@cardoso\b/gi, '').replace(/@cod\b/gi, '').trim();
 
     // For voice notes (media with empty text), set a meaningful placeholder so the AI engine
     // knows to transcribe/respond to the audio. The actual audio bytes are in message.media.
@@ -186,6 +187,8 @@ export class MessageRouter {
     if (!queryText) {
       if (incomingMedia?.type === 'audio') {
         queryText = '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]';
+      } else if (hasVoiceCommand) {
+        queryText = 'cod isoo duub';
       } else if (incomingMedia?.type === 'image') {
         queryText = '🖼️ [Sawir – Fadlan sawirkan sharax]';
       } else if (incomingMedia?.type === 'document') {
@@ -195,7 +198,7 @@ export class MessageRouter {
       }
     }
 
-    console.log(`\n🤖 [Router] Fariin loo dirayaa Gemini AI: "${queryText}" (Qofka: ${message.senderId})...`);
+    console.log(`\n🤖 [Router] Fariin loo dirayaa Gemini AI: "${queryText}" (Qofka: ${message.senderId}, VoiceCommand: ${hasVoiceCommand})...`);
 
     // 6. Rate Limiting Check per Student
     const rateCheck = this.rateLimiter.checkLimit(message.senderId);
@@ -217,6 +220,7 @@ export class MessageRouter {
       content: queryText,
       timestamp: message.rawTimestamp,
       media: (message as any).media,
+      forceVoiceReply: hasVoiceCommand,
     });
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);

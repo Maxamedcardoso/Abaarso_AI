@@ -307,11 +307,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           continue;
         }
 
-        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso');
+        // Detect bot triggers: '@cardoso', '!cardoso', or short voice triggers '@cod', '!cod'
+        const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
+        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso') || hasVoiceCommand;
 
         // 4. Strict fromMe Handling:
         // Any message sent by the bot or from the host phone (fromMe):
-        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso' or '@cardoso' to test the bot.
+        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso', '@cardoso', or '@cod' to test the bot.
         if (msg.key.fromMe) {
           if (!hasCardosoMention) {
             continue;

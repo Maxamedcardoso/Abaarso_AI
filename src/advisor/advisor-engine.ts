@@ -21,6 +21,7 @@ export interface ProcessMessageInput {
   content: string;
   timestamp?: number;
   media?: MessageMedia;
+  forceVoiceReply?: boolean;
 }
 
 export interface ProcessMessageOutput {
@@ -132,11 +133,15 @@ export class StudentAdvisorEngine {
       }
     }
 
-    // 5.55. Handle pure Voice-Note request (e.g. "@cardoso cod isoo duub", "@cardoso voice note ii dir")
-    // User is asking the bot to reply with a voice note — Gemini gives a short reply, then TTS it.
+    // 5.55. Handle pure Voice-Note request (e.g. "@cod", "!cod", "@cardoso cod isoo duub")
+    // If user asked a specific question with @cod (e.g. "@cod sidee wax loo bartaa?"),
+    // we want Gemini to answer the actual question, then synthesize voice at step 11.5!
+    // We only trigger this pure short greeting reply if there is NO specific question attached.
+    const cleanNoCod = content.replace(/@?cod\b/gi, '').replace(/[!.,?،\s]/g, '').trim();
     const isPureVoiceRequest =
       !media &&
-      /^(?:cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan\s*(?:ku\s+jawaab)?|cod\s+iigu\s+(?:soo\s+)?jawaab|codka?\s*(?:ah\s+ku\s+jawaab)?|voice\s+note|send\s+(?:a\s+)?voice(?:\s+note)?)[.!،\s]*$/i.test(content.trim());
+      (!cleanNoCod ||
+       /^(?:@?cod|!cod|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan\s*(?:ku\s+jawaab)?|cod\s+iigu\s+(?:soo\s+)?jawaab|codka?\s*(?:ah\s+ku\s+jawaab)?|voice\s+note|send\s+(?:a\s+)?voice(?:\s+note)?)[.!،\s]*$/i.test(content.trim()));
     if (isPureVoiceRequest) {
       const voicePrompt = lang === 'en'
         ? 'Give me a short, warm, conversational reply suitable for a voice note (2 sentences max).'
@@ -304,8 +309,20 @@ export class StudentAdvisorEngine {
       emotionResult,
     });
 
-    // 10. Enrich prompt with glossary hints and optional web search context
+    // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context
     let enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
+
+    // Audio Understanding Enhancement:
+    // If incoming message contains an audio voice note, instruct Gemini with high-accuracy speech comprehension.
+    if (media?.type === 'audio') {
+      enrichedPrompt = `[🎧 HIGH-ACCURACY VOICE NOTE COMPREHENSION DIRECTIVE]:
+You are listening directly to an authentic human voice message (spoken audio).
+1. Listen with acute, human-level attention to every word, phrase, regional accent, and emotional nuance spoken.
+2. The speaker may speak standard Somali, colloquial/informal Somali (e.g. sxb, sxp, wll, ii sheeg, maxaad ka taqaan, iwm), English, or Arabic. Accurately transcribe and understand their words even with background noise or natural speed.
+3. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said. Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
+
+[User Spoken Audio Attached]: ${enrichedPrompt}`;
+    }
 
     // ── LIVE WEB SEARCH (100% Free) ──────────────────────────────────────────
     if (!media && WebSearchService.shouldSearch(content)) {
@@ -348,10 +365,12 @@ export class StudentAdvisorEngine {
 
     // ─── Voice Request Detection ───────────────────────────────────────────────
     // Triggers voice reply when:
+    //   • input.forceVoiceReply is true (e.g. user invoked with @cod or !cod)
     //   • User sent an audio/voice note (media.type === 'audio')
     //   • User explicitly asked for voice in Somali or English text
     //
     // Somali phrases covered:
+    //   "@cod" / "!cod"       → short trigger requested by user!
     //   "cod isoo duub"       → record me a voice
     //   "cod ii duub"         → record voice for me
     //   "cod ahaan"           → in voice / as voice
@@ -362,8 +381,9 @@ export class StudentAdvisorEngine {
     //   "voice note"          → English
     //   "reply in voice"      → English
     const wantsVoice =
+      Boolean(input.forceVoiceReply) ||
       media?.type === 'audio' ||
-      /(?:cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
+      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
     if (wantsVoice) {
       console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
       try {
