@@ -22,11 +22,10 @@ export const FREE_TIER_LIMITS = {
 };
 
 export const SUPPORTED_MODELS = {
-  GEMINI_FLASH_LATEST: 'gemini-flash-latest',
-  GEMINI_FLASH_LITE: 'gemini-flash-lite-latest',
   GEMINI_FLASH_3_8: 'gemini-3.8-flash',
   GEMINI_FLASH_2_5: 'gemini-2.5-flash',
-  GEMINI_FLASH_2_0: 'gemini-2.0-flash',
+  GEMINI_FLASH_LATEST: 'gemini-flash-latest',
+  GEMINI_FLASH_LITE: 'gemini-flash-lite-latest',
   GEMINI_FLASH_1_5: 'gemini-1.5-flash',
 } as const;
 

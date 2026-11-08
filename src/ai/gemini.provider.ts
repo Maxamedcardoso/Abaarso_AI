@@ -11,7 +11,7 @@ export class GeminiProvider implements IAIProvider {
   private quotaTracker: QuotaTracker;
   private clients: GoogleGenerativeAI[] = [];
 
-  constructor(apiKeyOrKeys: string | string[], modelName: string = 'gemini-flash-latest', quotaTracker?: QuotaTracker) {
+  constructor(apiKeyOrKeys: string | string[], modelName: string = 'gemini-3.8-flash', quotaTracker?: QuotaTracker) {
     if (Array.isArray(apiKeyOrKeys)) {
       this.apiKeys = apiKeyOrKeys.filter(Boolean);
     } else if (apiKeyOrKeys) {
@@ -92,11 +92,14 @@ export class GeminiProvider implements IAIProvider {
 
     // 3. Candidate models fallback list (Independent free rate limits per model family)
     const candidateModels = Array.from(new Set([
+      'gemini-3.8-flash',
+      'gemini-2.5-flash',
       this.modelName,
+      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
       'gemini-1.5-flash',
       'gemini-1.5-flash-8b',
-      'gemini-2.0-flash',
-    ]));
+    ])).filter(m => m && m !== 'gemini-2.0-flash');
 
     let lastError: any = null;
 
