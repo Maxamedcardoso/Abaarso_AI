@@ -32,6 +32,9 @@ suite.test('IntentClassifier accurately categorizes user intents', () => {
   assertEqual(IntentClassifier.classify('Maxaa ku dhacay Soomaaliya 1991?').intent, 'general', 'History question should be general');
   // Motivation
   assertEqual(IntentClassifier.classify('Aad baan u daallanahay dhiirigelin ma haysto').intent, 'motivation', 'Should classify burnout as motivation');
+  // Creator questions
+  assertEqual(IntentClassifier.classify('Yaa ku sameeyey?').intent, 'creator', 'Should classify who made you as creator');
+  assertEqual(IntentClassifier.classify('who created you?').intent, 'creator', 'Should classify who created you as creator');
 });
 
 suite.test('MotivationCoach catches distress keywords and offers compassionate support without clinical diagnosis', () => {
@@ -101,6 +104,40 @@ suite.test('Greeting intent responds with "Wcs" and never returns "Asc"', async 
 
   assertEqual(res.intent, 'greeting', 'Should classify as greeting');
   assertTrue(res.replyText.startsWith('Wcs'), 'Greeting reply must start with Wcs');
+
+  await memory.close();
+  try {
+    if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+  } catch {}
+});
+
+suite.test('Creator intent accurately introduces creator Maxamed Daahir', async () => {
+  const memory = new SQLiteStudentMemory(testDb);
+  await memory.initialize();
+  const ai = new AIOrchestrator(config);
+  const engine = new StudentAdvisorEngine(memory, ai);
+
+  const resSomali = await engine.processMessage({
+    rawSenderId: 'student_creator_1',
+    chatId: 'chat_creator',
+    isGroup: false,
+    content: 'Yaa ku sameeyey?',
+  });
+
+  assertEqual(resSomali.intent, 'creator', 'Should classify as creator intent');
+  assertTrue(resSomali.replyText.includes('Maxamed Daahir'), 'Must mention Maxamed Daahir in Somali');
+  assertTrue(resSomali.replyText.includes('Abaarso'), 'Must mention Abaarso University');
+
+  const resEnglish = await engine.processMessage({
+    rawSenderId: 'student_creator_2',
+    chatId: 'chat_creator_en',
+    isGroup: false,
+    content: 'Who created you?',
+  });
+
+  assertEqual(resEnglish.intent, 'creator', 'Should classify as creator intent');
+  assertTrue(resEnglish.replyText.includes('Mohamed Dahir'), 'Must mention Mohamed Dahir in English');
+  assertTrue(resEnglish.replyText.includes('Abaarso'), 'Must mention Abaarso University');
 
   await memory.close();
   try {

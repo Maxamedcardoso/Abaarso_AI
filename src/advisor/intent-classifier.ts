@@ -6,6 +6,7 @@ export type AdvisorIntent =
   | 'privacy_forget'
   | 'help'
   | 'greeting'
+  | 'creator'
   | 'general';
 
 export interface ClassifiedIntent {
@@ -35,7 +36,13 @@ export class IntentClassifier {
       return { intent: 'help', confidence: 0.95, tags: ['system'] };
     }
 
-    // 3. Pure Greetings — Somali & English casual greetings (all common variants)
+    // 3. Creator / Author questions ("Yaa ku sameeyey?", "Who created you?")
+    const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+bot|yaa\s+dhisay\s+bot)/i.test(lower);
+    if (isCreatorQuery) {
+      return { intent: 'creator', confidence: 0.98, tags: ['creator', 'developer'] };
+    }
+
+    // 4. Pure Greetings — Somali & English casual greetings (all common variants)
     const cleanGreeting = lower.replace(/[^a-z0-9\s]/g, '').trim();
     const isPureGreeting = /^(asc|wcs|salaam|salaan|assalaamu\s*calaykum|assalamu\s*alaykum|hello|hi|hey|ii?\s*waran|iwaran|iska\s*warr?an|iskawarr?an|sidee?d?\s*tahay|see\s*tahay|maxaa?\s*cusub|nabad(\s*miyaa?)?|how\s+are\s+you|good\s+(morning|afternoon|evening)|howdy|wassup|whats?\s*up)(\s+(sxb|wll|walaal|saaxiib|saaxib|sxbo|abwaan|ai|abarso|dhammaan|guys|there|man|bro))*$/i.test(cleanGreeting);
     if (isPureGreeting) {

@@ -107,6 +107,22 @@ export class StudentAdvisorEngine {
       };
     }
 
+    // 7.5. Handle Creator / Author inquiry ("Yaa ku sameeyey?")
+    if (intentResult.intent === 'creator') {
+      const isEnglish = lang === 'en';
+      const creatorReply = isEnglish
+        ? `🌟 *About My Creator*\n\nI was designed and created by *Mohamed Dahir*, an exceptionally talented Software Engineer and Honor Graduate in Software Engineering from *Abaarso Tech University*! 🎓✨\n\nHe is the brilliant mind behind *ABARSO AI*, built to make knowledge, intelligence, and assistance accessible to everyone.`
+        : `🌟 *Ku Saabsan Cidda I Samaysay*\n\nWaxaa i dhisay oo i horumariyey *Maxamed Daahir*, oo ah injineer aad u xariif ah isla markaana haysta shahaadada sare ee sharafta leh (*Honor Degree*) ee maaddada *Software Engineering* oo uu ka qalin-jabiyey *Jaamacadda Abaarso* (Abaarso Tech University)! 🎓✨\n\nWaa maskaxdii hal-abuurka sare lahayd ee ka dambaysay samaynta iyo shaqada *ABARSO AI*.`;
+
+      return {
+        replyText: creatorReply,
+        studentId: student.studentId,
+        intent: 'creator',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
     // 8. Handle Help command
     if (intentResult.intent === 'help') {
       const helpText = lang === 'en'
