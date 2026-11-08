@@ -161,6 +161,30 @@ export class StudentAdvisorEngine {
       };
     }
 
+    // 5.56. Handle Voice Capability Question (e.g. "cod ma ku hadli kartaa?", "ma ila hadli kartaa?", "can you speak?")
+    // NEVER say "I cannot speak" — explain how to use @cod or voice notes, AND respond with a voice note demonstration!
+    const isVoiceCapabilityQuery =
+      /(?:cod\s+ma\s+(?:ku\s+)?(?:hadli\s+kartaa|heli\s+karaa|diri\s+kartaa|yeelan\s+kartaa)|ma\s+ila\s+hadli\s+kartaa(?:\s+cod)?|can\s+you\s+(?:speak|talk|send\s+voice)|halagu\s+hadlo|cod\s+ma\s+leedahay|sida\s+cod\s+loogu\s+hadlo|sidee\s+cod\s+(?:kuugu\s+duubaa|kuula\s+hadlaa)|waxaan\s+rabaa\s+inaad\s+cod\s+iigu\s+jawaabto)/i.test(content);
+
+    if (isVoiceCapabilityQuery) {
+      const guidanceText = lang === 'en'
+        ? `🎙️ *Yes, absolutely! I can speak with voice!* ✨\n\nTo talk with me using voice:\n1. *Use the command \`@cod\`*: Type \`@cod\` followed by your question (e.g. \`@cod explain how computers work\`).\n2. *Send a Voice Note*: Record a WhatsApp voice note directly, and I will listen and reply back in voice! 🔊✅`
+        : `🎙️ *Dabcan, waan kula hadli karaa cod ahaan!* ✨\n\nSi aan cod kuugu soo duubo, labadan hab midkood raac:\n1. *Isticmaal *@cod*:* Qor *@cod* iyo wixii aad doonayso (tusaale: *@cod ii sharax mawduucan*).\n2. *Toos Cod Ii Soo Duub:* WhatsApp-ka toos cod iigu soo dir (ama codkaaga reply u gal), aniguna markiiba cod ayaan kuugu soo jawaabayaa! 🔊✅`;
+
+      // Demonstrate voice capability by synthesizing this response as a voice note!
+      const demoVoice = await VoiceReplyService.synthesizeVoice(guidanceText, lang);
+      return {
+        replyText: guidanceText,
+        studentId: student.studentId,
+        intent: 'general',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+        replyMedia: demoVoice
+          ? { type: 'audio', dataBuffer: demoVoice.buffer, mimeType: demoVoice.mimeType || 'audio/mpeg', ptt: false }
+          : undefined,
+      };
+    }
+
     // 5.6. Handle Image Generation request ("ii samee sawir...", "create an image of...")
     if (ImageGeneratorService.isImageRequest(content)) {
       const prompt = ImageGeneratorService.extractPrompt(content);

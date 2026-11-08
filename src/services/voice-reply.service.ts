@@ -10,21 +10,70 @@ import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
  */
 export class VoiceReplyService {
   /**
-   * Cleans WhatsApp markdown and formatting before passing to TTS engine.
+   * Cleans WhatsApp markdown and normalizes abbreviations, slangs, symbols,
+   * and tech terms into natural phonetic speech for Edge Neural TTS.
    */
-  public static cleanTextForSpeech(text: string): string {
+  public static cleanTextForSpeech(text: string, language: string = 'so'): string {
     let clean = text
       // Remove URLs
       .replace(/https?:\/\/\S+/gi, '')
-      // Remove asterisks, underscores, tildes (WhatsApp formatting)
+      // Remove asterisks, underscores, tildes, backticks (WhatsApp formatting)
       .replace(/[*_~`]/g, '')
-      // Remove bullet points
-      .replace(/^[•\-\*]\s+/gm, '')
       // Remove emojis
       .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-      // Collapse multiple newlines/spaces
-      .replace(/\s+/g, ' ')
-      .trim();
+      // Clean leading bullet points with a comma so speech breathes naturally
+      .replace(/^[•\-\*]\s+/gm, ', ')
+      // Clean repetitive exclamation/question marks
+      .replace(/[!]{2,}/g, '!')
+      .replace(/[?]{2,}/g, '?');
+
+    if (language === 'so' || language === 'mixed') {
+      // 1. Expand Islamic & greeting abbreviations into full natural spoken words (as requested: asc, wcs -> full natural speech)
+      clean = clean
+        .replace(/\basc\b/gi, 'Assalaamu calaykum')
+        .replace(/\bwcs\b/gi, 'Wa calaykumus salaam')
+        .replace(/\bsc\b/gi, 'Salaamu calaykum')
+        .replace(/\binsha\s*allah\b|\binshallah\b/gi, 'Insha Allaah')
+        .replace(/\bmasha\s*allah\b|\bmashallah\b/gi, 'Maa shaa Allaah')
+        .replace(/\balx\b/gi, 'Alxamdulillaah')
+        .replace(/\bswt\b/gi, 'Subxaanahu wa tacaalaa')
+        .replace(/\bcsw\b|\bsaw\b/gi, 'Calayhi salaatu wa salaam');
+
+      // 2. Expand common Somali chat abbreviations
+      clean = clean
+        .replace(/\bsxb\b/gi, 'saaxiib')
+        .replace(/\bsxbo\b/gi, 'saaxiibow')
+        .replace(/\bwll\b|\bwlo\b/gi, 'walaal')
+        .replace(/\bmcaan\b/gi, 'macaan')
+        .replace(/\bpls\b|\bplz\b/gi, 'fadlan')
+        .replace(/\btnx\b|\bthx\b/gi, 'mahadsanid');
+
+      // 3. Phonetic pronunciation for tech and bot brand terms so Edge TTS sounds natural
+      clean = clean
+        .replace(/\bcardoso\s+ai\b/gi, 'Kaardooso Ey-Ay')
+        .replace(/\bcardoso\b/gi, 'Kaardooso')
+        .replace(/\bai\b/g, 'Ey-Ay')
+        .replace(/\bapi\b/gi, 'Ey-Bii-Ay')
+        .replace(/\burl\b/gi, 'Yu-Aar-El')
+        .replace(/\bwhatsapp\b/gi, 'Watsap')
+        .replace(/\bchatgpt\b/gi, 'Jaat-Jii-Bii-Tii')
+        .replace(/\bpdf\b/gi, 'Bii-Dii-Ef')
+        .replace(/\bmp3\b/gi, 'Em-Bii-Tharii');
+
+      // 4. Symbols to words
+      clean = clean
+        .replace(/&/g, ' iyo ')
+        .replace(/%/g, ' boqolkiiba ')
+        .replace(/\$/g, ' doolar ')
+        .replace(/\+/g, ' iyo ');
+    } else if (language === 'ar') {
+      clean = clean
+        .replace(/\bAI\b/gi, 'الذكاء الاصطناعي')
+        .replace(/\bCARDOSO\b/gi, 'كاردوسو');
+    }
+
+    // Collapse multiple newlines/spaces
+    clean = clean.replace(/\s+/g, ' ').trim();
 
     // Allow comprehensive, full-length voice explanations as requested by user.
     // Up to 2,500 characters allows natural 3-4 minute in-depth voice notes without artificial cutoff.
@@ -45,7 +94,7 @@ export class VoiceReplyService {
    * Returns audio MP3 buffer or null on error.
    */
   public static async synthesizeVoice(text: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {
-    const clean = this.cleanTextForSpeech(text);
+    const clean = this.cleanTextForSpeech(text, language);
     if (!clean) return null;
 
     // Select the best native Edge Neural TTS voice for the detected language

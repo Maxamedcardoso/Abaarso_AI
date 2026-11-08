@@ -233,11 +233,8 @@ export class MessageRouter {
           replyToMessageId: message.id,
         });
       } else if (advisorResult.replyMedia.type === 'audio') {
-        // Send authentic voice note + text response
+        // Send ONLY the voice note (no duplicated text message, as explicitly requested by user)
         await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
-          replyToMessageId: message.id,
-        });
-        await transport.sendMessage(message.chatId, advisorResult.replyText, {
           replyToMessageId: message.id,
         });
       } else {
