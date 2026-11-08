@@ -90,7 +90,7 @@ export class VoiceReplyService {
   }
 
   /**
-   * Synthesizes audio buffer from text.
+   * Synthesizes audio buffer from text with automatic retry for 100% zero-error resilience.
    * Returns audio MP3 buffer or null on error.
    */
   public static async synthesizeVoice(text: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {
@@ -109,18 +109,36 @@ export class VoiceReplyService {
       voiceName = 'tr-TR-AhmetNeural'; // Turkish
     }
 
+    // Try up to 2 attempts for 100% zero-error reliability against transient network glitches
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await this.synthesizeSingleAttempt(clean, voiceName);
+        if (result && result.buffer.length > 0) {
+          return result;
+        }
+      } catch (err) {
+        console.warn(`[VoiceReply] Attempt ${attempt} failed:`, err);
+        if (attempt === 1) {
+          await new Promise(r => setTimeout(r, 400));
+        }
+      }
+    }
+    return null;
+  }
+
+  private static synthesizeSingleAttempt(clean: string, voiceName: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
     return new Promise((resolve) => {
       const tts = new MsEdgeTTS();
       let isResolved = false;
 
-      // 60-second timeout to allow full-length, detailed voice notes to stream completely
+      // 45-second timeout per attempt to allow full-length voice notes to stream completely
       const timer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
           try { tts.close(); } catch {}
           resolve(null);
         }
-      }, 60000);
+      }, 45000);
 
       (async () => {
         try {

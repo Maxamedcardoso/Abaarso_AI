@@ -234,9 +234,16 @@ export class MessageRouter {
         });
       } else if (advisorResult.replyMedia.type === 'audio') {
         // Send ONLY the voice note (no duplicated text message, as explicitly requested by user)
-        await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
+        const sent = await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
           replyToMessageId: message.id,
         });
+        // Zero-Drop Fallback: If media upload was interrupted by WhatsApp, deliver text fallback immediately so user is never ignored!
+        if (!sent) {
+          console.warn('[Router] Voice upload failed, seamlessly delivering text response to user');
+          await transport.sendMessage(message.chatId, advisorResult.replyText, {
+            replyToMessageId: message.id,
+          });
+        }
       } else {
         await transport.sendMessage(message.chatId, advisorResult.replyText, {
           replyToMessageId: message.id,

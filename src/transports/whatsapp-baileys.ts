@@ -464,15 +464,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       try {
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
 
+        let sentMediaMsg: any = undefined;
+
         if (media.type === 'image') {
-          await this.socket!.sendMessage(
+          sentMediaMsg = await this.socket!.sendMessage(
             chatId,
             { image: media.dataBuffer, caption: media.caption },
             rawQuoted ? { quoted: rawQuoted } : undefined
           );
         } else if (media.type === 'audio') {
           // Send universally playable audio note for WhatsApp (MP3 format natively supported across iOS, Android, and Web)
-          await this.socket!.sendMessage(
+          sentMediaMsg = await this.socket!.sendMessage(
             chatId,
             {
               audio: media.dataBuffer,
@@ -481,6 +483,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             },
             rawQuoted ? { quoted: rawQuoted } : undefined
           );
+        }
+
+        // Track bot-sent media IDs so students can quote or reply to them in groups
+        if (sentMediaMsg?.key?.id) {
+          this.botSentMessageIds.add(sentMediaMsg.key.id);
+          if (this.botSentMessageIds.size > 500) {
+            const oldest = this.botSentMessageIds.keys().next().value;
+            if (oldest) this.botSentMessageIds.delete(oldest);
+          }
         }
 
         this.lastActivityTimestamp = Date.now();
