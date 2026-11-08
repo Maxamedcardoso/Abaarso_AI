@@ -58,7 +58,7 @@ export const config: AppConfig = {
   nodeEnv: process.env.NODE_ENV || 'development',
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || '',
-    model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_LITE,
+    model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_LATEST,
     dailyLimit: parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS,
     rpmLimit: parseInt(process.env.REQUESTS_PER_MINUTE_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_RPM,
   },

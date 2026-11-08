@@ -8,6 +8,7 @@ import { IMessagingTransport } from './transports/transport.interface.js';
 import { ConsoleSimulatorTransport } from './transports/console-simulator.js';
 import { WhatsAppBaileysTransport } from './transports/whatsapp-baileys.js';
 import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
+import { reminderService } from './services/reminder.service.js';
 
 async function bootstrap() {
   console.log(`\n======================================================`);
@@ -70,6 +71,13 @@ async function bootstrap() {
 
   // Start transport
   await transport.start();
+
+  // Wire reminder service so it can send WhatsApp messages
+  reminderService.setSendFunction(async (chatId: string, text: string) => {
+    await transport.sendMessage(chatId, text);
+  });
+  reminderService.start();
+  console.log('⏰ [Reminders] Reminder scheduler is active.');
 
   // If console simulator, start interactive prompt loop
   if (transport instanceof ConsoleSimulatorTransport) {
@@ -192,6 +200,7 @@ async function bootstrap() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\nGracefully shutting down CARDOSO AI...');
+    reminderService.stop();
     server.close();
     await transport.stop();
     await memory.close();

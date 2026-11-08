@@ -6,6 +6,11 @@ export interface ConversationMessage {
   content: string;
 }
 
+export interface AIMediaAttachment {
+  mimeType: string;
+  dataBase64: string;
+}
+
 /**
  * Options for AI generation
  */
@@ -14,6 +19,7 @@ export interface GenerateOptions {
   maxOutputTokens?: number;
   systemInstruction?: string;
   studentId?: string;
+  media?: AIMediaAttachment;
 }
 
 /**

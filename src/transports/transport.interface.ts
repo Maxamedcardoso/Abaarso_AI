@@ -1,3 +1,10 @@
+export interface MessageMedia {
+  type: 'image' | 'audio' | 'document';
+  mimeType: string;
+  dataBase64: string;
+  fileName?: string;
+}
+
 /**
  * Standard incoming message representation across all transports
  */
@@ -11,6 +18,7 @@ export interface IncomingMessage {
   rawTimestamp: number;          // Epoch timestamp in milliseconds
   isMentioned: boolean;          // True if the bot was explicitly @mentioned
   replyToMessageId?: string;     // If message is a quoted reply
+  media?: MessageMedia;          // Attached image, audio voice note, or PDF document
 }
 
 /**

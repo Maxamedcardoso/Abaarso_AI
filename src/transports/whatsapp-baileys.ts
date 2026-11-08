@@ -3,6 +3,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   proto,
   WASocket,
+  downloadContentFromMessage,
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -10,6 +11,7 @@ import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
 import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions } from './transport.interface.js';
+import { MediaProcessorService } from '../services/media-processor.service.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
@@ -124,19 +126,55 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const isGroup = chatId.endsWith('@g.us');
         const senderId = msg.key.participant || msg.key.remoteJid || '';
 
+        // ─── Detect message type (text, audio, image, document) ───────────────────
+        const msgType = Object.keys(msg.message)[0];
+        const isAudio = msgType === 'audioMessage' || msgType === 'ptvMessage';
+        const isImage = msgType === 'imageMessage';
+        const isDocument = msgType === 'documentMessage';
+        const isMedia = isAudio || isImage || isDocument;
+
         // Extract clean text from text or extended text
         const text =
           msg.message.conversation ||
           msg.message.extendedTextMessage?.text ||
+          msg.message.imageMessage?.caption ||
+          msg.message.documentMessage?.caption ||
+          (isAudio ? '🎙️ [Voice Note]' : '') ||
           '';
 
-        if (!text.trim()) continue;
+        // Skip completely empty non-media messages
+        if (!text.trim() && !isMedia) continue;
 
-        // Log incoming message info to terminal for easy visibility and finding group IDs
+        // ─── Log incoming message ─────────────────────────────────────────────────
         if (isGroup) {
-          console.log(`\n📩 [Group Message] Qoraal: "${text}" | Group ID: ${chatId} | Qofka: ${senderId} ${msg.key.fromMe ? '(Adiga ayaad dirtay)' : ''}`);
+          console.log(`\n📩 [Group ${isMedia ? '(MEDIA) ' : ''}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
         } else {
-          console.log(`\n📩 [Private Message] Qoraal: "${text}" | Laga soo diray: ${senderId}`);
+          console.log(`\n📩 [Private ${isMedia ? '(MEDIA) ' : ''}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
+        }
+
+        // ─── Download & encode media to base64 for Gemini multimodal ─────────────
+        let mediaAttachment: { type: 'image' | 'audio' | 'document'; mimeType: string; dataBase64: string; fileName?: string } | undefined;
+        if (isMedia) {
+          try {
+            const msgContent = isAudio
+              ? (msg.message.audioMessage || msg.message.ptvMessage)
+              : isImage
+                ? msg.message.imageMessage
+                : msg.message.documentMessage;
+            const streamType = isAudio ? 'audio' : isImage ? 'image' : 'document';
+            const stream = await downloadContentFromMessage(msgContent as any, streamType as any);
+            const rawMime = (msgContent as any)?.mimetype || '';
+            const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
+            const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
+            mediaAttachment = {
+              type: streamType as 'image' | 'audio' | 'document',
+              mimeType,
+              dataBase64,
+              fileName: (msgContent as any)?.fileName,
+            };
+          } catch (mediaErr: any) {
+            console.warn(`[WhatsAppBaileys] Media download failed: ${mediaErr?.message}`);
+          }
         }
 
         const contextInfo = msg.message.extendedTextMessage?.contextInfo;
@@ -170,8 +208,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @cardoso!
         // In group chats: must be @mentioned, prefixed, or replied to.
+        // For media messages in groups: require a caption with @cardoso or private DM
         const mentionedJids = contextInfo?.mentionedJid || [];
         const isMentioned = !isGroup || isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasCardosoMention;
+
+        // For media in groups, skip if not mentioned (avoid processing every group image)
+        if (isMedia && isGroup && !isMentioned) continue;
 
         const incoming: IncomingMessage = {
           id: msg.key.id || `baileys_${Date.now()}`,
@@ -179,10 +221,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           senderName: msg.pushName || undefined,
           chatId,
           isGroup,
-          content: text,
+          content: text || (isAudio ? '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]' : isImage ? '🖼️ [Sawir – Fadlan sawirkan sharax]' : isDocument ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
           rawTimestamp: (msg.messageTimestamp as number) * 1000 || Date.now(),
           isMentioned,
           replyToMessageId: msg.key.id || undefined,
+          media: mediaAttachment,
         };
 
         if (this.messageHandler) {

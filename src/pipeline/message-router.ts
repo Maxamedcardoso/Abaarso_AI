@@ -151,13 +151,14 @@ export class MessageRouter {
       return { handled: false, reason: 'Rate limited' };
     }
 
-    // 7. Process message through Advisor Engine
+    // 7. Process message through Advisor Engine (pass media attachment if present)
     const advisorResult = await this.engine.processMessage({
       rawSenderId: message.senderId,
       chatId: message.chatId,
       isGroup: message.isGroup,
       content: queryText,
       timestamp: message.rawTimestamp,
+      media: (message as any).media,
     });
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);

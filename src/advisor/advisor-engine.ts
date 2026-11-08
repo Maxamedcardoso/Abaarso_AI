@@ -5,6 +5,9 @@ import { IntentClassifier } from './intent-classifier.js';
 import { PromptBuilder } from './prompt-builder.js';
 import { MotivationCoach } from './motivation-coach.js';
 import { ConversationMessage } from '../ai/ai-provider.interface.js';
+import { WebSearchService } from '../services/web-search.service.js';
+import { ReminderService, reminderService } from '../services/reminder.service.js';
+import { MessageMedia } from '../transports/transport.interface.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -12,6 +15,7 @@ export interface ProcessMessageInput {
   isGroup: boolean;
   content: string;
   timestamp?: number;
+  media?: MessageMedia;
 }
 
 export interface ProcessMessageOutput {
@@ -35,7 +39,7 @@ export class StudentAdvisorEngine {
 
   public async processMessage(input: ProcessMessageInput): Promise<ProcessMessageOutput> {
     const startTime = Date.now();
-    const { rawSenderId, chatId, isGroup, content, timestamp = Date.now() } = input;
+    const { rawSenderId, chatId, isGroup, content, timestamp = Date.now(), media } = input;
 
     // 1. Get or create secure, isolated user profile
     const student = await this.memory.getOrCreateStudent(rawSenderId);
@@ -73,6 +77,25 @@ export class StudentAdvisorEngine {
         language: lang,
         latencyMs: Date.now() - startTime,
       };
+    }
+
+    // 5.5. Handle Reminder request
+    if (ReminderService.isReminderRequest(content)) {
+      const parsed = ReminderService.parseReminderTime(content);
+      if (parsed) {
+        const minutesFromNow = Math.round((parsed.fireAtMs - Date.now()) / 60000);
+        reminderService.addReminder(student.studentId, chatId, parsed.reminderText, parsed.fireAtMs);
+        const confirmText = lang === 'en'
+          ? `⏰ *Reminder Set!*\n"${parsed.reminderText || 'Your reminder'}" — I'll notify you in *${minutesFromNow} minute${minutesFromNow === 1 ? '' : 's'}*. ✅`
+          : `⏰ *Xasuusiyaha waa la dejiyay!*\n"${parsed.reminderText || 'Xasuusintaada'}" — Waxaan kugu soo ogaysiinayaa *${minutesFromNow} daqiiqo* gudahood. ✅`;
+        return {
+          replyText: confirmText,
+          studentId: student.studentId,
+          intent: 'reminder',
+          language: lang,
+          latencyMs: Date.now() - startTime,
+        };
+      }
     }
 
     // 6. Retrieve isolated conversation history (max 14 turns for context)
@@ -136,8 +159,8 @@ export class StudentAdvisorEngine {
     // 8. Handle Help command
     if (intentResult.intent === 'help') {
       const helpText = lang === 'en'
-        ? `*🌟 CARDOSO AI — Your Intelligent Assistant*\nI can help you with anything — ask me freely!\n• Questions, advice, explanations on any topic.\n• Science, math, history, religion, technology, health, relationships, and more.\n• Somali, English, or mixed language — I adapt to you.\n\n*Commands:*\n• \`!tirtir\` or \`!clear\` — Delete your conversation history.`
-        : `*🌟 CARDOSO AI — La-Taliyahaaga Caqliga*\nWaxaad i weydiin kartaa wax kasta — xoriyad buuxda!\n• Su'aalo, talo, sharaxaad mawduuc kasta ah.\n• Sayniska, xisaabta, taariikhda, diinta, teknoolajiyada, caafimaadka, xiriirka, iwm.\n• Af-Soomaali, Ingiriis, ama isku qas — waxaan kuu qabsadaa.\n\n*Awaamiirta:*\n• \`!tirtir\` ama \`!clear\` — Si aad u tirtirto dhammaan xogtaada wada-hadalka.`;
+        ? `*🌟 CARDOSO AI — Your Intelligent Assistant*\nI can help you with anything — ask me freely!\n• Questions, advice, explanations on any topic.\n• Science, math, history, religion, technology, health, relationships, and more.\n• 🎙️ Voice notes, 🖼️ images, and 📄 documents — I can read them!\n• 🌐 Live web search for news, sports scores, exchange rates and more.\n• ⏰ Set reminders (say "remind me in 30 minutes to study").\n• Somali, English, or mixed language — I adapt to you.\n\n*Commands:*\n• \`!tirtir\` or \`!clear\` — Delete your conversation history.`
+        : `*🌟 CARDOSO AI — La-Taliyahaaga Caqliga*\nWaxaad i weydiin kartaa wax kasta — xoriyad buuxda!\n• Su'aalo, talo, sharaxaad mawduuc kasta ah.\n• Sayniska, xisaabta, taariikhda, diinta, teknoolajiyada, caafimaadka, xiriirka, iwm.\n• 🎙️ Codadka, 🖼️ Sawirrada, iyo 📄 Dukumentiyada — waan akhriyaa!\n• 🌐 Baadhi tooska ah wararka, cayaaraha, sarifka lacagta, iwm.\n• ⏰ Xasuusin-dejin (dheh "i xasuusi 30 daqiiqo gudahood").\n• Af-Soomaali, Ingiriis, ama isku qas — waxaan kuu qabsadaa.\n\n*Awaamiirta:*\n• \`!tirtir\` ama \`!clear\` — Si aad u tirtirto dhammaan xogtaada wada-hadalka.`;
       return {
         replyText: helpText,
         studentId: student.studentId,
@@ -153,13 +176,23 @@ export class StudentAdvisorEngine {
       isGroupChat: isGroup,
     });
 
-    // 10. Enrich prompt with glossary hints if needed
-    const enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
+    // 10. Enrich prompt with glossary hints and optional web search context
+    let enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
 
-    // 11. Call AI provider
+    // ── LIVE WEB SEARCH (100% Free) ──────────────────────────────────────────
+    if (!media && WebSearchService.shouldSearch(content)) {
+      const snippets = await WebSearchService.search(content);
+      if (snippets.length > 0) {
+        const searchContext = snippets.join('\n• ');
+        enrichedPrompt = `[Live Web Context — use to answer accurately]:\n• ${searchContext}\n\n[User question]: ${enrichedPrompt}`;
+      }
+    }
+
+    // 11. Call AI provider (with optional media attachment for voice/image/document)
     const aiResult = await this.ai.generateResponse(enrichedPrompt, aiHistory, {
       systemInstruction,
       studentId: student.studentId,
+      media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
 
     // 12. Save conversation turns to database memory

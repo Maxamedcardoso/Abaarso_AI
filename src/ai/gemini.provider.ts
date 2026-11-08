@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, Content } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, Part } from '@google/generative-ai';
 import { IAIProvider, ConversationMessage, GenerateOptions, GenerateResult } from './ai-provider.interface.js';
 import { QuotaTracker } from './quota-tracker.js';
 import { executeWithRetry } from './retry-handler.js';
@@ -83,14 +83,26 @@ export class GeminiProvider implements IAIProvider {
             },
           });
 
+          // Prepare prompt payload (text and optional multimodal image/audio/document)
+          const contentParts: Array<string | Part> = [];
+          if (options.media?.dataBase64 && options.media?.mimeType) {
+            contentParts.push({
+              inlineData: {
+                mimeType: options.media.mimeType,
+                data: options.media.dataBase64,
+              },
+            });
+          }
+          contentParts.push(userPrompt);
+
           if (formattedHistory.length > 0) {
             const chat = modelInstance.startChat({
               history: formattedHistory,
             });
-            const result = await chat.sendMessage(userPrompt);
+            const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
             return result.response.text();
           } else {
-            const result = await modelInstance.generateContent(userPrompt);
+            const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
             return result.response.text();
           }
         },
