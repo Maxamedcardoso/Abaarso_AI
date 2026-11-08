@@ -90,99 +90,118 @@ export class GeminiProvider implements IAIProvider {
 
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
-    // 3. Execute generation with retry & backoff
-    try {
-      const responseText = await executeWithRetry(
-        async () => {
-          const client = this.currentClient!;
-          const modelInstance = client.getGenerativeModel({
-            model: this.modelName,
-            systemInstruction,
-            generationConfig: {
-              temperature: options.temperature ?? 0.7,
-              maxOutputTokens: options.maxOutputTokens ?? 1000,
-            },
-          });
+    // 3. Candidate models fallback list (Independent free rate limits per model family)
+    const candidateModels = Array.from(new Set([
+      this.modelName,
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b',
+      'gemini-2.0-flash',
+    ]));
 
-          // Prepare prompt payload (text and optional multimodal image/audio/document)
-          const contentParts: Array<string | Part> = [];
-          if (options.media?.dataBase64 && options.media?.mimeType) {
-            contentParts.push({
-              inlineData: {
-                mimeType: options.media.mimeType,
-                data: options.media.dataBase64,
+    let lastError: any = null;
+
+    for (let modelIdx = 0; modelIdx < candidateModels.length; modelIdx++) {
+      const currentModelName = candidateModels[modelIdx];
+
+      try {
+        const responseText = await executeWithRetry(
+          async () => {
+            const client = this.currentClient!;
+            const modelInstance = client.getGenerativeModel({
+              model: currentModelName,
+              systemInstruction,
+              generationConfig: {
+                temperature: options.temperature ?? 0.7,
+                maxOutputTokens: options.maxOutputTokens ?? 1000,
               },
             });
-          }
-          contentParts.push(userPrompt);
 
-          if (formattedHistory.length > 0) {
-            const chat = modelInstance.startChat({
-              history: formattedHistory,
-            });
-            const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-            return result.response.text();
-          } else {
-            const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-            return result.response.text();
-          }
-        },
-        {
-          onRetry: (attempt, delayMs, err) => {
-            console.warn(`[GeminiProvider] Retry attempt ${attempt} in ${delayMs}ms due to: ${err.message}`);
-            // If rate-limited or quota hit, rotate to next key in pool
-            if (err.message.includes('429') || err.message.includes('quota') || err.message.includes('ResourceExhausted')) {
-              this.rotateKey();
+            // Prepare prompt payload (text and optional multimodal image/audio/document)
+            const contentParts: Array<string | Part> = [];
+            if (options.media?.dataBase64 && options.media?.mimeType) {
+              contentParts.push({
+                inlineData: {
+                  mimeType: options.media.mimeType,
+                  data: options.media.dataBase64,
+                },
+              });
+            }
+            contentParts.push(userPrompt);
+
+            if (formattedHistory.length > 0) {
+              const chat = modelInstance.startChat({
+                history: formattedHistory,
+              });
+              const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+              return result.response.text();
+            } else {
+              const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+              return result.response.text();
             }
           },
-        }
-      );
+          {
+            maxRetries: 1, // Fast retry on current model before switching
+            initialDelayMs: 500,
+            onRetry: (attempt, delayMs, err) => {
+              console.warn(`[GeminiProvider] Retry ${attempt} on ${currentModelName} in ${delayMs}ms due to: ${err.message}`);
+              if (err.message.includes('429') || err.message.includes('quota') || err.message.includes('ResourceExhausted')) {
+                this.rotateKey();
+              }
+            },
+          }
+        );
 
-      // Record successful request for quota tracking
-      const estimatedTokens = Math.ceil((userPrompt.length + responseText.length) / 4);
-      this.quotaTracker.recordRequest(estimatedTokens);
+        // Record successful request for quota tracking
+        const estimatedTokens = Math.ceil((userPrompt.length + responseText.length) / 4);
+        this.quotaTracker.recordRequest(estimatedTokens);
 
-      return {
-        text: responseText,
-        provider: 'gemini',
-        modelUsed: this.modelName,
-        tokensUsed: {
-          promptTokens: Math.ceil(userPrompt.length / 4),
-          completionTokens: Math.ceil(responseText.length / 4),
-          totalTokens: estimatedTokens,
-        },
-        latencyMs: Date.now() - startTime,
-      };
-    } catch (err: any) {
-      console.error(`[GeminiProvider] Error generating response:`, err?.message || err);
-
-      const isRateLimit = err?.status === 429 || (err?.message && err.message.includes('429'));
-      if (isRateLimit) {
         return {
-          text: '⏳ *[CARDOSO AI]*: Server-ku wuxuu gaadhay xadkii daqiiqada (Rate Limit). Fadlan 10 ilbiriqsi kadib mar kale isku day!',
+          text: responseText,
           provider: 'gemini',
-          modelUsed: this.modelName,
+          modelUsed: currentModelName,
+          tokensUsed: {
+            promptTokens: Math.ceil(userPrompt.length / 4),
+            completionTokens: Math.ceil(responseText.length / 4),
+            totalTokens: estimatedTokens,
+          },
           latencyMs: Date.now() - startTime,
         };
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[GeminiProvider] Model ${currentModelName} threw error (${err?.message || err}). Failing over to next free candidate...`);
+        this.rotateKey();
       }
+    }
 
-      const isHighDemand = err?.status === 503 || (err?.message && (err.message.includes('503') || err.message.includes('high demand') || err.message.includes('Service Unavailable')));
-      if (isHighDemand) {
-        return {
-          text: '⏳ *[CARDOSO AI]*: Server-ka Gemini AI ayaa hadda aad u mashquulsan (High Demand). Fadlan 1 daqiiqo kadib dib u soo qor su\'aashaada!',
-          provider: 'gemini',
-          modelUsed: this.modelName,
-          latencyMs: Date.now() - startTime,
-        };
-      }
+    // 4. If all candidate models on all keys failed:
+    console.error(`[GeminiProvider] All candidate models exhausted:`, lastError?.message || lastError);
 
+    const isRateLimit = lastError?.status === 429 || (lastError?.message && lastError.message.includes('429'));
+    if (isRateLimit) {
       return {
-        text: `⚠️ [CARDOSO AI Error]: Gemini API request failed (${err?.message || 'Unknown error'}). Check your network and API key.`,
+        text: 'Waan ka xumahay walaal, server-ka AI-da ayaa hadda su\'aalo badan helay hal mar. Fadlan 10 ilbiriqsi kadib mar kale i weydii! 🙏',
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
       };
     }
+
+    const isHighDemand = lastError?.status === 503 || (lastError?.message && (lastError.message.includes('503') || lastError.message.includes('high demand') || lastError.message.includes('Service Unavailable')));
+    if (isHighDemand) {
+      return {
+        text: 'Waan ka xumahay walaal, server-ka Gemini AI ayaa hadda aad u mashquulsan. Fadlan wax yar kadib dib ii weydii!',
+        provider: 'gemini',
+        modelUsed: this.modelName,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
+    return {
+      text: `⚠️ [CARDOSO AI Error]: Gemini API request failed (${lastError?.message || 'Unknown error'}). Check your network and API key.`,
+      provider: 'gemini',
+      modelUsed: this.modelName,
+      latencyMs: Date.now() - startTime,
+    };
   }
 
   public getStatus() {

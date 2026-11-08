@@ -11,7 +11,7 @@ export class RateLimiter {
    * @param maxRequests Maximum requests allowed within the window (e.g. 5)
    * @param windowMs Time window in milliseconds (e.g. 60,000ms = 1 minute)
    */
-  constructor(maxRequests: number = 6, windowMs: number = 60 * 1000) {
+  constructor(maxRequests: number = 15, windowMs: number = 60 * 1000) {
     this.maxRequestsPerWindow = maxRequests;
     this.windowMs = windowMs;
   }

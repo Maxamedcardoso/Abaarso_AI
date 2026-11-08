@@ -295,24 +295,30 @@ export class StudentAdvisorEngine {
       }
     }
 
-    // 12. Save conversation turns to database memory
-    await this.memory.saveMessage({
-      studentId: student.studentId,
-      chatId,
-      role: 'user',
-      content,
-      languageDetected: lang,
-      timestamp,
-    });
+    // 12. Save conversation turns to database memory (only save clean responses, not system errors)
+    const isErrorOutput = aiResult.text.includes('CARDOSO AI Error') ||
+      aiResult.text.includes('Gemini API request failed') ||
+      aiResult.text.includes('Zero-Cost Safeguard');
 
-    await this.memory.saveMessage({
-      studentId: student.studentId,
-      chatId,
-      role: 'model',
-      content: aiResult.text,
-      languageDetected: lang,
-      timestamp: Date.now(),
-    });
+    if (!isErrorOutput) {
+      await this.memory.saveMessage({
+        studentId: student.studentId,
+        chatId,
+        role: 'user',
+        content,
+        languageDetected: lang,
+        timestamp,
+      });
+
+      await this.memory.saveMessage({
+        studentId: student.studentId,
+        chatId,
+        role: 'model',
+        content: aiResult.text,
+        languageDetected: lang,
+        timestamp: Date.now(),
+      });
+    }
 
     return {
       replyText: aiResult.text,
