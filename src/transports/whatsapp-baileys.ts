@@ -26,7 +26,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private rawMessages: Map<string, any> = new Map();
   private botSentMessageIds: Set<string> = new Set();
   private recentSentTexts: Set<string> = new Set();
-  private outboundQueue: OutboundQueue = new OutboundQueue(600, 1200);
+  private outboundQueue: OutboundQueue = new OutboundQueue(200, 400);
   private sessionExpired: boolean = false;
 
   constructor(authDir: string = './baileys_auth_info') {
@@ -317,6 +317,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         };
 
         if (this.messageHandler) {
+          // Immediately show typing presence to user so they know bot is actively formulating response
+          if (this.socket) {
+            this.socket.sendPresenceUpdate('composing', chatId).catch(() => {});
+          }
+
           try {
             await this.messageHandler(incoming);
           } catch (err) {
@@ -353,10 +358,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     return this.outboundQueue.enqueue(async () => {
       try {
-        // Human-like anti-ban typing delay
-        await this.socket!.sendPresenceUpdate('composing', chatId);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        await this.socket!.sendPresenceUpdate('paused', chatId);
+        // Quick anti-ban typing presence update
+        await this.socket!.sendPresenceUpdate('composing', chatId).catch(() => {});
+        await new Promise(resolve => setTimeout(resolve, 150));
+        await this.socket!.sendPresenceUpdate('paused', chatId).catch(() => {});
 
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
 

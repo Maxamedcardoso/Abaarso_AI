@@ -131,16 +131,25 @@ export class GeminiProvider implements IAIProvider {
             }
             contentParts.push(userPrompt);
 
-            if (formattedHistory.length > 0) {
-              const chat = modelInstance.startChat({
-                history: formattedHistory,
-              });
-              const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-              return result.response.text();
-            } else {
-              const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-              return result.response.text();
-            }
+            const callPromise = (async () => {
+              if (formattedHistory.length > 0) {
+                const chat = modelInstance.startChat({
+                  history: formattedHistory,
+                });
+                const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+                return result.response.text();
+              } else {
+                const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+                return result.response.text();
+              }
+            })();
+
+            // Enforce strict 8.5s timeout per model attempt to prevent hanging requests
+            const timeoutPromise = new Promise<string>((_, reject) => {
+              setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 8500ms`)), 8500);
+            });
+
+            return await Promise.race([callPromise, timeoutPromise]);
           },
           {
             maxRetries: 1, // Fast retry on current model before switching

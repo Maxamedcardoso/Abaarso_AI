@@ -36,7 +36,31 @@ export class MessageRouter {
     return this.config.security.allowedGroups.includes(groupJid);
   }
 
+  private chatQueues: Map<string, Promise<any>> = new Map();
+
   public async handleIncomingMessage(
+    message: IncomingMessage,
+    transport: IMessagingTransport
+  ): Promise<{ handled: boolean; reason?: string }> {
+    const queueKey = message.chatId || message.senderId;
+    const previousPromise = this.chatQueues.get(queueKey) || Promise.resolve();
+
+    const task = previousPromise
+      .catch(() => {})
+      .then(() => this.processMessageInternal(message, transport));
+
+    this.chatQueues.set(queueKey, task);
+
+    task.finally(() => {
+      if (this.chatQueues.get(queueKey) === task) {
+        this.chatQueues.delete(queueKey);
+      }
+    });
+
+    return task;
+  }
+
+  private async processMessageInternal(
     message: IncomingMessage,
     transport: IMessagingTransport
   ): Promise<{ handled: boolean; reason?: string }> {

@@ -14,7 +14,7 @@ export class OutboundQueue {
   private minDelayMs: number;
   private maxDelayMs: number;
 
-  constructor(minDelayMs: number = 600, maxDelayMs: number = 1200) {
+  constructor(minDelayMs: number = 200, maxDelayMs: number = 400) {
     this.minDelayMs = minDelayMs;
     this.maxDelayMs = maxDelayMs;
   }

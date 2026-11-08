@@ -88,13 +88,35 @@ export class StudentAdvisorEngine {
     if (ReminderService.isReminderRequest(content)) {
       const parsed = ReminderService.parseReminderTime(content);
       if (parsed) {
-        const minutesFromNow = Math.round((parsed.fireAtMs - Date.now()) / 60000);
+        const minutesFromNow = Math.max(1, Math.round((parsed.fireAtMs - Date.now()) / 60000));
         reminderService.addReminder(student.studentId, chatId, parsed.reminderText, parsed.fireAtMs);
+
+        let timeStr = `${minutesFromNow} daqiiqo`;
+        if (minutesFromNow >= 60) {
+          const hrs = Math.floor(minutesFromNow / 60);
+          const remMins = minutesFromNow % 60;
+          timeStr = remMins > 0 ? `${hrs} saacadood iyo ${remMins} daqiiqo` : `${hrs} saacadood`;
+        }
+
         const confirmText = lang === 'en'
-          ? `⏰ *Reminder Set!*\n"${parsed.reminderText || 'Your reminder'}" — I'll notify you in *${minutesFromNow} minute${minutesFromNow === 1 ? '' : 's'}*. ✅`
-          : `⏰ *Xasuusiyaha waa la dejiyay!*\n"${parsed.reminderText || 'Xasuusintaada'}" — Waxaan kugu soo ogaysiinayaa *${minutesFromNow} daqiiqo* gudahood. ✅`;
+          ? `⏰ *Reminder Confirmed!*\nI will remind you about:\n👉 *${parsed.reminderText}*\nIn approximately *${timeStr}*. ✅`
+          : `⏰ *Xasuusiyaha Waa La Dejiyay!*\nWaxaan kugu xasuusin doonaa:\n👉 *${parsed.reminderText}*\nMuddo qiyaastii *${timeStr}* kadib. Waan kuu soo diri doonaa fariinta xilligaas saxda ah! ✅`;
+
         return {
           replyText: confirmText,
+          studentId: student.studentId,
+          intent: 'reminder',
+          language: lang,
+          latencyMs: Date.now() - startTime,
+        };
+      } else {
+        // User asked for a reminder but didn't specify time
+        const askTimeText = lang === 'en'
+          ? `⏰ *When would you like me to remind you?*\nPlease specify a time, for example:\n• "Remind me in 15 minutes to call mom"\n• "Remind me at 8:00 PM to study"`
+          : `⏰ *Goormaad jeceshahay inaan ku xasuusiyo walaal?*\nFadlan waqtiga ii sheeg, tusaale ahaan:\n• *"15 daqiiqo kadib igu xasuusi inaan wax akhriyo"*\n• *"8:00 fiidnimo igu xasuusi shaqada"*\n• *"1 saacad kadib igu xasuusi"*`;
+
+        return {
+          replyText: askTimeText,
           studentId: student.studentId,
           intent: 'reminder',
           language: lang,
