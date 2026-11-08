@@ -125,6 +125,30 @@ export class StudentAdvisorEngine {
       }
     }
 
+    // 5.55. Handle pure Voice-Note request (e.g. "@cardoso cod isoo duub", "@cardoso voice note ii dir")
+    // User is asking the bot to reply with a voice note — Gemini gives a short reply, then TTS it.
+    const isPureVoiceRequest =
+      !media &&
+      /^(?:cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan\s*(?:ku\s+jawaab)?|cod\s+iigu\s+(?:soo\s+)?jawaab|codka?\s*(?:ah\s+ku\s+jawaab)?|voice\s+note|send\s+(?:a\s+)?voice(?:\s+note)?)[.!،\s]*$/i.test(content.trim());
+    if (isPureVoiceRequest) {
+      const voicePrompt = lang === 'en'
+        ? 'Give me a short, warm, conversational reply suitable for a voice note (2 sentences max).'
+        : 'Jawaab gaaban oo xasilloon oo Af-Soomaali ah ii sii si cod ahaan loo dhagaysan karo (2 jumlood oo ugu badan).';
+      const sysInstruction = `You are CARDOSO AI. Reply briefly (1-2 sentences max) in a warm, natural voice-note tone. Reply in ${lang === 'en' ? 'English' : 'Somali'}.`;
+      const aiVoiceResult = await this.ai.generateResponse(voicePrompt, [], { systemInstruction: sysInstruction, studentId: student.studentId });
+      const voiceReply = await VoiceReplyService.synthesizeVoice(aiVoiceResult.text, lang);
+      return {
+        replyText: aiVoiceResult.text,
+        studentId: student.studentId,
+        intent: 'general',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+        replyMedia: voiceReply
+          ? { type: 'audio', dataBuffer: voiceReply.buffer, mimeType: voiceReply.mimeType || 'audio/mpeg', ptt: false }
+          : undefined,
+      };
+    }
+
     // 5.6. Handle Image Generation request ("ii samee sawir...", "create an image of...")
     if (ImageGeneratorService.isImageRequest(content)) {
       const prompt = ImageGeneratorService.extractPrompt(content);
@@ -301,9 +325,25 @@ export class StudentAdvisorEngine {
     // 11.5. Synthesize voice reply if user sent a voice note or explicitly requested voice.
     // Also respond with voice when user is replying in a group via voice (media.type === 'audio').
     let replyMedia: OutgoingMedia | undefined;
+
+    // ─── Voice Request Detection ───────────────────────────────────────────────
+    // Triggers voice reply when:
+    //   • User sent an audio/voice note (media.type === 'audio')
+    //   • User explicitly asked for voice in Somali or English text
+    //
+    // Somali phrases covered:
+    //   "cod isoo duub"       → record me a voice
+    //   "cod ii duub"         → record voice for me
+    //   "cod ahaan"           → in voice / as voice
+    //   "cod ku jawaab"       → reply in voice
+    //   "cod iigu soo jawaab" → reply to me by voice
+    //   "cod ka hadal"        → speak by voice
+    //   "codka"               → (the) voice
+    //   "voice note"          → English
+    //   "reply in voice"      → English
     const wantsVoice =
       media?.type === 'audio' ||
-      /(?:cod\s+ahaan|voice\s+note|voice\s+message|reply\s+in\s+voice|cod\s+iigu\s+soo\s+jawaab|cod\s+ku\s+jawaab)/i.test(content);
+      /(?:cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
     if (wantsVoice) {
       console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
       try {
