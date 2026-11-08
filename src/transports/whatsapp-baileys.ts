@@ -89,6 +89,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       printQRInTerminal: false, // We handle QR with qrcode-terminal
       logger,
       browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
+      syncFullHistory: false, // Prevent history flood desync
+      getMessage: async (key) => {
+        if (key?.id && this.rawMessages.has(key.id)) {
+          return this.rawMessages.get(key.id)?.message;
+        }
+        return undefined;
+      },
     });
 
     this.socket.ev.on('creds.update', saveCreds);
