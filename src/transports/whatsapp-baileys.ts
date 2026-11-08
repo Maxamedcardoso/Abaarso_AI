@@ -193,11 +193,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         const lowerText = text.toLowerCase();
-        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.includes('@abaarso') || lowerText.includes('@abarso') || lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso');
+        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso');
 
         // Allow host to test from their own phone:
         // - In 1-on-1 private chat: any human message typed by host (not sent by bot)
-        // - In group chat: only if explicitly mentioning @cardoso / @abaarso or replying to bot
+        // - In group chat: only if explicitly mentioning @cardoso or replying to bot
         const isHumanHostMessage = Boolean(msg.key.fromMe && (!msg.key.id || !this.botSentMessageIds.has(msg.key.id)));
         const isSelfCommand = isHumanHostMessage && (!isGroup || hasCardosoMention || isReplyingToBot);
 

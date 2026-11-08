@@ -117,7 +117,7 @@ suite.test('MessageRouter enforces group mention-only filter and admin controls'
     messaging: {
       ...config.messaging,
       groupResponseMode: 'mention_only' as const,
-      prefix: '!abarso',
+      prefix: '!cardoso',
     },
   };
 
@@ -143,7 +143,7 @@ suite.test('MessageRouter enforces group mention-only filter and admin controls'
     senderId: '252610000001',
     chatId: 'student_group@g.us',
     isGroup: true,
-    content: '@abarso sideen u bartaa Python?',
+    content: '@cardoso sideen u bartaa Python?',
     rawTimestamp: Date.now(),
     isMentioned: true,
   }, mockTransport);
@@ -156,7 +156,7 @@ suite.test('MessageRouter enforces group mention-only filter and admin controls'
     senderId: '252610000099', // Recognized admin
     chatId: 'student_group@g.us',
     isGroup: true,
-    content: '!abarso off',
+    content: '!cardoso off',
     rawTimestamp: Date.now(),
     isMentioned: true,
   }, mockTransport);
@@ -169,7 +169,7 @@ suite.test('MessageRouter enforces group mention-only filter and admin controls'
     senderId: '252610000001',
     chatId: 'student_group@g.us',
     isGroup: true,
-    content: '!abarso help me',
+    content: '!cardoso help me',
     rawTimestamp: Date.now(),
     isMentioned: true,
   }, mockTransport);

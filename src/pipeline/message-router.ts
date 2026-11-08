@@ -56,8 +56,6 @@ export class MessageRouter {
     const lowerText = text.toLowerCase();
     if (
       lowerText.startsWith('!cardoso') ||
-      lowerText.startsWith('!abaarso') ||
-      lowerText.startsWith('!abarso') ||
       lowerText.startsWith('!admin') ||
       lowerText.startsWith(this.config.messaging.prefix.toLowerCase())
     ) {
@@ -118,9 +116,9 @@ export class MessageRouter {
     }
 
     // 5. Group Mention / Prefix Filter
-    // In groups, only respond if @mentioned (@cardoso / @abaarso / @abarso) or prefixed with !cardoso / !abaarso / !abarso
-    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || lowerText.includes('@abaarso') || lowerText.includes('@abarso');
+    // In groups, only respond if @mentioned (@cardoso) or prefixed with !cardoso
+    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
+    const hasMention = message.isMentioned || lowerText.includes('@cardoso');
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
       if (!hasMention && !hasPrefix) {
@@ -131,13 +129,13 @@ export class MessageRouter {
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!cardoso', '!Cardoso', '!cardoso', '@cardoso', '@cardoso', '@cardoso', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '@cardoso', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
-    // Also strip inline mentions like "@cardoso" or "@abaarso"
-    queryText = queryText.replace(/@(cardoso)\b/gi, '').trim();
+    // Also strip inline mentions like "@cardoso"
+    queryText = queryText.replace(/@cardoso\b/gi, '').trim();
 
     if (!queryText) {
       queryText = '!help';

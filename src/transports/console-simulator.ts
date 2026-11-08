@@ -80,7 +80,7 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
           isGroup: this.isSimulatedGroup,
           content: trimmed,
           rawTimestamp: Date.now(),
-          isMentioned: trimmed.toLowerCase().includes('@cardoso') || trimmed.toLowerCase().includes('@abaarso') || trimmed.startsWith('!'),
+          isMentioned: trimmed.toLowerCase().includes('@cardoso') || trimmed.startsWith('!'),
         };
 
         await this.messageHandler(incoming);
