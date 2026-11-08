@@ -88,8 +88,8 @@ export class StudentAdvisorEngine {
     if (intentResult.intent === 'greeting' && storedHistory.length === 0) {
       const isEnglishGreeting = /^(hello|hi|hey|good\s+morning|good\s+afternoon)/i.test(content.trim());
       const greetingReply = isEnglishGreeting
-        ? 'Hello! How are you doing today? 😊'
-        : 'Wcs walaal! Waan fiicanahay, adiguna sidee tahay? 😊';
+        ? 'Hi! How are you? 😊'
+        : 'Wcs! Waan fiicanahay. Adiguna? 😊';
 
       return {
         replyText: greetingReply,
