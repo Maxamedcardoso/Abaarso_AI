@@ -36,8 +36,8 @@ export class IntentClassifier {
       return { intent: 'help', confidence: 0.95, tags: ['system'] };
     }
 
-    // 3. Creator / Author questions ("Yaa ku sameeyey?", "Who created you?")
-    const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+bot|yaa\s+dhisay\s+bot)/i.test(lower);
+    // 3. Creator / Author questions ("Yaa ku sameeyey?", "Who created you?", "Halkee buu joogaa?")
+    const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+bot|yaa\s+dhisay\s+bot|(halkee?|meelkee?|halkuu|xaggee|xagguu)\s+(buu\s+|uu\s+)?(joogaa?|deggan\s*yahay|ku\s*nool\s*yahay)|where\s+(does|is)\s+(he|mohamed|the\s+creator)\s+(live|located|stay))/i.test(lower);
     if (isCreatorQuery) {
       return { intent: 'creator', confidence: 0.98, tags: ['creator', 'developer'] };
     }

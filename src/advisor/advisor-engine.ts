@@ -107,18 +107,28 @@ export class StudentAdvisorEngine {
       };
     }
 
-    // 7.5. Handle Creator / Author inquiry ("Yaa ku sameeyey?")
+    // 7.5. Handle Creator / Author inquiry ("Yaa ku sameeyey?", "Who created you?", "Halkee buu joogaa?")
     if (intentResult.intent === 'creator') {
-      const isEnglish = lang === 'en';
-      const creatorReply = isEnglish
-        ? `🌟 *About My Creator*\n\nI was designed and created by *Mohamed Dahir*, an exceptionally talented Software Engineer and Honor Graduate in Software Engineering from *Abaarso Tech University*! 🎓✨\n\nHe is the brilliant mind behind *ABARSO AI*, built to make knowledge, intelligence, and assistance accessible to everyone.`
-        : `🌟 *Ku Saabsan Cidda I Samaysay*\n\nWaxaa i dhisay oo i horumariyey *Maxamed Daahir*, oo ah injineer aad u xariif ah isla markaana haysta shahaadada sare ee sharafta leh (*Honor Degree*) ee maaddada *Software Engineering* oo uu ka qalin-jabiyey *Jaamacadda Abaarso* (Abaarso Tech University)! 🎓✨\n\nWaa maskaxdii hal-abuurka sare lahayd ee ka dambaysay samaynta iyo shaqada *ABARSO AI*.`;
+      const clean = content.toLowerCase().trim();
+      const isEnglish = lang === 'en' || /^(who|whom|where)/i.test(clean) || /(created|made|built|developer|creator|live|located)\s+you/i.test(clean);
+      const isLocationQuery = /(halkee|meelkee|halkuu|xaggee|xagguu|where\s+(does|is))/i.test(clean);
+
+      let creatorReply: string;
+      if (isLocationQuery) {
+        creatorReply = isEnglish
+          ? `📍 *Creator's Location*\n\n*Mohamed Dahir* is based and lives in the historic coastal city of *Berbera*, specifically in the *Jamalaaye neighborhood*! 🌊🏢`
+          : `📍 *Goobta Uu Joogo Qofka I Sameeyay*\n\n*Maxamed Daahir* wuxuu joogaa oo uu ku nool yahay magaalada qadiimiga ah ee *Berbera*, gaar ahaan *Xaafadda Jamalaaye*! 🌊📍`;
+      } else {
+        creatorReply = isEnglish
+          ? `🌟 *MEET THE CREATOR OF ABARSO AI*\n\nABARSO AI was envisioned, designed, and developed by *Mohamed Dahir*, a Software Engineer holding a *Bachelor's Degree in Computer Science* from Abaarso Tech University, where he studied in the *Faculty of Software Engineering and graduated with Honors*. 🎓🏆\n\nHe is an ambitious technology innovator driven by creativity, dedication, and a passion for building intelligent solutions that make technology and knowledge more accessible to everyone. He resides in *Berbera (Jamalaaye neighborhood)*.\n\n*Mohamed Dahir — combining knowledge, innovation, and vision to create technology that makes a difference.* 🚀`
+          : `🌟 *QOFKA KA DAMBEEYA ABARSO AI*\n\nABARSO AI waxaa hindisay, naqshadeeyay, isla markaana horumariyay *Maxamed Daahir*, oo ah Software Engineer haysta shahaadada *Bachelor's Degree in Computer Science*, kana tirsanaa *Faculty of Software Engineering* ee Jaamacadda Abaarso Tech University, halkaas oo uu ku qalin-jabiyay sharaf (Honors). 🎓🏆\n\nWaa hal-abuur leh aragti fog, dadaal iyo jacayl uu u qabo teknoolojiyadda. Himiladiisu waa inuu awoodda Artificial Intelligence iyo teknoolojiyadda casriga ah ka dhigo kuwo bulshada anfaca, aqoontana qof walba u fududeeya. Wuxuu ku nool yahay magaalada *Berbera (Xaafadda Jamalaaye)*.\n\n*Maxamed Daahir — aqoon, hal-abuur iyo himilo teknoolojiyadeed oo mustaqbalka wax ka beddeli karta.* 🚀`;
+      }
 
       return {
         replyText: creatorReply,
         studentId: student.studentId,
         intent: 'creator',
-        language: lang,
+        language: isEnglish ? 'en' : 'so',
         latencyMs: Date.now() - startTime,
       };
     }

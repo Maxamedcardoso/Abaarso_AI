@@ -139,6 +139,29 @@ suite.test('Creator intent accurately introduces creator Maxamed Daahir', async 
   assertTrue(resEnglish.replyText.includes('Mohamed Dahir'), 'Must mention Mohamed Dahir in English');
   assertTrue(resEnglish.replyText.includes('Abaarso'), 'Must mention Abaarso University');
 
+  // Test Location inquiry
+  const resLocation = await engine.processMessage({
+    rawSenderId: 'student_creator_3',
+    chatId: 'chat_creator_loc',
+    isGroup: false,
+    content: 'Halkee buu joogaa Maxamed Daahir?',
+  });
+
+  assertEqual(resLocation.intent, 'creator', 'Location inquiry should classify as creator intent');
+  assertTrue(resLocation.replyText.includes('Berbera'), 'Must mention Berbera');
+  assertTrue(resLocation.replyText.includes('Jamalaaye'), 'Must mention Jamalaaye neighborhood');
+
+  const resLocationEn = await engine.processMessage({
+    rawSenderId: 'student_creator_4',
+    chatId: 'chat_creator_loc_en',
+    isGroup: false,
+    content: 'Where is he located?',
+  });
+
+  assertEqual(resLocationEn.intent, 'creator', 'English location inquiry should classify as creator intent');
+  assertTrue(resLocationEn.replyText.includes('Berbera'), 'Must mention Berbera in English');
+  assertTrue(resLocationEn.replyText.includes('Jamalaaye'), 'Must mention Jamalaaye in English');
+
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
