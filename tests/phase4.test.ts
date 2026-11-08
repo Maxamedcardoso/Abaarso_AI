@@ -82,15 +82,15 @@ suite.test('PromptBuilder generates appropriate system directives for each langu
     isGroupChat: false,
   });
   assertTrue(somaliPrompt.includes('LANGUAGE DIRECTIVE: SOMALI'), 'Must include Somali directive');
-  assertTrue(somaliPrompt.includes('Socratic Method'), 'Must enforce Socratic homework tutoring');
-  assertTrue(somaliPrompt.includes('WhatsApp'), 'Must enforce WhatsApp formatting');
+  assertTrue(somaliPrompt.includes('ABARSO AI'), 'Must include ABARSO AI identity');
+  assertTrue(somaliPrompt.includes('STRICT SHORT GREETING MODE'), 'Must enforce strict short greeting mode');
 
   const englishPrompt = PromptBuilder.buildSystemInstruction({
     detectedLanguage: 'en',
     isGroupChat: true,
   });
   assertTrue(englishPrompt.includes('LANGUAGE DIRECTIVE: ENGLISH'), 'Must include English directive');
-  assertTrue(englishPrompt.includes('Group Courtesy'), 'Must include group courtesy when in group chat');
+  assertTrue(englishPrompt.includes('Group mode'), 'Must include group mode note when in group chat');
 
   const mixedPrompt = PromptBuilder.buildSystemInstruction({
     detectedLanguage: 'mixed',

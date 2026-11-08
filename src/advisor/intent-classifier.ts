@@ -35,14 +35,14 @@ export class IntentClassifier {
       return { intent: 'help', confidence: 0.95, tags: ['system'] };
     }
 
-    // 2.5. Pure Greetings (asc, wcs, hello, hi)
+    // 3. Pure Greetings — Somali & English casual greetings (all common variants)
     const cleanGreeting = lower.replace(/[^a-z0-9\s]/g, '').trim();
-    const isPureGreeting = /^(asc|wcs|salaam|salaan|assalaamu\s*calaykum|assalamu\s*alaykum|hello|hi)(\s+(sxb|wll|walaal|saaxiib|saaxib|sxbo|abwaan|ai|abarso|dhammaan))*$/i.test(cleanGreeting);
+    const isPureGreeting = /^(asc|wcs|salaam|salaan|assalaamu\s*calaykum|assalamu\s*alaykum|hello|hi|hey|ii?\s*waran|iwaran|iska\s*warr?an|iskawarr?an|sidee?d?\s*tahay|see\s*tahay|maxaa?\s*cusub|nabad(\s*miyaa?)?|how\s+are\s+you|good\s+(morning|afternoon|evening)|howdy|wassup|whats?\s*up)(\s+(sxb|wll|walaal|saaxiib|saaxib|sxbo|abwaan|ai|abarso|dhammaan|guys|there|man|bro))*$/i.test(cleanGreeting);
     if (isPureGreeting) {
       return { intent: 'greeting', confidence: 0.98, tags: ['greeting'] };
     }
 
-    // 3. Programming keywords
+    // 4. Programming keywords (tagging only)
     const progKeywords = [
       'python', 'javascript', 'js', 'react', 'node', 'nodejs', 'flutter', 'dart',
       'html', 'css', 'sql', 'database', 'koodh', 'code', 'error', 'bug', 'loop',
@@ -54,7 +54,7 @@ export class IntentClassifier {
       return { intent: 'programming', confidence: Math.min(0.95, 0.7 + (progMatches.length * 0.1)), tags: progMatches };
     }
 
-    // 4. Homework keywords
+    // 5. Homework keywords (tagging only)
     const hwKeywords = [
       'homework', 'howl-guri', 'shaqo-guri', 'suaal', 'exercise', 'assignment',
       'quiz', 'problem', 'solve', 'calculate', 'xisaabi', 'jawaab', 'answer this',
@@ -65,7 +65,7 @@ export class IntentClassifier {
       return { intent: 'homework', confidence: Math.min(0.95, 0.65 + (hwMatches.length * 0.1)), tags: hwMatches };
     }
 
-    // 5. Academic advice keywords
+    // 6. Academic advice keywords (tagging only)
     const academicKeywords = [
       'imtixaan', 'exam', 'test', 'study', 'baro', 'jaamacad', 'university', 'iskuul',
       'schedule', 'jadwal', 'time management', 'waqti', 'maareyn', 'revision',
@@ -76,7 +76,7 @@ export class IntentClassifier {
       return { intent: 'academic', confidence: Math.min(0.95, 0.7 + (academicMatches.length * 0.1)), tags: academicMatches };
     }
 
-    // 6. Motivation & wellbeing keywords
+    // 7. Motivation & wellbeing keywords
     const motivationKeywords = [
       'dhiirigelin', 'motivation', 'caajis', 'quus', 'stress', 'tired', 'daallan',
       'walwal', 'anxiety', 'worried', 'hopeless', 'encouragement', 'dhiiri-geli',
@@ -90,4 +90,3 @@ export class IntentClassifier {
     return { intent: 'general', confidence: 0.5, tags: [] };
   }
 }
-

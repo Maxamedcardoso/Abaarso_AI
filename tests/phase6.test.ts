@@ -7,22 +7,31 @@ import { AIOrchestrator } from '../src/ai/ai-orchestrator.js';
 import { config } from '../src/config/env.js';
 import fs from 'fs';
 
-const suite = new TestSuite('Phase 6: Academic Advisor Features & Safety Guardrails');
+const suite = new TestSuite('Phase 6: AI Features & Safety Guardrails');
 
 const testDb = './data/test_advisor.db';
 
-suite.test('IntentClassifier accurately categorizes student intents', () => {
-  assertEqual(IntentClassifier.classify('Sideen Python ugu qoraa loop?').intent, 'programming', 'Should classify python loop as programming');
-  assertEqual(IntentClassifier.classify('React component state ma shaqeynayo').intent, 'programming', 'Should classify react state as programming');
-  assertEqual(IntentClassifier.classify('Fadlan homework-gan ii xalli suaasha 3aad').intent, 'homework', 'Should classify homework as homework');
-  assertEqual(IntentClassifier.classify('Sideen u diyaariyaa jadwalka imtixaanka jaamacadda?').intent, 'academic', 'Should classify study schedule as academic');
-  assertEqual(IntentClassifier.classify('Aad baan u daallanahay, waxbarashada dhiirigelin ma haysto').intent, 'motivation', 'Should classify study burnout as motivation');
+suite.test('IntentClassifier accurately categorizes user intents', () => {
+  // Privacy
   assertEqual(IntentClassifier.classify('!tirtir').intent, 'privacy_forget', 'Should classify !tirtir as privacy_forget');
   assertEqual(IntentClassifier.classify('!clear').intent, 'privacy_forget', 'Should classify !clear as privacy_forget');
+  // Help
   assertEqual(IntentClassifier.classify('!help').intent, 'help', 'Should classify !help as help');
+  // Greetings (pure greetings must be classified as greeting)
   assertEqual(IntentClassifier.classify('asc').intent, 'greeting', 'Should classify asc as greeting');
   assertEqual(IntentClassifier.classify('asc sxb').intent, 'greeting', 'Should classify asc sxb as greeting');
   assertEqual(IntentClassifier.classify('assalaamu calaykum').intent, 'greeting', 'Should classify assalaamu calaykum as greeting');
+  assertEqual(IntentClassifier.classify('iwaran').intent, 'greeting', 'Should classify iwaran as greeting');
+  assertEqual(IntentClassifier.classify('iska warran').intent, 'greeting', 'Should classify iska warran as greeting');
+  assertEqual(IntentClassifier.classify('hi').intent, 'greeting', 'Should classify hi as greeting');
+  assertEqual(IntentClassifier.classify('hello').intent, 'greeting', 'Should classify hello as greeting');
+  // Domain queries
+  assertEqual(IntentClassifier.classify('Sideen Python ugu qoraa loop?').intent, 'programming', 'Programming question should be programming');
+  assertEqual(IntentClassifier.classify('Fadlan homework-gan ii xalli').intent, 'homework', 'Homework question should be homework');
+  assertEqual(IntentClassifier.classify('jadwalka imtixaanka jaamacadda').intent, 'academic', 'Academic question should be academic');
+  assertEqual(IntentClassifier.classify('Maxaa ku dhacay Soomaaliya 1991?').intent, 'general', 'History question should be general');
+  // Motivation
+  assertEqual(IntentClassifier.classify('Aad baan u daallanahay dhiirigelin ma haysto').intent, 'motivation', 'Should classify burnout as motivation');
 });
 
 suite.test('MotivationCoach catches distress keywords and offers compassionate support without clinical diagnosis', () => {
