@@ -25,6 +25,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private lastActivityTimestamp: number | null = null;
   private rawMessages: Map<string, any> = new Map();
   private botSentMessageIds: Set<string> = new Set();
+  private recentSentTexts: Set<string> = new Set();
   private outboundQueue: OutboundQueue = new OutboundQueue(600, 1200);
   private sessionExpired: boolean = false;
 
@@ -235,40 +236,62 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         }
 
+        // ─── ANTI-LOOP & ECHO GUARDS ─────────────────────────────────────────────
+        // 1. Skip if message ID is known to be sent by this bot
+        if (msg.key?.id && this.botSentMessageIds.has(msg.key.id)) {
+          continue;
+        }
+
+        const lowerText = text.toLowerCase().trim();
+
+        // 2. Echo Protection: Ignore exact text recently sent by this bot
+        if (lowerText && this.recentSentTexts.has(lowerText)) {
+          continue;
+        }
+
+        // 3. Signature Protection: Drop any message containing bot tags/error banners
+        if (
+          lowerText.includes('[cardoso ai]') ||
+          lowerText.includes('[cardoso ai cooldown]') ||
+          lowerText.includes('xadkii daqiiqada') ||
+          lowerText.includes('server-ku wuxuu gaadhay xadkii') ||
+          lowerText.includes('gemini api request failed')
+        ) {
+          continue;
+        }
+
+        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso');
+
+        // 4. Strict fromMe Handling:
+        // Any message sent by the bot or from the host phone (fromMe):
+        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso' or '@cardoso' to test the bot.
+        if (msg.key.fromMe) {
+          if (!hasCardosoMention) {
+            continue;
+          }
+        }
+
         const contextInfo = msg.message.extendedTextMessage?.contextInfo;
         const quotedSender = contextInfo?.participant || '';
         const quotedStanzaId = contextInfo?.stanzaId || '';
         const botJid = this.socket?.user?.id?.split(':')[0] || '';
 
-        // Check if user is directly replying / quoting a message sent by the bot
+        // Check if student is directly replying / quoting a message sent by the bot
         const isReplyingToBot = Boolean(
-          (quotedSender && botJid && quotedSender.includes(botJid)) ||
-          (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId))
+          !msg.key.fromMe &&
+          ((quotedSender && botJid && quotedSender.includes(botJid)) ||
+           (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId)))
         );
 
         if (isReplyingToBot) {
           console.log(`💬 [Reply Detected] Ardaygu wuxuu toos ugu soo jawaabay (Reply) fariintii hore ee bot-ka!`);
         }
 
-        const lowerText = text.toLowerCase();
-        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso');
-
-        // Allow host to test from their own phone:
-        // - In 1-on-1 private chat: any human message typed by host (not sent by bot)
-        // - In group chat: only if explicitly mentioning @cardoso or replying to bot
-        const isHumanHostMessage = Boolean(msg.key.fromMe && (!msg.key.id || !this.botSentMessageIds.has(msg.key.id)));
-        const isSelfCommand = isHumanHostMessage && (!isGroup || hasCardosoMention || isReplyingToBot);
-
-        // Never respond to bot-sent messages or random host group chatter to avoid loops
-        if (msg.key.fromMe && !isSelfCommand) {
-          continue;
-        }
-
         // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @cardoso!
         // In group chats: must be @mentioned, prefixed, or replied to.
         // For media messages in groups: require a caption with @cardoso or private DM
         const mentionedJids = contextInfo?.mentionedJid || [];
-        const isMentioned = !isGroup || isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasCardosoMention;
+        const isMentioned = !isGroup || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasCardosoMention;
 
         // For media in groups, skip if not mentioned (avoid processing every group image)
         if (isMedia && isGroup && !isMentioned) continue;
@@ -309,6 +332,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (!this.socket || !this.connected) {
       console.warn('[WhatsAppBaileys] Cannot send message: transport not connected.');
       return false;
+    }
+
+    // Immediately cache normalized outbound text before network send to kill echo loops instantly
+    const normalizedText = text.trim().toLowerCase();
+    if (normalizedText) {
+      this.recentSentTexts.add(normalizedText);
+      if (this.recentSentTexts.size > 200) {
+        const oldest = this.recentSentTexts.keys().next().value;
+        if (oldest) this.recentSentTexts.delete(oldest);
+      }
     }
 
     return this.outboundQueue.enqueue(async () => {

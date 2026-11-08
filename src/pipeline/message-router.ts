@@ -50,10 +50,23 @@ export class MessageRouter {
       return { handled: false, reason: 'Empty message' };
     }
 
+    const lowerText = text.toLowerCase();
+
+    // 1b. Echo & Bot Self-Message Guard: Drop bot signatures, rate limit notices, and system errors
+    if (
+      lowerText.includes('[cardoso ai]') ||
+      lowerText.includes('[cardoso ai cooldown]') ||
+      lowerText.includes('xadkii daqiiqada') ||
+      lowerText.includes('server-ku wuxuu gaadhay xadkii') ||
+      lowerText.includes('gemini api request failed')
+    ) {
+      console.log(`⚠️ [Router Ignored] Bot-generated notice/echo detected ("${text.substring(0, 45)}..."). Discarding.`);
+      return { handled: false, reason: 'Bot echo discarded' };
+    }
+
     const isAdminUser = this.isAdmin(message.senderId);
 
     // 2. Admin Command Handling
-    const lowerText = text.toLowerCase();
     if (
       lowerText.startsWith('!cardoso') ||
       lowerText.startsWith('!admin') ||
