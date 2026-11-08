@@ -144,9 +144,9 @@ export class StudentAdvisorEngine {
        /^(?:@?cod|!cod|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan\s*(?:ku\s+jawaab)?|cod\s+iigu\s+(?:soo\s+)?jawaab|codka?\s*(?:ah\s+ku\s+jawaab)?|voice\s+note|send\s+(?:a\s+)?voice(?:\s+note)?)[.!،\s]*$/i.test(content.trim()));
     if (isPureVoiceRequest) {
       const voicePrompt = lang === 'en'
-        ? 'Give me a short, warm, conversational reply suitable for a voice note (2 sentences max).'
-        : 'Jawaab gaaban oo xasilloon oo Af-Soomaali ah ii sii si cod ahaan loo dhagaysan karo (2 jumlood oo ugu badan).';
-      const sysInstruction = `You are CARDOSO AI. Reply briefly (1-2 sentences max) in a warm, natural voice-note tone. Reply in ${lang === 'en' ? 'English' : 'Somali'}.`;
+        ? 'Give me a warm, natural, engaging conversational spoken reply welcoming the user and asking how you can help them.'
+        : 'Jawaab diirran, dabiici ah, oo maqal ahaan u wanaagsan oo Af-Soomaali ah bixi, adigoo qofka si wanaagsan u soo dhaweynaya una weydiinaya waxa uu u baahan yahay.';
+      const sysInstruction = `You are CARDOSO AI. Speak naturally, warmly, and thoroughly in a conversational voice-note tone. Reply in ${lang === 'en' ? 'English' : 'Somali'}.`;
       const aiVoiceResult = await this.ai.generateResponse(voicePrompt, [], { systemInstruction: sysInstruction, studentId: student.studentId });
       const voiceReply = await VoiceReplyService.synthesizeVoice(aiVoiceResult.text, lang);
       return {
@@ -320,6 +320,7 @@ You are listening directly to an authentic human voice message (spoken audio).
 1. Listen with acute, human-level attention to every word, phrase, regional accent, and emotional nuance spoken.
 2. The speaker may speak standard Somali, colloquial/informal Somali (e.g. sxb, sxp, wll, ii sheeg, maxaad ka taqaan, iwm), English, or Arabic. Accurately transcribe and understand their words even with background noise or natural speed.
 3. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said. Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
+4. Provide a rich, thorough, and complete explanation tailored to what the user asked — do NOT artificially truncate or shorten the response. Give full substance so the user receives a complete, satisfying answer.
 
 [User Spoken Audio Attached]: ${enrichedPrompt}`;
     }

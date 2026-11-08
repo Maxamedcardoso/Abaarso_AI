@@ -26,13 +26,14 @@ export class VoiceReplyService {
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Limit length for snappy, fast-loading WhatsApp voice notes (~350 characters max)
-    if (clean.length > 350) {
-      const sentenceEnd = clean.slice(0, 350).lastIndexOf('.');
-      if (sentenceEnd > 150) {
+    // Allow comprehensive, full-length voice explanations as requested by user.
+    // Up to 2,500 characters allows natural 3-4 minute in-depth voice notes without artificial cutoff.
+    if (clean.length > 2500) {
+      const sentenceEnd = clean.slice(0, 2500).lastIndexOf('.');
+      if (sentenceEnd > 1500) {
         clean = clean.slice(0, sentenceEnd + 1);
       } else {
-        clean = clean.slice(0, 350) + '...';
+        clean = clean.slice(0, 2500) + '...';
       }
     }
 
@@ -63,13 +64,14 @@ export class VoiceReplyService {
       const tts = new MsEdgeTTS();
       let isResolved = false;
 
+      // 60-second timeout to allow full-length, detailed voice notes to stream completely
       const timer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
           try { tts.close(); } catch {}
           resolve(null);
         }
-      }, 15000);
+      }, 60000);
 
       (async () => {
         try {
