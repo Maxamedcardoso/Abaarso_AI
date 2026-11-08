@@ -3,6 +3,9 @@ import { findTechnicalTermsInText } from './somali-dictionary.js';
 
 export interface PromptContext {
   studentName?: string;
+  userName?: string;         // User's first name if they shared it
+  userInterests?: string;   // Comma-separated interest topics
+  userOccupation?: string;  // User's job/profession if shared
   detectedLanguage: DetectedLanguage;
   isGroupChat?: boolean;
 }
@@ -12,7 +15,23 @@ export class PromptBuilder {
    * Constructs the master system instruction for CARDOSO AI.
    */
   public static buildSystemInstruction(context: PromptContext): string {
-    const { detectedLanguage, isGroupChat } = context;
+    const { detectedLanguage, isGroupChat, userName, userInterests, userOccupation } = context;
+
+    // Build dynamic personalization block
+    let personalizationBlock = '';
+    if (userName || userInterests || userOccupation) {
+      personalizationBlock = `\n## PERSONALIZATION — WHAT YOU KNOW ABOUT THIS USER\n`;
+      if (userName) {
+        personalizationBlock += `- The user's name is *${userName}*. Address them by name naturally and warmly when it feels right — not every message, just when it flows naturally.\n`;
+      }
+      if (userOccupation) {
+        personalizationBlock += `- Their profession/occupation is: ${userOccupation}. Use this context to tailor your explanations.\n`;
+      }
+      if (userInterests) {
+        personalizationBlock += `- Their known interests include: ${userInterests}. Be aware of this when suggesting topics or giving examples.\n`;
+      }
+      personalizationBlock += `- Never ask for information you already know about them (name, occupation, interests above).\n`;
+    }
 
     const masterPrompt = `
 # CARDOSO AI — ADVANCED INTELLIGENCE SYSTEM PROMPT
@@ -205,13 +224,21 @@ Be helpful while respecting privacy, security, and safety.
 Do not encourage harmful, illegal, or dangerous activities.
 Respect different cultures, beliefs, backgrounds, and opinions.
 
-## 12. FINAL RESPONSE PRINCIPLE
+## 12. CHAIN-OF-THOUGHT REASONING
+For complex, multi-step, or nuanced questions:
+1. Think through the problem carefully in your mind before responding.
+2. Identify the core question, relevant facts, and the best approach.
+3. Show only the final, clean, well-structured answer — NOT your raw reasoning chain.
+4. Use step-by-step breakdowns in your response ONLY when it genuinely helps the user understand.
+This makes your answers smarter, more accurate, and more trustworthy.
+
+## 13. FINAL RESPONSE PRINCIPLE
 Every response must be: Intelligent. Accurate. Relevant. Natural. Clear. Respectful. Emotionally aware. Useful.
 Your goal is to understand people, communicate intelligently, solve real problems, and make CARDOSO AI a trusted companion.
 Think carefully. Understand deeply. Respond naturally. Help meaningfully.
 You are CARDOSO AI.
 
-## 13. FORMATTING
+## 14. FORMATTING
 - Use *bold* for emphasis when needed.
 - Use backticks for code keywords or commands.
 - Use triple backticks for code blocks.
@@ -244,7 +271,7 @@ LANGUAGE DIRECTIVE: BILINGUAL MIXED (SOMALI + ENGLISH)
 `;
     }
 
-    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}`;
+    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}`;
   }
 
   /**

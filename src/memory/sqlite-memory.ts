@@ -30,7 +30,7 @@ export class SQLiteStudentMemory implements IStudentMemory {
     // Enable WAL mode for high performance and concurrency
     this.db.exec('PRAGMA journal_mode = WAL;');
 
-    // Create tables
+    // Create core tables
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS students (
         student_id TEXT PRIMARY KEY,
@@ -56,6 +56,17 @@ export class SQLiteStudentMemory implements IStudentMemory {
       CREATE INDEX IF NOT EXISTS idx_conv_timestamp ON conversations(timestamp);
       CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations(chat_id);
     `);
+
+    // Safe schema migrations — add profile columns if they don't exist yet
+    const profileColumns = ['first_name TEXT', 'interests TEXT', 'occupation TEXT'];
+    for (const colDef of profileColumns) {
+      const colName = colDef.split(' ')[0];
+      try {
+        this.db.exec(`ALTER TABLE students ADD COLUMN ${colName} TEXT DEFAULT NULL;`);
+      } catch {
+        // Column already exists — safe to ignore
+      }
+    }
   }
 
   public async getOrCreateStudent(rawIdentifier: string): Promise<StudentProfile> {
@@ -77,6 +88,9 @@ export class SQLiteStudentMemory implements IStudentMemory {
         studentId: existing.student_id,
         rawIdentifier: idHash,
         preferredLanguage: existing.preferred_language || 'so',
+        firstName: existing.first_name || undefined,
+        interests: existing.interests || undefined,
+        occupation: existing.occupation || undefined,
         firstSeenAt: existing.first_seen_at,
         lastActiveAt: now,
         totalMessagesCount: existing.total_messages + 1,
@@ -171,6 +185,23 @@ export class SQLiteStudentMemory implements IStudentMemory {
       totalMessages: messagesCount?.count || 0,
       oldestMessageDate: oldestRow?.oldest ? new Date(oldestRow.oldest).toISOString() : null,
     };
+  }
+
+  public async updateUserProfile(studentId: string, updates: { firstName?: string; interests?: string; occupation?: string; preferredLanguage?: string }): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    if (updates.firstName !== undefined) { setClauses.push('first_name = ?'); values.push(updates.firstName); }
+    if (updates.interests !== undefined) { setClauses.push('interests = ?'); values.push(updates.interests); }
+    if (updates.occupation !== undefined) { setClauses.push('occupation = ?'); values.push(updates.occupation); }
+    if (updates.preferredLanguage !== undefined) { setClauses.push('preferred_language = ?'); values.push(updates.preferredLanguage); }
+
+    if (setClauses.length === 0) return;
+
+    values.push(studentId);
+    this.db.prepare(`UPDATE students SET ${setClauses.join(', ')} WHERE student_id = ?`).run(...values);
   }
 
   public async close(): Promise<void> {

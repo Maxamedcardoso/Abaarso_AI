@@ -18,6 +18,9 @@ export interface StudentProfile {
   studentId: string;             // Internal anonymized UUID
   rawIdentifier: string;         // WhatsApp phone number or console ID (stored securely)
   preferredLanguage?: 'so' | 'en' | 'mixed';
+  firstName?: string;            // User's name if they shared it
+  interests?: string;            // Topics and interests the user has mentioned
+  occupation?: string;           // Job, student, etc if shared
   firstSeenAt: number;
   lastActiveAt: number;
   totalMessagesCount: number;
@@ -67,6 +70,11 @@ export interface IStudentMemory {
     totalMessages: number;
     oldestMessageDate: string | null;
   }>;
+
+  /**
+   * Updates a user's personal profile data (name, interests, occupation)
+   */
+  updateUserProfile(studentId: string, updates: { firstName?: string; interests?: string; occupation?: string; preferredLanguage?: string }): Promise<void>;
 
   /**
    * Closes database connections cleanly

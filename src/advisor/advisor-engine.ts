@@ -8,6 +8,7 @@ import { ConversationMessage } from '../ai/ai-provider.interface.js';
 import { WebSearchService } from '../services/web-search.service.js';
 import { ReminderService, reminderService } from '../services/reminder.service.js';
 import { MessageMedia } from '../transports/transport.interface.js';
+import { UserProfiler } from '../services/user-profiler.service.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -170,10 +171,37 @@ export class StudentAdvisorEngine {
       };
     }
 
+    // 8.5. Detect and persist user profile data from this message
+    const detectedName = UserProfiler.extractName(content);
+    const detectedOccupation = UserProfiler.extractOccupation(content);
+    const detectedTopics = UserProfiler.detectTopics(content);
+
+    const profileUpdates: { firstName?: string; interests?: string; occupation?: string } = {};
+    let currentStudent = student;
+
+    if (detectedName && detectedName !== student.firstName) {
+      profileUpdates.firstName = detectedName;
+    }
+    if (detectedOccupation && detectedOccupation !== student.occupation) {
+      profileUpdates.occupation = detectedOccupation;
+    }
+    if (detectedTopics.length > 0) {
+      profileUpdates.interests = UserProfiler.mergeInterests(student.interests, detectedTopics);
+    }
+
+    if (Object.keys(profileUpdates).length > 0) {
+      await this.memory.updateUserProfile(student.studentId, profileUpdates);
+      // Merge updates into local copy for use in this response
+      currentStudent = { ...student, ...profileUpdates };
+    }
+
     // 9. Build system instruction
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
+      userName: currentStudent.firstName,
+      userInterests: currentStudent.interests,
+      userOccupation: currentStudent.occupation,
     });
 
     // 10. Enrich prompt with glossary hints and optional web search context
