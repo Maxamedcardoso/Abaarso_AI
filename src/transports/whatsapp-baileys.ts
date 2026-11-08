@@ -72,7 +72,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       auth: state,
       printQRInTerminal: false, // We handle QR with qrcode-terminal
       logger,
-      browser: ['ABARSO AI Advisor', 'Chrome', '1.0.0'],
+      browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
     });
 
     this.socket.ev.on('creds.update', saveCreds);
@@ -83,7 +83,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       if (qr) {
         this.currentQR = qr;
         console.log('\n======================================================');
-        console.log('  SCAN THIS QR CODE IN WHATSAPP TO LINK ABARSO AI:   ');
+        console.log('  SCAN THIS QR CODE IN WHATSAPP TO LINK CARDOSO AI:   ');
         console.log('======================================================');
         qrcode.generate(qr, { small: true });
         console.log('Open WhatsApp > Linked Devices > Link a Device\n');
@@ -155,23 +155,23 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         const lowerText = text.toLowerCase();
-        const hasAbaarsoMention = lowerText.includes('@abaarso') || lowerText.includes('@abarso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso');
+        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.includes('@abaarso') || lowerText.includes('@abarso') || lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso');
 
         // Allow host to test from their own phone:
         // - In 1-on-1 private chat: any human message typed by host (not sent by bot)
-        // - In group chat: only if explicitly mentioning @abaarso or replying to bot
+        // - In group chat: only if explicitly mentioning @cardoso / @abaarso or replying to bot
         const isHumanHostMessage = Boolean(msg.key.fromMe && (!msg.key.id || !this.botSentMessageIds.has(msg.key.id)));
-        const isSelfCommand = isHumanHostMessage && (!isGroup || hasAbaarsoMention || isReplyingToBot);
+        const isSelfCommand = isHumanHostMessage && (!isGroup || hasCardosoMention || isReplyingToBot);
 
         // Never respond to bot-sent messages or random host group chatter to avoid loops
         if (msg.key.fromMe && !isSelfCommand) {
           continue;
         }
 
-        // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @abaarso!
+        // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @cardoso!
         // In group chats: must be @mentioned, prefixed, or replied to.
         const mentionedJids = contextInfo?.mentionedJid || [];
-        const isMentioned = !isGroup || isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasAbaarsoMention;
+        const isMentioned = !isGroup || isSelfCommand || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasCardosoMention;
 
         const incoming: IncomingMessage = {
           id: msg.key.id || `baileys_${Date.now()}`,
@@ -265,7 +265,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 ⚠️  ==============================================================
 ⚠️  WHATSAPP WEB AUTOMATION BAN RISK NOTICE
 ⚠️  ==============================================================
-⚠️  ABARSO AI uses WhatsApp Web multi-device companion protocol.
+⚠️  CARDOSO AI uses WhatsApp Web multi-device companion protocol.
 ⚠️  Meta actively monitors and suspends accounts detected using
 ⚠️  automated scripts or bulk unsolicited messaging.
 ⚠️

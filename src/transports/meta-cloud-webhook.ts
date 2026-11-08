@@ -44,7 +44,7 @@ export class MetaCloudWebhookTransport implements IMessagingTransport {
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({
         status: 'ok',
-        service: 'ABARSO AI Webhook Gateway',
+        service: 'CARDOSO AI Webhook Gateway',
         timestamp: new Date().toISOString(),
       });
     });

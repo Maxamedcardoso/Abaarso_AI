@@ -61,7 +61,7 @@ export class LlamaProvider implements IAIProvider {
     if (!this.isAvailable) {
       // Honestly report offline status — never fake a response!
       return {
-        text: `⚠️ [ABARSO AI Fallback]: Local llama.cpp fallback server is unavailable at ${this.endpointUrl}. Ensure llama.cpp/Ollama is running.`,
+        text: `⚠️ [CARDOSO AI Fallback]: Local llama.cpp fallback server is unavailable at ${this.endpointUrl}. Ensure llama.cpp/Ollama is running.`,
         provider: 'llama_fallback',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
@@ -69,7 +69,7 @@ export class LlamaProvider implements IAIProvider {
     }
 
     const messages = [
-      { role: 'system', content: options.systemInstruction || 'You are ABARSO AI, a student advisor.' },
+      { role: 'system', content: options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.' },
       ...history.map(h => ({
         role: h.role === 'model' ? 'assistant' : 'user',
         content: h.content,
@@ -105,7 +105,7 @@ export class LlamaProvider implements IAIProvider {
     } catch (err: any) {
       this.available = false; // Mark unavailable if it crashed
       return {
-        text: `⚠️ [ABARSO AI Fallback Error]: Local llama request failed: ${err.message}`,
+        text: `⚠️ [CARDOSO AI Fallback Error]: Local llama request failed: ${err.message}`,
         provider: 'llama_fallback',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,

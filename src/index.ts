@@ -11,7 +11,7 @@ import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
 
 async function bootstrap() {
   console.log(`\n======================================================`);
-  console.log(`  ABARSO AI — Your Smart Student Advisor               `);
+  console.log(`  CARDOSO AI — Your Smart Personal AI Assistant        `);
   console.log(`  Tagline: Barasho, Dhiirigelin, iyo Horumar          `);
   console.log(`======================================================\n`);
 
@@ -83,7 +83,7 @@ async function bootstrap() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'ok',
-        service: 'ABARSO AI Advisor',
+        service: 'CARDOSO AI Assistant',
         mode: config.messaging.mode,
         uptimeSeconds: Math.floor(process.uptime()),
         timestamp: new Date().toISOString(),
@@ -105,7 +105,7 @@ async function bootstrap() {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <meta http-equiv="refresh" content="12">
-            <title>Scan WhatsApp QR — ABARSO AI</title>
+            <title>Scan WhatsApp QR — CARDOSO AI</title>
             <style>
               body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; box-sizing: border-box; }
               .card { background: #1e293b; padding: 2rem; border-radius: 16px; max-width: 480px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); border: 1px solid #334155; }
@@ -144,7 +144,7 @@ async function bootstrap() {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>ABARSO AI — Online 24/7</title>
+          <title>CARDOSO AI — Online 24/7</title>
           <style>
             body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; box-sizing: border-box; }
             .card { background: #1e293b; padding: 2.5rem; border-radius: 16px; max-width: 520px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); border: 1px solid #334155; }
@@ -157,13 +157,13 @@ async function bootstrap() {
         </head>
         <body>
           <div class="card">
-            <h1>🤖 ABARSO AI</h1>
+            <h1>🤖 CARDOSO AI</h1>
             <div class="badge">● ONLINE 24/7</div>
-            <p>Smart Student Advisor — Barasho, Dhiirigelin, iyo Horumar.</p>
+            <p>Your Smart Personal AI Assistant.</p>
             <div class="info">
               <div>📱 WhatsApp Status: <code>Active & Connected</code></div>
               <div>⚡ AI Engine: <code>${config.gemini.model}</code></div>
-              <div>💬 Mention: <code>@abaarso</code> ama <code>!abaarso</code></div>
+              <div>💬 Mention: <code>@cardoso</code> ama <code>!cardoso</code></div>
             </div>
           </div>
         </body>
@@ -191,7 +191,7 @@ async function bootstrap() {
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log('\nGracefully shutting down ABARSO AI...');
+    console.log('\nGracefully shutting down CARDOSO AI...');
     server.close();
     await transport.stop();
     await memory.close();

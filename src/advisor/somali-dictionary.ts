@@ -45,7 +45,7 @@ export const TECHNICAL_GLOSSARY: Record<string, TechnicalTermExplanation> = {
     term: 'API (Application Programming Interface)',
     somaliName: 'Buundo Xiriirisa Barnaamijyada',
     simpleExplanation: 'Waa buundo ama dilaal u oggolaanaya laba barnaamij oo kala duwan inay si nabadgelyo leh xog isu weydaarsadaan.',
-    practicalExample: 'Tusaale: Sida ABARSO AI u weydiisto xogta maskaxda Google Gemini.',
+    practicalExample: 'Tusaale: Sida CARDOSO AI u weydiisto xogta maskaxda Google Gemini.',
   },
   async: {
     term: 'Asynchronous / Async',

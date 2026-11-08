@@ -1,5 +1,5 @@
 /**
- * ABARSO AI Test Suite Runner
+ * CARDOSO AI Test Suite Runner
  * Lightweight, robust test harness that runs all unit, integration, and security tests.
  */
 

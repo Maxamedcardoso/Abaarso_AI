@@ -19,7 +19,7 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
     this.connected = true;
     this.lastActivityTimestamp = Date.now();
     console.log(`\n======================================================`);
-    console.log(`  ABARSO AI — Interactive Console Simulator Ready      `);
+    console.log(`  CARDOSO AI — Interactive Console Simulator Ready     `);
     console.log(`======================================================`);
     console.log(`Type any question in Somali or English.`);
     console.log(`Commands available:`);
@@ -80,7 +80,7 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
           isGroup: this.isSimulatedGroup,
           content: trimmed,
           rawTimestamp: Date.now(),
-          isMentioned: trimmed.toLowerCase().includes('@abarso') || trimmed.startsWith('!'),
+          isMentioned: trimmed.toLowerCase().includes('@cardoso') || trimmed.toLowerCase().includes('@abaarso') || trimmed.startsWith('!'),
         };
 
         await this.messageHandler(incoming);
@@ -100,7 +100,7 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
 
   public async sendMessage(chatId: string, text: string, options?: OutgoingMessageOptions): Promise<boolean> {
     this.lastActivityTimestamp = Date.now();
-    console.log(`\n🤖 ABARSO AI:\n${text}\n`);
+    console.log(`\n🤖 CARDOSO AI:\n${text}\n`);
     return true;
   }
 

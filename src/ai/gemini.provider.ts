@@ -44,7 +44,7 @@ export class GeminiProvider implements IAIProvider {
     const quotaCheck = this.quotaTracker.canMakeRequest();
     if (!quotaCheck.allowed) {
       return {
-        text: `⚠️ [ABARSO AI Safe Guard]: ${quotaCheck.reason}`,
+        text: `⚠️ [CARDOSO AI Safe Guard]: ${quotaCheck.reason}`,
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
@@ -53,7 +53,7 @@ export class GeminiProvider implements IAIProvider {
 
     if (!this.isAvailable || !this.client) {
       return {
-        text: '⚠️ [ABARSO AI Configuration]: Google Gemini API key is missing or invalid. Please configure GEMINI_API_KEY in your .env file.',
+        text: '⚠️ [CARDOSO AI Configuration]: Google Gemini API key is missing or invalid. Please configure GEMINI_API_KEY in your .env file.',
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
@@ -68,7 +68,7 @@ export class GeminiProvider implements IAIProvider {
         parts: [{ text: msg.content }],
       }));
 
-    const systemInstruction = options.systemInstruction || 'You are ABARSO AI, a helpful, encouraging student advisor.';
+    const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
     // 3. Execute generation with retry & backoff
     try {
@@ -122,7 +122,7 @@ export class GeminiProvider implements IAIProvider {
       const isRateLimit = err?.status === 429 || (err?.message && err.message.includes('429'));
       if (isRateLimit) {
         return {
-          text: '⏳ *[ABARSO AI]*: Server-ku wuxuu gaadhay xadkii daqiiqada (Rate Limit). Fadlan 10 ilbiriqsi kadib mar kale isku day!',
+          text: '⏳ *[CARDOSO AI]*: Server-ku wuxuu gaadhay xadkii daqiiqada (Rate Limit). Fadlan 10 ilbiriqsi kadib mar kale isku day!',
           provider: 'gemini',
           modelUsed: this.modelName,
           latencyMs: Date.now() - startTime,
@@ -132,7 +132,7 @@ export class GeminiProvider implements IAIProvider {
       const isHighDemand = err?.status === 503 || (err?.message && (err.message.includes('503') || err.message.includes('high demand') || err.message.includes('Service Unavailable')));
       if (isHighDemand) {
         return {
-          text: '⏳ *[ABARSO AI]*: Server-ka Gemini AI ayaa hadda aad u mashquulsan (High Demand). Fadlan 1 daqiiqo kadib dib u soo qor su\'aashaada!',
+          text: '⏳ *[CARDOSO AI]*: Server-ka Gemini AI ayaa hadda aad u mashquulsan (High Demand). Fadlan 1 daqiiqo kadib dib u soo qor su\'aashaada!',
           provider: 'gemini',
           modelUsed: this.modelName,
           latencyMs: Date.now() - startTime,
@@ -140,7 +140,7 @@ export class GeminiProvider implements IAIProvider {
       }
 
       return {
-        text: `⚠️ [ABARSO AI Error]: Gemini API request failed (${err?.message || 'Unknown error'}). Check your network and API key.`,
+        text: `⚠️ [CARDOSO AI Error]: Gemini API request failed (${err?.message || 'Unknown error'}). Check your network and API key.`,
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,

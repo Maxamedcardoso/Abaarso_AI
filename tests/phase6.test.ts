@@ -49,7 +49,7 @@ suite.test('MotivationCoach catches distress keywords and offers compassionate s
 suite.test('Right-to-be-Forgotten command (!tirtir) executes immediately and clears history', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -86,7 +86,7 @@ suite.test('Right-to-be-Forgotten command (!tirtir) executes immediately and cle
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Greeting intent responds with "Wcs" and never returns "Asc"', async () => {
@@ -108,7 +108,7 @@ suite.test('Greeting intent responds with "Wcs" and never returns "Asc"', async 
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Creator intent accurately introduces creator Maxamed Daahir', async () => {
@@ -165,7 +165,7 @@ suite.test('Creator intent accurately introduces creator Maxamed Daahir', async 
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.run().then(summary => {

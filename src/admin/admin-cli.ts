@@ -19,7 +19,7 @@ async function runAdminCLI() {
   const command = process.argv[2] || 'stats';
 
   console.log(`\n======================================================`);
-  console.log(`  ABARSO AI — Admin Control CLI                       `);
+  console.log(`  CARDOSO AI — Admin Control CLI                      `);
   console.log(`======================================================\n`);
 
   if (command === 'stats') {

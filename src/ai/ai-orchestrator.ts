@@ -55,7 +55,7 @@ export class AIOrchestrator {
 
       // No fallback available — return clear zero-cost safeguard message
       return {
-        text: `⚠️ [ABARSO AI Zero-Cost Safeguard]: ${quota.reason}`,
+        text: `⚠️ [CARDOSO AI Zero-Cost Safeguard]: ${quota.reason}`,
         provider: 'gemini',
         modelUsed: this.geminiProvider.getStatus().model,
         latencyMs: 1,
@@ -74,7 +74,7 @@ export class AIOrchestrator {
     }
 
     return {
-      text: '⚠️ [ABARSO AI]: No AI provider is active. Please add your free GEMINI_API_KEY in .env or configure local llama.cpp fallback.',
+      text: '⚠️ [CARDOSO AI]: No AI provider is active. Please add your free GEMINI_API_KEY in .env or configure local llama.cpp fallback.',
       provider: 'gemini',
       modelUsed: this.geminiProvider.getStatus().model,
       latencyMs: 1,

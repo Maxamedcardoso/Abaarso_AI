@@ -82,7 +82,7 @@ suite.test('PromptBuilder generates appropriate system directives for each langu
     isGroupChat: false,
   });
   assertTrue(somaliPrompt.includes('LANGUAGE DIRECTIVE: SOMALI'), 'Must include Somali directive');
-  assertTrue(somaliPrompt.includes('ABARSO AI'), 'Must include ABARSO AI identity');
+  assertTrue(somaliPrompt.includes('CARDOSO AI'), 'Must include CARDOSO AI identity');
   assertTrue(somaliPrompt.includes('STRICT SHORT GREETING MODE'), 'Must enforce strict short greeting mode');
 
   const englishPrompt = PromptBuilder.buildSystemInstruction({

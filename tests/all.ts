@@ -11,7 +11,7 @@ const testFiles = [
 ];
 
 console.log(`\n================================================================`);
-console.log(`  ABARSO AI — RUNNING ALL UNIT, INTEGRATION & E2E TEST SUITES   `);
+console.log(`  CARDOSO AI — RUNNING ALL UNIT, INTEGRATION & E2E TEST SUITES  `);
 console.log(`================================================================\n`);
 
 let allPassed = true;
@@ -28,7 +28,7 @@ for (const file of testFiles) {
 
 if (allPassed) {
   console.log(`\n================================================================`);
-  console.log(`  🎉 ALL ABARSO AI TEST SUITES PASSED CLEANLY (31/31 TESTS)     `);
+  console.log(`  🎉 ALL CARDOSO AI TEST SUITES PASSED CLEANLY (31/31 TESTS)    `);
   console.log(`================================================================\n`);
 }
 

@@ -53,19 +53,19 @@ export class MessageRouter {
     const isAdminUser = this.isAdmin(message.senderId);
 
     // 2. Admin Command Handling
-    if (text.startsWith('!abaarso') || text.startsWith('!abarso') || text.startsWith('!admin')) {
+    if (text.startsWith('!cardoso') || text.startsWith('!abaarso') || text.startsWith('!abarso') || text.startsWith('!admin')) {
       const parts = text.split(/\s+/);
       const command = (parts[1] || '').toLowerCase();
 
       if (command === 'off' && isAdminUser) {
         if (message.isGroup) {
           this.inactiveGroups.add(message.chatId);
-          await transport.sendMessage(message.chatId, '🛑 *[ABARSO AI Admin]*: Bot has been turned OFF for this group by admin.', {
+          await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI Admin]*: Bot has been turned OFF for this group by admin.', {
             replyToMessageId: message.id,
           });
         } else {
           this.isBotActiveGlobally = false;
-          await transport.sendMessage(message.chatId, '🛑 *[ABARSO AI Admin]*: Bot has been turned OFF globally.', {
+          await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI Admin]*: Bot has been turned OFF globally.', {
             replyToMessageId: message.id,
           });
         }
@@ -75,12 +75,12 @@ export class MessageRouter {
       if (command === 'on' && isAdminUser) {
         if (message.isGroup) {
           this.inactiveGroups.delete(message.chatId);
-          await transport.sendMessage(message.chatId, '🟢 *[ABARSO AI Admin]*: Bot is now ACTIVE for this group.', {
+          await transport.sendMessage(message.chatId, '🟢 *[CARDOSO AI Admin]*: Bot is now ACTIVE for this group.', {
             replyToMessageId: message.id,
           });
         } else {
           this.isBotActiveGlobally = true;
-          await transport.sendMessage(message.chatId, '🟢 *[ABARSO AI Admin]*: Bot is now ACTIVE globally.', {
+          await transport.sendMessage(message.chatId, '🟢 *[CARDOSO AI Admin]*: Bot is now ACTIVE globally.', {
             replyToMessageId: message.id,
           });
         }
@@ -88,7 +88,7 @@ export class MessageRouter {
       }
 
       if (command === 'stats' && isAdminUser) {
-        await transport.sendMessage(message.chatId, `📊 *[ABARSO AI Status]*: Active=${this.isBotActiveGlobally}, Mode=${this.config.messaging.mode}`, {
+        await transport.sendMessage(message.chatId, `📊 *[CARDOSO AI Status]*: Active=${this.isBotActiveGlobally}, Mode=${this.config.messaging.mode}`, {
           replyToMessageId: message.id,
         });
         return { handled: true, reason: 'Admin stats query' };
@@ -111,27 +111,27 @@ export class MessageRouter {
     }
 
     // 5. Group Mention / Prefix Filter
-    // In groups, only respond if @mentioned (@abaarso / @abarso) or prefixed with !abaarso / !abarso
+    // In groups, only respond if @mentioned (@cardoso / @abaarso / @abarso) or prefixed with !cardoso / !abaarso / !abarso
     const lowerText = text.toLowerCase();
-    const hasPrefix = lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || lowerText.includes('@abaarso') || lowerText.includes('@abarso');
+    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
+    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || lowerText.includes('@abaarso') || lowerText.includes('@abarso');
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
       if (!hasMention && !hasPrefix) {
-        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@abaarso' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
+        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
         return { handled: false, reason: 'Group message without mention or prefix' };
       }
     }
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!abaarso', '!abarso', '@abaarso', '@abarso', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '!abaarso', '!abarso', '@cardoso', '@abaarso', '@abarso', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
-    // Also strip inline mentions like "@abaarso"
-    queryText = queryText.replace(/@abaarso\b/gi, '').replace(/@abarso\b/gi, '').trim();
+    // Also strip inline mentions like "@cardoso" or "@abaarso"
+    queryText = queryText.replace(/@(cardoso|abaarso|abarso)\b/gi, '').trim();
 
     if (!queryText) {
       queryText = '!help';
@@ -145,7 +145,7 @@ export class MessageRouter {
       console.log(`⏳ [Router] Ardayga waxaa qabtay Cooldown: ${message.senderId}`);
       await transport.sendMessage(
         message.chatId,
-        `⏳ *[ABARSO AI Cooldown]*: Please slow down walaal. Try again in ${rateCheck.retryAfterSeconds}s.`,
+        `⏳ *[CARDOSO AI Cooldown]*: Please slow down walaal. Try again in ${rateCheck.retryAfterSeconds}s.`,
         { replyToMessageId: message.id }
       );
       return { handled: false, reason: 'Rate limited' };

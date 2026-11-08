@@ -70,12 +70,12 @@ export const config: AppConfig = {
   messaging: {
     mode: (process.env.MESSAGING_MODE as 'console' | 'baileys' | 'webhook') || 'console',
     groupResponseMode: (process.env.GROUP_RESPONSE_MODE as 'mention_only' | 'all') || 'mention_only',
-    prefix: process.env.BOT_PREFIX || '!abarso',
+    prefix: process.env.BOT_PREFIX || '!cardoso',
   },
   security: {
     adminPhoneNumbers: parseAdminNumbers(process.env.ADMIN_PHONE_NUMBERS),
     allowedGroups: parseAllowedGroups(process.env.ALLOWED_GROUPS),
-    webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN || 'abarso_secret_verify_token',
+    webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN || 'cardoso_secret_verify_token',
   },
   database: {
     path: process.env.DATABASE_PATH || './data/abarso.db',

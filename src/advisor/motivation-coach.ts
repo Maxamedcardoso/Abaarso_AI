@@ -19,12 +19,12 @@ export class MotivationCoach {
   public static getCrisisSupportMessage(language: 'so' | 'en' | 'mixed'): string {
     if (language === 'en') {
       return `
-*❤️ Compassionate Notice from ABARSO AI:*
+*❤️ Compassionate Notice from CARDOSO AI:*
 I hear that you are going through a very heavy and overwhelming time. Please know that you are not alone and your life matters deeply.
 
-As an AI student advisor, I am not a licensed medical professional or counselor. Please reach out right now to:
+As an AI assistant, I am not a licensed medical professional or counselor. Please reach out right now to:
 1. A trusted family member, teacher, or friend.
-2. A healthcare professional or your university student wellness center.
+2. A healthcare professional or your student wellness center.
 3. If you are in crisis, please contact your local emergency services or a mental health helpline.
 
 Please take care of yourself, walaal.
@@ -32,10 +32,10 @@ Please take care of yourself, walaal.
     }
 
     return `
-*❤️ Fariin Naxariis leh oo ka socota ABARSO AI:*
+*❤️ Fariin Naxariis leh oo ka socota CARDOSO AI:*
 Walaal, waan dareemayaa inaad marayso waqti aad u adag oo culus. Fadlan ogow inaadan keligaa ahayn, qiimo weynna aad leedahay.
 
-Anigu waxaan ahay caawiye waxbarasho (AI), mana ihi dhaqtar ama la-taliye caafimaad. Waxaan si kal iyo laab ah kuugula talinayaa inaad la hadasho:
+Anigu waxaan ahay caawiye waxbarasho iyo caqli macmal ah (AI), mana ihi dhaqtar ama la-taliye caafimaad. Waxaan si kal iyo laab ah kuugula talinayaa inaad la hadasho:
 1. Qof qoyskaaga ka mid ah, saaxiib aad ku kalsoon tahay, ama macallin.
 2. Xarunta caafimaadka ama la-talinta ee jaamacaddaada/iskuulkaaga.
 3. Dhaqtar ku takhasusay caafimaadka maskaxda.

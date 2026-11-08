@@ -37,14 +37,14 @@ export class IntentClassifier {
     }
 
     // 3. Creator / Author questions ("Yaa ku sameeyey?", "Who created you?", "Halkee buu joogaa?")
-    const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+bot|yaa\s+dhisay\s+bot|(halkee?|meelkee?|halkuu|xaggee|xagguu)\s+(buu\s+|uu\s+)?(joogaa?|deggan\s*yahay|ku\s*nool\s*yahay)|where\s+(does|is)\s+(he|mohamed|the\s+creator)\s+(live|located|stay))/i.test(lower);
+    const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+(cardoso|bot|abaarso)|yaa\s+dhisay\s+(cardoso|bot|abaarso)|(halkee?|meelkee?|halkuu|xaggee|xagguu)\s+(buu\s+|uu\s+)?(joogaa?|deggan\s*yahay|ku\s*nool\s*yahay)|where\s+(does|is)\s+(he|mohamed|the\s+creator)\s+(live|located|stay))/i.test(lower);
     if (isCreatorQuery) {
       return { intent: 'creator', confidence: 0.98, tags: ['creator', 'developer'] };
     }
 
     // 4. Pure Greetings — Somali & English casual greetings (all common variants)
     const cleanGreeting = lower.replace(/[^a-z0-9\s]/g, '').trim();
-    const isPureGreeting = /^(asc|wcs|salaam|salaan|assalaamu\s*calaykum|assalamu\s*alaykum|hello|hi|hey|ii?\s*waran|iwaran|iska\s*warr?an|iskawarr?an|sidee?d?\s*tahay|see\s*tahay|maxaa?\s*cusub|nabad(\s*miyaa?)?|how\s+are\s+you|good\s+(morning|afternoon|evening)|howdy|wassup|whats?\s*up)(\s+(sxb|wll|walaal|saaxiib|saaxib|sxbo|abwaan|ai|abarso|dhammaan|guys|there|man|bro))*$/i.test(cleanGreeting);
+    const isPureGreeting = /^(asc|wcs|salaam|salaan|assalaamu\s*calaykum|assalamu\s*alaykum|hello|hi|hey|ii?\s*waran|iwaran|iska\s*warr?an|iskawarr?an|sidee?d?\s*tahay|see\s*tahay|maxaa?\s*cusub|nabad(\s*miyaa?)?|how\s+are\s+you|good\s+(morning|afternoon|evening)|howdy|wassup|whats?\s*up)(\s+(sxb|wll|walaal|saaxiib|saaxib|sxbo|abwaan|ai|cardoso|abarso|dhammaan|guys|there|man|bro))*$/i.test(cleanGreeting);
     if (isPureGreeting) {
       return { intent: 'greeting', confidence: 0.98, tags: ['greeting'] };
     }
