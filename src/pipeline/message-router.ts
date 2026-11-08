@@ -70,7 +70,9 @@ export class MessageRouter {
     }
 
     const text = message.content.trim();
-    if (!text) {
+    // Allow empty-text messages that carry a media attachment (e.g. a voice note reply in a group).
+    // Only drop truly empty messages with NO media.
+    if (!text && !(message as any).media) {
       return { handled: false, reason: 'Empty message' };
     }
 
@@ -153,12 +155,16 @@ export class MessageRouter {
     }
 
     // 5. Group Mention / Prefix Filter
-    // In groups, only respond if @mentioned (@cardoso) or prefixed with !cardoso
+    // In groups, only respond if @mentioned (@cardoso), prefixed with !cardoso, or isMentioned=true
+    // (isMentioned is set to true by the transport when user swipe-replies to bot's message).
+    // For voice notes (media with no text): isMentioned=true is the only signal — allow it through.
     const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
     const hasMention = message.isMentioned || lowerText.includes('@cardoso');
+    const isMediaWithNoText = !text && !!(message as any).media;
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
-      if (!hasMention && !hasPrefix) {
+      // Always pass through if isMentioned (covers voice note replies to bot)
+      if (!hasMention && !hasPrefix && !isMediaWithNoText) {
         console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
         return { handled: false, reason: 'Group message without mention or prefix' };
       }
@@ -174,8 +180,19 @@ export class MessageRouter {
     // Also strip inline mentions like "@cardoso"
     queryText = queryText.replace(/@cardoso\b/gi, '').trim();
 
+    // For voice notes (media with empty text), set a meaningful placeholder so the AI engine
+    // knows to transcribe/respond to the audio. The actual audio bytes are in message.media.
+    const incomingMedia = (message as any).media;
     if (!queryText) {
-      queryText = '!help';
+      if (incomingMedia?.type === 'audio') {
+        queryText = '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]';
+      } else if (incomingMedia?.type === 'image') {
+        queryText = '🖼️ [Sawir – Fadlan sawirkan sharax]';
+      } else if (incomingMedia?.type === 'document') {
+        queryText = '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]';
+      } else {
+        queryText = '!help';
+      }
     }
 
     console.log(`\n🤖 [Router] Fariin loo dirayaa Gemini AI: "${queryText}" (Qofka: ${message.senderId})...`);

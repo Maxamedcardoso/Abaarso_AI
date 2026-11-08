@@ -298,10 +298,14 @@ export class StudentAdvisorEngine {
       ResponseCacheService.set(content, lang, aiResult.text);
     }
 
-    // 11.5. Synthesize voice reply if user sent a voice note or requested voice
+    // 11.5. Synthesize voice reply if user sent a voice note or explicitly requested voice.
+    // Also respond with voice when user is replying in a group via voice (media.type === 'audio').
     let replyMedia: OutgoingMedia | undefined;
-    const wantsVoice = (media?.type === 'audio') || /(?:cod\s+ahaan|voice\s+note|voice\s+message|reply\s+in\s+voice|cod\s+iigu\s+soo\s+jawaab)/i.test(content);
+    const wantsVoice =
+      media?.type === 'audio' ||
+      /(?:cod\s+ahaan|voice\s+note|voice\s+message|reply\s+in\s+voice|cod\s+iigu\s+soo\s+jawaab|cod\s+ku\s+jawaab)/i.test(content);
     if (wantsVoice) {
+      console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
       try {
         const voiceResult = await VoiceReplyService.synthesizeVoice(aiResult.text, lang);
         if (voiceResult) {
@@ -311,6 +315,7 @@ export class StudentAdvisorEngine {
             mimeType: voiceResult.mimeType || 'audio/mpeg',
             ptt: false,
           };
+          console.log(`✅ [AdvisorEngine] Voice note la diyaariyay — ${voiceResult.buffer.length} bytes`);
         }
       } catch (voiceErr) {
         console.warn('[AdvisorEngine] Voice synthesis error:', voiceErr);

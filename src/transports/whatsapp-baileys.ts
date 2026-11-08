@@ -243,8 +243,20 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         }
 
+        // ─── Extract contextInfo from ALL possible message types ──────────────────
+        // CRITICAL: For voice notes (audioMessage), contextInfo is on audioMessage, NOT extendedTextMessage!
+        // We must check every container type to correctly detect "reply to bot" in groups.
+        const contextInfoRaw =
+          msg.message.audioMessage?.contextInfo ||
+          msg.message.ptvMessage?.contextInfo ||
+          msg.message.extendedTextMessage?.contextInfo ||
+          msg.message.imageMessage?.contextInfo ||
+          msg.message.documentMessage?.contextInfo ||
+          msg.message.videoMessage?.contextInfo ||
+          undefined;
+
         // Support Quoted Media (e.g. user in a group quotes a voice note/image and types "@cardoso")
-        const quotedMsg = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+        const quotedMsg = contextInfoRaw?.quotedMessage;
         const quotedAudio = quotedMsg?.audioMessage || quotedMsg?.ptvMessage;
         const quotedImage = quotedMsg?.imageMessage;
         const quotedDoc = quotedMsg?.documentMessage;
@@ -306,29 +318,46 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         }
 
-        const contextInfo = msg.message.extendedTextMessage?.contextInfo;
-        const quotedSender = contextInfo?.participant || '';
-        const quotedStanzaId = contextInfo?.stanzaId || '';
-        const botJid = this.socket?.user?.id?.split(':')[0] || '';
+        // ─── Bot JID & LID extraction ─────────────────────────────────────────────
+        // In WhatsApp groups (multi-device), participants are identified by their LID
+        // (Linked Device Identifier, e.g. 277923424645192@lid), NOT by phone JID!
+        // So we must check BOTH botJid (phone) AND botLid (lid) against quotedSender.
+        const botJidRaw = this.socket?.user?.id || '';
+        const botLidRaw = (this.socket?.user as any)?.lid || '';
+        // Extract numeric/alphanum portion before "@"
+        const botJid = botJidRaw.split(':')[0].split('@')[0];
+        const botLid = botLidRaw.split(':')[0].split('@')[0];
 
-        // Check if student is directly replying / quoting a message sent by the bot
+        // contextInfoRaw was already extracted above from the correct message container
+        const quotedSender = contextInfoRaw?.participant || '';
+        const quotedStanzaId = contextInfoRaw?.stanzaId || '';
+
+        // isReplyingToBot: true when user swipes-to-reply on ANY bot message in group
+        // — matches by phone JID, LID, or stanzaId tracked in botSentMessageIds Set.
         const isReplyingToBot = Boolean(
           !msg.key.fromMe &&
-          ((quotedSender && botJid && quotedSender.includes(botJid)) ||
-           (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId)))
+          (
+            (quotedSender && botJid && quotedSender.includes(botJid)) ||
+            (quotedSender && botLid && quotedSender.includes(botLid)) ||
+            (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId))
+          )
         );
 
         if (isReplyingToBot) {
-          console.log(`💬 [Reply Detected] Ardaygu wuxuu toos ugu soo jawaabay (Reply) fariintii hore ee bot-ka!`);
+          console.log(`💬 [Reply Detected] Ardaygu wuxuu reply ugu sameeyay bot-ka! quotedSender=${quotedSender} botJid=${botJid} botLid=${botLid} stanzaId=${quotedStanzaId}`);
         }
 
-        // In 1-on-1 private DM: ALWAYS true so student doesn't need to type @cardoso!
-        // In group chats: must be @mentioned, prefixed, or replied to.
-        // For media messages in groups: require a caption with @cardoso or private DM
-        const mentionedJids = contextInfo?.mentionedJid || [];
-        const isMentioned = !isGroup || isReplyingToBot || mentionedJids.some(j => j.includes(botJid)) || hasCardosoMention;
+        // In 1-on-1 private DM: ALWAYS respond (no need to type @cardoso).
+        // In group chats: respond if @mentioned, !cardoso prefix, or replied-to-bot.
+        // For voice/media in groups specifically: also allow if isReplyingToBot (swipe-reply voice note).
+        const mentionedJids = contextInfoRaw?.mentionedJid || [];
+        const isMentioned =
+          !isGroup ||
+          isReplyingToBot ||
+          mentionedJids.some(j => (botJid && j.includes(botJid)) || (botLid && j.includes(botLid))) ||
+          hasCardosoMention;
 
-        // For media in groups, skip if not mentioned (avoid processing every group image)
+        // For media in groups, skip if not mentioned/replied-to (avoid processing every group photo/video)
         if (isMedia && isGroup && !isMentioned) continue;
 
         const incoming: IncomingMessage = {
