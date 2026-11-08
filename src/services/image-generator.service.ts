@@ -15,19 +15,68 @@
  * Used to translate image prompts without any API call (instant, 0ms latency).
  * Covers animals, nature, places, colors, people, objects, emotions, styles.
  */
+// Animal keyword set — used to auto-add "no humans" negative prompt when subject is clearly an animal
+const ANIMAL_KEYWORDS = new Set([
+  'cat', 'cats', 'kitten', 'kittens', 'feline', 'pet', 'dog', 'dogs', 'puppy',
+  'lion', 'lions', 'tiger', 'leopard', 'cheetah', 'horse', 'horses', 'camel', 'camels',
+  'goat', 'goats', 'cow', 'cows', 'bull', 'bird', 'birds', 'eagle', 'parrot',
+  'wolf', 'fox', 'crocodile', 'hyena', 'giraffe', 'elephant', 'zebra', 'donkey', 'pig',
+  'turtle', 'snake', 'fish', 'shark', 'whale', 'rabbit', 'beast', 'animal',
+  'cattle',
+]);
+
 const SOMALI_EN: Record<string, string> = {
-  // Animals / Xayawaanka
-  libaax: 'lion', 'libaaxii': 'lion', 'libaaxo': 'lions',
-  bahal: 'wild animal', faras: 'horse', 'faraska': 'horse',
-  geel: 'camel', geela: 'camels', lo: 'cattle', loxo: 'cattle',
-  adhi: 'goat', adigga: 'goat', lo_ah: 'cow', dibi: 'bull',
-  shimbiraha: 'birds', shimbir: 'bird', gorgor: 'eagle', maryoodle: 'parrot',
-  qori: 'wolf', dawaco: 'fox', yaxas: 'crocodile', yeyey: 'hyena',
-  waraabe: 'hyena', qandheer: 'giraffe', maroodi: 'elephant',
-  xayawaan: 'animal', yurub: 'zebra', dameer: 'donkey',
-  bisad: 'cat', ey: 'dog', eye: 'dog', doofaar: 'pig',
-  qolof: 'turtle', mas: 'snake', kalluun: 'fish', sharuur: 'shark',
-  runta: 'whale', dugaag: 'beast', suule: 'rabbit', kaluun: 'fish',
+  // Animals / Xayawaanka — mapped to explicit, high-detail animal terms so no humans or inappropriate content can generate
+  'bisad yar': 'cute adorable fluffy kitten pet animal',
+  'ilmo bisad': 'cute baby kitten pet animal',
+  'bisad': 'cute fluffy domestic cat pet animal',
+  'bisadda': 'cute fluffy domestic cat pet animal',
+  'bisado': 'cute domestic cats pet animals',
+  'bisadaha': 'cute domestic cats pet animals',
+  'mukulaal': 'cute fluffy domestic cat pet animal',
+  'mukulaasha': 'cute fluffy domestic cat pet animal',
+  'yaanyuur': 'cute fluffy domestic cat pet animal',
+  'shabeel': 'wild leopard big cat animal',
+  'harimacad': 'wild cheetah big cat animal',
+  'libaax qurux badan': 'majestic beautiful male lion animal in savanna wildlife photography',
+  'libaax': 'majestic male lion animal in african savanna wildlife',
+  'libaaxa': 'majestic male lion animal in savanna wildlife',
+  'libaaxii': 'majestic male lion animal wildlife',
+  'libaaxo': 'majestic pride of lions wildlife savanna',
+  'bahal': 'wild predator animal in nature',
+  'faras': 'majestic stallion horse animal running',
+  'faraska': 'majestic stallion horse animal running',
+  'geel': 'somali camel dromedary animal in desert',
+  'geela': 'somali camels herd in desert landscape',
+  'lo': 'cattle cows grazing pasture',
+  'loxo': 'cattle grazing',
+  'adhi': 'somali goat animal grazing',
+  'adigga': 'somali goat animal',
+  'dibi': 'strong bull cattle animal',
+  'shimbiraha': 'colorful birds flying in nature',
+  'shimbir': 'colorful beautiful bird on tree branch',
+  'gorgor': 'majestic eagle bird flying high in sky',
+  'maryoodle': 'colorful parrot bird',
+  'dawaco': 'wild fox animal in nature',
+  'yaxas': 'wild crocodile reptile animal in water',
+  'yeyey': 'wild spotted hyena animal',
+  'waraabe': 'wild hyena animal in savanna',
+  'qandheer': 'tall giraffe animal in savanna',
+  'maroodi': 'large elephant animal in savanna',
+  'xayawaan': 'wildlife animal in nature',
+  'yurub': 'zebra striped animal in savanna',
+  'dameer': 'donkey animal',
+  'ey': 'cute friendly dog pet animal',
+  'eyga': 'cute friendly dog pet animal',
+  'doofaar': 'wild boar animal',
+  'qolof': 'sea turtle reptile in ocean',
+  'mas': 'wild snake reptile in nature',
+  'kalluun': 'vibrant tropical fish swimming in clear water',
+  'kaluun': 'tropical fish in ocean',
+  'sharuur': 'shark swimming in deep blue ocean',
+  'runta': 'huge blue whale in ocean',
+  'dugaag': 'wild beast animal',
+  'suule': 'cute fluffy rabbit bunny animal',
   // Nature / Dabiicada
   buur: 'mountain', buuraha: 'mountains', geed: 'tree', geedo: 'trees',
   dekedda: 'harbor port', badda: 'ocean', bad: 'sea', 'bad weyn': 'ocean',
@@ -169,15 +218,12 @@ export class ImageGeneratorService {
   /**
    * Translates a Somali/Arabic image prompt to English using the local dictionary.
    * Instant — zero API calls, zero latency.
-   * Unknown words are kept as-is (Pollinations may still handle them).
+   * Translates words and phrases, keeping any already-English or unknown words intact.
    *
-   * Example: "libaax qurux badan hawd cagaaran" → "lion beautiful stunning green savanna"
+   * Example: "bisad" → "cute fluffy domestic cat pet animal"
+   * Example: "libaax qurux badan hawd cagaaran" → "majestic beautiful male lion animal in savanna wildlife photography green savanna"
    */
   public static translatePromptToEnglish(prompt: string): string {
-    // If already primarily English (ASCII-dominant), return as-is
-    const asciiRatio = (prompt.match(/[a-zA-Z0-9 ]/g) || []).length / (prompt.length || 1);
-    if (asciiRatio > 0.75) return prompt;
-
     const lower = prompt.toLowerCase().trim();
     let translated = lower;
 
@@ -193,19 +239,43 @@ export class ImageGeneratorService {
       }
     }
 
-    // If the translation significantly changed the string, use translated version
-    // Otherwise fall back to original (keep unknown Somali words, Pollinations sometimes handles them)
-    const translatedAsciiRatio = (translated.match(/[a-zA-Z0-9 ]/g) || []).length / (translated.length || 1);
-    const result = translatedAsciiRatio > 0.6 ? translated : `${translated} ${prompt}`;
+    console.log(`🌐 [ImageGenerator] Prompt translated: "${prompt}" → "${translated.trim()}"`);
+    return translated.trim();
+  }
 
-    console.log(`🌐 [ImageGenerator] Prompt translated: "${prompt}" → "${result.trim()}"`);
-    return result.trim();
+  /**
+   * Detects if an English prompt is primarily about an animal (no humans expected).
+   * Used to auto-add negative=human prompt to avoid Pollinations inserting people.
+   */
+  private static isAnimalPrompt(englishPrompt: string): boolean {
+    const words = englishPrompt.toLowerCase().split(/\s+/);
+    return words.some(w => ANIMAL_KEYWORDS.has(w));
+  }
+
+  /**
+   * Builds the full Pollinations URL with safety filter and negative prompt.
+   * 1. safe=true is ALWAYS enabled.
+   * 2. Negative prompt ALWAYS blocks nudity, NSFW, and adult content.
+   * 3. When an animal is requested, also blocks humans/people to ensure only the animal appears.
+   */
+  private static buildUrl(
+    encodedPrompt: string,
+    params: string,
+    isAnimal: boolean
+  ): string {
+    const baseNegative = 'nsfw,nudity,naked,nude,sexual,explicit,uncensored,cleavage,bikini,erotic,adult,gore,bloody';
+    const animalNegative = isAnimal
+      ? ',human,person,people,girl,boy,woman,man,female,male,model,portrait,face'
+      : '';
+    const negativeParam = `&negative=${encodeURIComponent(baseNegative + animalNegative)}`;
+    return `https://image.pollinations.ai/prompt/${encodedPrompt}?${params}&nologo=true&safe=true${negativeParam}`;
   }
 
   /**
    * Generates an image buffer from Pollinations.ai.
    * 4-attempt cascade: flux → default → flux-512 → keywords-only.
    * Somali/Arabic prompts auto-translated via local dictionary (instant, no API).
+   * Animal prompts auto-add negative=human so no people appear in animal images.
    * NEVER throws — always returns a buffer or null (caller handles gracefully).
    */
   public static async generateImage(prompt: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
@@ -213,11 +283,18 @@ export class ImageGeneratorService {
     const rawPrompt = prompt.trim() || 'beautiful landscape';
     const englishPrompt = this.translatePromptToEnglish(rawPrompt);
 
+    // Detect animal subject → will suppress human figures in output
+    const animalMode = this.isAnimalPrompt(englishPrompt);
+    if (animalMode) {
+      console.log(`🐾 [ImageGenerator] Animal subject detected — adding negative=human to suppress people`);
+    }
+
+    const encoded = encodeURIComponent(englishPrompt);
     const seed = Math.floor(Math.random() * 99999999);
 
     // ── Attempt 1: Flux model, no size constraints (~3-5s) ─────────────────
     const result1 = await this._fetchImage(
-      `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?model=flux&nologo=true&seed=${seed}`,
+      this.buildUrl(encoded, `model=flux&seed=${seed}`, animalMode),
       25000,
       'Attempt 1 (flux)'
     );
@@ -226,7 +303,7 @@ export class ImageGeneratorService {
     // ── Attempt 2: Default model, no model param (~2-10s) ───────────────────
     const seed2 = Math.floor(Math.random() * 99999999);
     const result2 = await this._fetchImage(
-      `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?nologo=true&seed=${seed2}`,
+      this.buildUrl(encoded, `seed=${seed2}`, animalMode),
       20000,
       'Attempt 2 (default)'
     );
@@ -235,17 +312,18 @@ export class ImageGeneratorService {
     // ── Attempt 3: Flux small 512x512 (~5-10s, lightest load) ───────────────
     const seed3 = Math.floor(Math.random() * 99999999);
     const result3 = await this._fetchImage(
-      `https://image.pollinations.ai/prompt/${encodeURIComponent(englishPrompt)}?model=flux&width=512&height=512&nologo=true&seed=${seed3}`,
+      this.buildUrl(encoded, `model=flux&width=512&height=512&seed=${seed3}`, animalMode),
       20000,
       'Attempt 3 (flux-512)'
     );
     if (result3) return result3;
 
-    // ── Attempt 4: Shorter keyword-only prompt as absolute last resort ───────
+    // ── Attempt 4: Keywords-only as absolute last resort ─────────────────────
     const keywords = englishPrompt.split(/\s+/).slice(0, 5).join(' ');
+    const encodedKw = encodeURIComponent(keywords);
     const seed4 = Math.floor(Math.random() * 99999999);
     const result4 = await this._fetchImage(
-      `https://image.pollinations.ai/prompt/${encodeURIComponent(keywords)}?model=flux&nologo=true&seed=${seed4}`,
+      this.buildUrl(encodedKw, `model=flux&seed=${seed4}`, animalMode),
       20000,
       'Attempt 4 (keywords-only)'
     );
