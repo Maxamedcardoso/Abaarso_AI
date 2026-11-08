@@ -243,6 +243,34 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         }
 
+        // Support Quoted Media (e.g. user in a group quotes a voice note/image and types "@cardoso")
+        const quotedMsg = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+        const quotedAudio = quotedMsg?.audioMessage || quotedMsg?.ptvMessage;
+        const quotedImage = quotedMsg?.imageMessage;
+        const quotedDoc = quotedMsg?.documentMessage;
+        const hasQuotedMedia = !mediaAttachment && Boolean(quotedAudio || quotedImage || quotedDoc);
+
+        if (hasQuotedMedia) {
+          try {
+            const streamType = quotedAudio ? 'audio' : quotedImage ? 'image' : 'document';
+            const quotedContent = quotedAudio || quotedImage || quotedDoc;
+            const stream = await downloadContentFromMessage(quotedContent as any, streamType as any);
+            const rawMime = (quotedContent as any)?.mimetype || '';
+            const quotedType = quotedAudio ? 'audioMessage' : quotedImage ? 'imageMessage' : 'documentMessage';
+            const mimeType = MediaProcessorService.getMimeType(quotedType, rawMime);
+            const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
+            mediaAttachment = {
+              type: streamType as 'image' | 'audio' | 'document',
+              mimeType,
+              dataBase64,
+              fileName: (quotedContent as any)?.fileName,
+            };
+            console.log(`📎 [Quoted Media] Si guul leh ayaa loo soo dejiyay ${streamType} laga soo xigtay group-ka!`);
+          } catch (quotedErr: any) {
+            console.warn(`[WhatsAppBaileys] Quoted media download failed: ${quotedErr?.message}`);
+          }
+        }
+
         // ─── ANTI-LOOP & ECHO GUARDS ─────────────────────────────────────────────
         // 1. Skip if message ID is known to be sent by this bot
         if (msg.key?.id && this.botSentMessageIds.has(msg.key.id)) {
@@ -309,7 +337,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           senderName: msg.pushName || undefined,
           chatId,
           isGroup,
-          content: text || (isAudio ? '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]' : isImage ? '🖼️ [Sawir – Fadlan sawirkan sharax]' : isDocument ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
+          content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan sharax]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
           rawTimestamp: (msg.messageTimestamp as number) * 1000 || Date.now(),
           isMentioned,
           replyToMessageId: msg.key.id || undefined,
