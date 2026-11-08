@@ -155,8 +155,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
                 await this.sendMedia(call.from, {
                   type: 'audio',
                   dataBuffer: voiceResult.buffer,
-                  mimeType: 'audio/mp4',
-                  ptt: true,
+                  mimeType: 'audio/mpeg',
+                  ptt: false,
                 });
               }
             } catch (vErr) {
@@ -412,10 +412,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             rawQuoted ? { quoted: rawQuoted } : undefined
           );
         } else if (media.type === 'audio') {
-          // Send authentic WhatsApp voice note (ptt: true)
+          // Send universally playable audio note for WhatsApp (MP3 format natively supported across iOS, Android, and Web)
           await this.socket!.sendMessage(
             chatId,
-            { audio: media.dataBuffer, mimetype: 'audio/mp4', ptt: media.ptt ?? true },
+            {
+              audio: media.dataBuffer,
+              mimetype: media.mimeType || 'audio/mpeg',
+              fileName: 'cardoso-codka.mp3',
+            },
             rawQuoted ? { quoted: rawQuoted } : undefined
           );
         }

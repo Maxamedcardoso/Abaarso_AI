@@ -75,7 +75,7 @@ export class VoiceReplyService {
               clearTimeout(timer);
               try { tts.close(); } catch {}
               const buffer = Buffer.concat(chunks);
-              resolve({ buffer, mimeType: 'audio/mp4' });
+              resolve({ buffer, mimeType: 'audio/mpeg' });
             }
           });
 

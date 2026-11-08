@@ -308,8 +308,8 @@ export class StudentAdvisorEngine {
           replyMedia = {
             type: 'audio',
             dataBuffer: voiceResult.buffer,
-            mimeType: voiceResult.mimeType,
-            ptt: true,
+            mimeType: voiceResult.mimeType || 'audio/mpeg',
+            ptt: false,
           };
         }
       } catch (voiceErr) {
