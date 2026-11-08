@@ -26,6 +26,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private rawMessages: Map<string, any> = new Map();
   private botSentMessageIds: Set<string> = new Set();
   private outboundQueue: OutboundQueue = new OutboundQueue(600, 1200);
+  private sessionExpired: boolean = false;
 
   constructor(authDir: string = './baileys_auth_info') {
     this.authDir = authDir;
@@ -39,7 +40,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     this.printSafetyWarning();
 
     // 1. Support complete session bundle (SESSION_BUNDLE_BASE64)
-    if (process.env.SESSION_BUNDLE_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    if (!this.sessionExpired && process.env.SESSION_BUNDLE_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
@@ -64,7 +65,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     }
 
     // 2. Fallback to single creds.json (SESSION_CREDS_BASE64)
-    if (process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    if (!this.sessionExpired && process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
@@ -108,7 +109,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         console.log(`[WhatsAppBaileys] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
-        if (shouldReconnect) {
+
+        if (statusCode === DisconnectReason.loggedOut) {
+          this.sessionExpired = true;
+          console.warn('⚠️ [WhatsAppBaileys] Session has expired or was unlinked (401 Logged Out). Purging stale auth and requesting fresh QR Code in 2s...');
+          try {
+            fs.rmSync(this.authDir, { recursive: true, force: true });
+          } catch {}
+          setTimeout(() => this.start(), 2000);
+        } else if (shouldReconnect) {
           setTimeout(() => this.start(), 3000);
         }
       } else if (connection === 'open') {
