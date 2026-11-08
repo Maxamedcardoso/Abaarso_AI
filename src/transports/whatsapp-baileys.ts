@@ -44,8 +44,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
         }
-        const compressed = Buffer.from(process.env.SESSION_BUNDLE_BASE64, 'base64');
-        const jsonStr = zlib.gunzipSync(compressed).toString('utf8');
+        const cleanRaw = process.env.SESSION_BUNDLE_BASE64.trim().replace(/\s+/g, '');
+        let jsonStr = '';
+        try {
+          const compressed = Buffer.from(cleanRaw, 'base64');
+          jsonStr = zlib.gunzipSync(compressed).toString('utf8');
+        } catch {
+          // If not gzipped or gzip corrupted, try plain base64 JSON
+          jsonStr = Buffer.from(cleanRaw, 'base64').toString('utf8');
+        }
         const bundle = JSON.parse(jsonStr);
         for (const [filename, content] of Object.entries(bundle)) {
           fs.writeFileSync(path.join(this.authDir, filename), content as string, 'utf8');
@@ -55,13 +62,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         console.error('⚠️ [WhatsAppBaileys] Failed to restore SESSION_BUNDLE_BASE64:', err.message);
       }
     }
+
     // 2. Fallback to single creds.json (SESSION_CREDS_BASE64)
-    else if (process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    if (process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
         }
-        const credsDecoded = Buffer.from(process.env.SESSION_CREDS_BASE64, 'base64').toString('utf8');
+        const cleanCreds = process.env.SESSION_CREDS_BASE64.trim().replace(/\s+/g, '');
+        const credsDecoded = Buffer.from(cleanCreds, 'base64').toString('utf8');
         fs.writeFileSync(path.join(this.authDir, 'creds.json'), credsDecoded, 'utf8');
         console.log('✅ [WhatsAppBaileys] Si guul leh ayaa login-kii looga soo celiyay SESSION_CREDS_BASE64!');
       } catch (err: any) {
