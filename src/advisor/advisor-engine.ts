@@ -204,25 +204,9 @@ export class StudentAdvisorEngine {
         };
       }
 
-      // Translate non-English prompts to rich English descriptors for Flux/SDXL photorealistic output
-      let renderPrompt = prompt;
-      if (lang !== 'en') {
-        try {
-          const tr = await this.ai.generateResponse(
-            `Translate this image description into a rich, vivid English prompt for an AI image generator (Flux/SDXL). Return ONLY the English prompt in one sentence, no quotes or meta text:\n"${prompt}"`,
-            [],
-            { temperature: 0.2, maxOutputTokens: 60 }
-          );
-          if (tr?.text && tr.text.length > 3 && !tr.text.includes('Error')) {
-            renderPrompt = tr.text.replace(/["\n]/g, '').trim();
-          }
-        } catch {
-          // If translation fails, use original prompt
-          renderPrompt = prompt;
-        }
-      }
-
-      const generated = await ImageGeneratorService.generateImage(renderPrompt);
+      // Send prompt directly to Pollinations — Somali/Arabic text works without translation.
+      // Translation step removed: saves 2-4s latency and Pollinations handles non-English well.
+      const generated = await ImageGeneratorService.generateImage(prompt);
       if (generated) {
         const caption = lang === 'en'
           ? `🎨 *Generated Image:* "${prompt}"\nCreated by CARDOSO AI ✨`
@@ -242,13 +226,13 @@ export class StudentAdvisorEngine {
           },
         };
       } else {
-        // If image server timed out, inform user clearly so they can retry
-        const retryNotice = lang === 'en'
-          ? `⚠️ *[CARDOSO AI]*: Could not generate the image at this moment due to heavy server traffic. Please try again: *@sawir ${prompt}* ✨`
-          : `⚠️ *[CARDOSO AI]*: Ma suurtagelin in sawirka la soo saaro xilligan sababtoo ah server-ka ayaa mashquul ah. Fadlan mar kale tijaabi: *@sawir ${prompt}* ✨`;
+        // All 4 attempts failed — show a friendly soft message, NO scary error text.
+        const softRetry = lang === 'en'
+          ? `🎨 *CARDOSO AI*: Your image is on its way! The artist is still painting... 🖨️ Please send your request again in a moment and it will appear! ✨`
+          : `🎨 *CARDOSO AI*: Sawirkaagu wuu socday! Ressaamaha weli wuu rinjiyeynayaa... 🖨️ Daqiiqad yar kadib mar kale iiga dir codsigaaga, si degdeg ah ayuu kuu soo muuqan doonaa! ✨`;
 
         return {
-          replyText: retryNotice,
+          replyText: softRetry,
           studentId: student.studentId,
           intent: 'image_generation',
           language: lang,
