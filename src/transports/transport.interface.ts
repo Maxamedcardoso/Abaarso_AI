@@ -29,6 +29,14 @@ export interface OutgoingMessageOptions {
   isEphemeral?: boolean;
 }
 
+export interface OutgoingMedia {
+  type: 'image' | 'audio' | 'document';
+  dataBuffer: Buffer;
+  mimeType: string;
+  caption?: string;
+  ptt?: boolean; // When true, rendered as authentic WhatsApp Voice Note
+}
+
 /**
  * Pluggable Messaging Transport Interface.
  * Decouples WhatsApp from AI and Student Advisor modules.
@@ -51,6 +59,11 @@ export interface IMessagingTransport {
    * Sends a text message to a specific chat (1-to-1 or group)
    */
   sendMessage(chatId: string, text: string, options?: OutgoingMessageOptions): Promise<boolean>;
+
+  /**
+   * Sends a media message (image, voice note audio) to a specific chat
+   */
+  sendMedia?(chatId: string, media: OutgoingMedia, options?: OutgoingMessageOptions): Promise<boolean>;
 
   /**
    * Registers a callback for incoming messages

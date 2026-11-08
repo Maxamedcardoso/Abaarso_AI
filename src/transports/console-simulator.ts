@@ -1,5 +1,5 @@
 import readline from 'readline';
-import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions } from './transport.interface.js';
+import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingMedia } from './transport.interface.js';
 
 export class ConsoleSimulatorTransport implements IMessagingTransport {
   public readonly name = 'console_simulator';
@@ -101,6 +101,13 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
   public async sendMessage(chatId: string, text: string, options?: OutgoingMessageOptions): Promise<boolean> {
     this.lastActivityTimestamp = Date.now();
     console.log(`\n🤖 CARDOSO AI:\n${text}\n`);
+    return true;
+  }
+
+  public async sendMedia(chatId: string, media: OutgoingMedia, options?: OutgoingMessageOptions): Promise<boolean> {
+    this.lastActivityTimestamp = Date.now();
+    const label = media.type === 'image' ? '🖼️ [AI GENERATED IMAGE]' : '🎙️ [AI VOICE NOTE]';
+    console.log(`\n🤖 CARDOSO AI ${label}: ${media.dataBuffer.length} bytes${media.caption ? `\nCaption: ${media.caption}` : ''}\n`);
     return true;
   }
 

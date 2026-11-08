@@ -7,8 +7,10 @@ import { MotivationCoach } from './motivation-coach.js';
 import { ConversationMessage } from '../ai/ai-provider.interface.js';
 import { WebSearchService } from '../services/web-search.service.js';
 import { ReminderService, reminderService } from '../services/reminder.service.js';
-import { MessageMedia } from '../transports/transport.interface.js';
+import { MessageMedia, OutgoingMedia } from '../transports/transport.interface.js';
 import { UserProfiler } from '../services/user-profiler.service.js';
+import { ImageGeneratorService } from '../services/image-generator.service.js';
+import { VoiceReplyService } from '../services/voice-reply.service.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -25,6 +27,7 @@ export interface ProcessMessageOutput {
   intent: string;
   language: string;
   latencyMs: number;
+  replyMedia?: OutgoingMedia;
 }
 
 export class StudentAdvisorEngine {
@@ -95,6 +98,31 @@ export class StudentAdvisorEngine {
           intent: 'reminder',
           language: lang,
           latencyMs: Date.now() - startTime,
+        };
+      }
+    }
+
+    // 5.6. Handle Image Generation request ("ii samee sawir...", "create an image of...")
+    if (ImageGeneratorService.isImageRequest(content)) {
+      const prompt = ImageGeneratorService.extractPrompt(content);
+      const generated = await ImageGeneratorService.generateImage(prompt);
+      if (generated) {
+        const caption = lang === 'en'
+          ? `🎨 *Generated Image:* "${prompt}"\nCreated by CARDOSO AI ✨`
+          : `🎨 *Sawirka aad codsatay:* "${prompt}"\nWaxa soo saaray CARDOSO AI ✨`;
+
+        return {
+          replyText: caption,
+          studentId: student.studentId,
+          intent: 'image_generation',
+          language: lang,
+          latencyMs: Date.now() - startTime,
+          replyMedia: {
+            type: 'image',
+            dataBuffer: generated.buffer,
+            mimeType: generated.mimeType,
+            caption,
+          },
         };
       }
     }
@@ -223,6 +251,25 @@ export class StudentAdvisorEngine {
       media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
 
+    // 11.5. Synthesize voice reply if user sent a voice note or requested voice
+    let replyMedia: OutgoingMedia | undefined;
+    const wantsVoice = (media?.type === 'audio') || /(?:cod\s+ahaan|voice\s+note|voice\s+message|reply\s+in\s+voice|cod\s+iigu\s+soo\s+jawaab)/i.test(content);
+    if (wantsVoice) {
+      try {
+        const voiceResult = await VoiceReplyService.synthesizeVoice(aiResult.text, lang);
+        if (voiceResult) {
+          replyMedia = {
+            type: 'audio',
+            dataBuffer: voiceResult.buffer,
+            mimeType: voiceResult.mimeType,
+            ptt: true,
+          };
+        }
+      } catch (voiceErr) {
+        console.warn('[AdvisorEngine] Voice synthesis error:', voiceErr);
+      }
+    }
+
     // 12. Save conversation turns to database memory
     await this.memory.saveMessage({
       studentId: student.studentId,
@@ -248,6 +295,7 @@ export class StudentAdvisorEngine {
       intent: intentResult.intent,
       language: lang,
       latencyMs: Date.now() - startTime,
+      replyMedia,
     };
   }
 }

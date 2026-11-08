@@ -10,7 +10,7 @@ import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
-import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions } from './transport.interface.js';
+import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingMedia } from './transport.interface.js';
 import { MediaProcessorService } from '../services/media-processor.service.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
@@ -286,6 +286,38 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return true;
     } catch (err) {
       console.error('[WhatsAppBaileys] Send error:', err);
+      return false;
+    }
+  }
+
+  public async sendMedia(chatId: string, media: OutgoingMedia, options?: OutgoingMessageOptions): Promise<boolean> {
+    if (!this.socket || !this.connected) {
+      console.warn('[WhatsAppBaileys] Cannot send media: transport not connected.');
+      return false;
+    }
+
+    try {
+      const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
+
+      if (media.type === 'image') {
+        await this.socket.sendMessage(
+          chatId,
+          { image: media.dataBuffer, caption: media.caption },
+          rawQuoted ? { quoted: rawQuoted } : undefined
+        );
+      } else if (media.type === 'audio') {
+        // Send authentic WhatsApp voice note (ptt: true)
+        await this.socket.sendMessage(
+          chatId,
+          { audio: media.dataBuffer, mimetype: 'audio/mp4', ptt: media.ptt ?? true },
+          rawQuoted ? { quoted: rawQuoted } : undefined
+        );
+      }
+
+      this.lastActivityTimestamp = Date.now();
+      return true;
+    } catch (err) {
+      console.error('[WhatsAppBaileys] Error sending media:', err);
       return false;
     }
   }

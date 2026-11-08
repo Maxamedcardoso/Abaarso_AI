@@ -53,7 +53,14 @@ export class MessageRouter {
     const isAdminUser = this.isAdmin(message.senderId);
 
     // 2. Admin Command Handling
-    if (text.startsWith('!cardoso') || text.startsWith('!abaarso') || text.startsWith('!abarso') || text.startsWith('!admin')) {
+    const lowerText = text.toLowerCase();
+    if (
+      lowerText.startsWith('!cardoso') ||
+      lowerText.startsWith('!abaarso') ||
+      lowerText.startsWith('!abarso') ||
+      lowerText.startsWith('!admin') ||
+      lowerText.startsWith(this.config.messaging.prefix.toLowerCase())
+    ) {
       const parts = text.split(/\s+/);
       const command = (parts[1] || '').toLowerCase();
 
@@ -112,7 +119,6 @@ export class MessageRouter {
 
     // 5. Group Mention / Prefix Filter
     // In groups, only respond if @mentioned (@cardoso / @abaarso / @abarso) or prefixed with !cardoso / !abaarso / !abarso
-    const lowerText = text.toLowerCase();
     const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!abarso') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
     const hasMention = message.isMentioned || lowerText.includes('@cardoso') || lowerText.includes('@abaarso') || lowerText.includes('@abarso');
 
@@ -125,13 +131,13 @@ export class MessageRouter {
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!cardoso', '!abaarso', '!abarso', '@cardoso', '@abaarso', '@abarso', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '!Cardoso', '!cardoso', '@cardoso', '@cardoso', '@cardoso', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
     // Also strip inline mentions like "@cardoso" or "@abaarso"
-    queryText = queryText.replace(/@(cardoso|abaarso|abarso)\b/gi, '').trim();
+    queryText = queryText.replace(/@(cardoso)\b/gi, '').trim();
 
     if (!queryText) {
       queryText = '!help';
@@ -163,10 +169,31 @@ export class MessageRouter {
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);
 
-    // 8. Dispatch reply through transport
-    await transport.sendMessage(message.chatId, advisorResult.replyText, {
-      replyToMessageId: message.id,
-    });
+    // 8. Dispatch reply through transport (with media support for images & voice notes)
+    if (advisorResult.replyMedia && transport.sendMedia) {
+      if (advisorResult.replyMedia.type === 'image') {
+        // Send generated image with caption
+        await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
+          replyToMessageId: message.id,
+        });
+      } else if (advisorResult.replyMedia.type === 'audio') {
+        // Send authentic voice note + text response
+        await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
+          replyToMessageId: message.id,
+        });
+        await transport.sendMessage(message.chatId, advisorResult.replyText, {
+          replyToMessageId: message.id,
+        });
+      } else {
+        await transport.sendMessage(message.chatId, advisorResult.replyText, {
+          replyToMessageId: message.id,
+        });
+      }
+    } else {
+      await transport.sendMessage(message.chatId, advisorResult.replyText, {
+        replyToMessageId: message.id,
+      });
+    }
 
     console.log(`✅ [Router] Jawaabtii si guul leh ayaa loogu diray WhatsApp!`);
 
