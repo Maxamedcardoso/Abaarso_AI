@@ -19,14 +19,23 @@ export class MediaProcessorService {
 
   /**
    * Returns the correct Gemini-compatible MIME type for a given WhatsApp message type.
+   * Strips codec parameters (e.g. "audio/ogg; codecs=opus" -> "audio/ogg")
+   * because Gemini API strictly rejects MIME types with parameters!
    */
   public static getMimeType(waMessageType: string, mimetype?: string): string {
-    // If Baileys already reports the mime type, use it
-    if (mimetype) return mimetype;
+    if (mimetype) {
+      const clean = mimetype.split(';')[0].trim().toLowerCase();
+      if (clean === 'audio/ogg' || clean === 'audio/opus') return 'audio/ogg';
+      if (clean === 'audio/mp4' || clean === 'audio/m4a' || clean === 'audio/aac') return 'audio/aac';
+      if (clean === 'audio/mp3' || clean === 'audio/mpeg') return 'audio/mp3';
+      if (clean.startsWith('audio/')) return 'audio/ogg';
+      return clean;
+    }
 
     switch (waMessageType) {
       case 'audioMessage':
-        return 'audio/ogg; codecs=opus'; // WhatsApp voice notes
+      case 'ptvMessage':
+        return 'audio/ogg'; // Clean MIME for Gemini API
       case 'imageMessage':
         return 'image/jpeg';
       case 'documentMessage':

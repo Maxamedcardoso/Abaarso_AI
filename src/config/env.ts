@@ -63,7 +63,7 @@ export const config: AppConfig = {
       .split(',')
       .map(k => k.trim())
       .filter(Boolean),
-    model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_3_8,
+    model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_1_5,
     dailyLimit: (parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS) * Math.max(1, (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',').filter(Boolean).length : 1)),
     rpmLimit: (parseInt(process.env.REQUESTS_PER_MINUTE_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_RPM) * Math.max(1, (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',').filter(Boolean).length : 1)),
   },

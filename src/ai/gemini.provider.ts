@@ -80,26 +80,36 @@ export class GeminiProvider implements IAIProvider {
       };
     }
 
-    // 2. Format history for Gemini API
-    const formattedHistory: Content[] = history
-      .filter(msg => msg.role === 'user' || msg.role === 'model')
-      .map(msg => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }],
-      }));
+    // 2. Format history for Gemini API with strict validation and alternation enforcement
+    const formattedHistory: Content[] = [];
+    let expectedRole: 'user' | 'model' = 'user';
+
+    for (const msg of history) {
+      if (!msg.content || typeof msg.content !== 'string' || !msg.content.trim()) continue;
+      if (msg.role === expectedRole) {
+        formattedHistory.push({
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.content.trim() }],
+        });
+        expectedRole = expectedRole === 'user' ? 'model' : 'user';
+      }
+    }
+
+    // Gemini startChat requires the history to end on 'model', because sendMessage will append the next 'user' turn!
+    while (formattedHistory.length > 0 && formattedHistory[formattedHistory.length - 1].role === 'user') {
+      formattedHistory.pop();
+    }
 
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
-    // 3. Candidate models fallback list (Independent free rate limits per model family)
+    // 3. Candidate models fallback list (Official valid Google Gemini multimodal models)
     const candidateModels = Array.from(new Set([
-      'gemini-3.8-flash',
-      'gemini-2.5-flash',
-      this.modelName,
-      'gemini-flash-latest',
-      'gemini-flash-lite-latest',
       'gemini-1.5-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-2.0-flash',
       'gemini-1.5-flash-8b',
-    ])).filter(m => m && m !== 'gemini-2.0-flash');
+      this.modelName,
+    ])).filter(m => m && !m.includes('3.8') && !m.includes('2.5'));
 
     let lastError: any = null;
 
@@ -122,9 +132,10 @@ export class GeminiProvider implements IAIProvider {
             // Prepare prompt payload (text and optional multimodal image/audio/document)
             const contentParts: Array<string | Part> = [];
             if (options.media?.dataBase64 && options.media?.mimeType) {
+              const cleanMime = options.media.mimeType.split(';')[0].trim();
               contentParts.push({
                 inlineData: {
-                  mimeType: options.media.mimeType,
+                  mimeType: cleanMime,
                   data: options.media.dataBase64,
                 },
               });
@@ -191,7 +202,7 @@ export class GeminiProvider implements IAIProvider {
     const isRateLimit = lastError?.status === 429 || (lastError?.message && lastError.message.includes('429'));
     if (isRateLimit) {
       return {
-        text: 'Waan ka xumahay walaal, server-ka AI-da ayaa hadda su\'aalo badan helay hal mar. Fadlan 10 ilbiriqsi kadib mar kale i weydii! 🙏',
+        text: 'Waan ka xumahay walaal, server-ka AI-da ayaa hadda su\'aalo badan helay hal mar. Fadlan 5-10 ilbiriqsi kadib mar kale codka ii soo duub! 🙏',
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
@@ -201,15 +212,17 @@ export class GeminiProvider implements IAIProvider {
     const isHighDemand = lastError?.status === 503 || (lastError?.message && (lastError.message.includes('503') || lastError.message.includes('high demand') || lastError.message.includes('Service Unavailable')));
     if (isHighDemand) {
       return {
-        text: 'Waan ka xumahay walaal, server-ka Gemini AI ayaa hadda aad u mashquulsan. Fadlan wax yar kadib dib ii weydii!',
+        text: 'Waan ka xumahay walaal, server-ka Gemini AI ayaa hadda aad u mashquulsan. Fadlan wax yar kadib dib ii weydii! 😊',
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
       };
     }
 
+    const gracefulFallback = "Walaal, hadda xiriirka wuu yara mashquulsan yahay, fadlan daqiiqad yar kadib codka mar kale ii soo duub ama fariin ii soo qor! 😊";
+
     return {
-      text: `⚠️ [CARDOSO AI Error]: Gemini API request failed (${lastError?.message || 'Unknown error'}). Check your network and API key.`,
+      text: gracefulFallback,
       provider: 'gemini',
       modelUsed: this.modelName,
       latencyMs: Date.now() - startTime,
