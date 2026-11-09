@@ -102,14 +102,13 @@ export class GeminiProvider implements IAIProvider {
 
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
-    // 3. Candidate models fallback list (Official valid Google Gemini multimodal models)
+    // 3. Candidate models fallback list — Updated to current active Gemini models (Nov 2026)
     const candidateModels = Array.from(new Set([
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash-8b',
-      this.modelName,
-    ])).filter(m => m && !m.includes('3.8') && !m.includes('2.5'));
+      this.modelName,          // Primary model from config (default: gemini-3.8-flash)
+      'gemini-3.8-flash',      // Latest recommended model (Google's official recommendation)
+      'gemini-2.0-flash-001',  // Stable 2.0 flash
+      'gemini-2.0-flash-lite', // Lightweight fallback
+    ])).filter(m => Boolean(m));
 
     let lastError: any = null;
 
