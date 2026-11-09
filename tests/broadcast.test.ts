@@ -73,7 +73,7 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
       return true;
     },
     onMessage: () => {},
-    close: async () => {},
+    stop: async () => {},
   };
 
   // Re-create draft and confirm
@@ -96,3 +96,4 @@ if (process.argv[1]?.endsWith('broadcast.test.ts')) {
     if (!res.passed) process.exit(1);
   });
 }
+
