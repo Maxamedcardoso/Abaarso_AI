@@ -168,7 +168,19 @@ export class MessageRouter {
       return { handled: true, reason: 'Broadcast stats' };
     }
 
-    // 2g. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
+    // 2g. Manual Contacts Import Command (!dar / !add)
+    if (/^!(?:dar|add|kudar)\s+/i.test(lowerText) && isAdminUser) {
+      const numbersRaw = text.replace(/^!(?:dar|add|kudar)\s+/i, '');
+      const addedCount = broadcastService.addManualNumbers(numbersRaw);
+      const stats = broadcastService.getStats();
+      await transport.sendMessage(
+        message.chatId,
+        `✅ *[CARDOSO AI]*: Waxaa si guul leh loogu daray *${addedCount} lambar* oo cusub!\nWadarta contacts-ka hadda waa *${stats.total} qof*.\n\nSi aad fariin ugu dirto, qor:\n\`!fariin <fariintaada>\``
+      );
+      return { handled: true, reason: 'Manual numbers added' };
+    }
+
+    // 2h. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
     if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
       const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);

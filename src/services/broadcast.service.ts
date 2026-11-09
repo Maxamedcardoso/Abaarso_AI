@@ -60,6 +60,15 @@ export class BroadcastService {
     this.botJid = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
   }
 
+  public isValidIndividualJid(jid: string): boolean {
+    if (!jid || typeof jid !== 'string') return false;
+    if (jid.endsWith('@g.us')) return false; // groups
+    if (jid.includes('status@broadcast')) return false; // status updates
+    if (jid.includes('@newsletter')) return false; // channels
+    if (jid === 'student_direct_chat') return false;
+    return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
+  }
+
   /**
    * Loads persisted contacts and sent broadcast history from SQLite database on startup
    */
@@ -68,7 +77,7 @@ export class BroadcastService {
     try {
       const persisted = await this.memory.getBroadcastContacts();
       for (const c of persisted) {
-        if (c.jid && c.jid.endsWith('@s.whatsapp.net') && !c.jid.includes('@lid')) {
+        if (c.jid && this.isValidIndividualJid(c.jid)) {
           this.contactsMap.set(c.jid, {
             jid: c.jid,
             name: c.name,
@@ -78,7 +87,18 @@ export class BroadcastService {
           });
         }
       }
-      if (persisted.length > 0) {
+
+      // Auto-seed from existing conversations if available
+      try {
+        const pastChats = await this.memory.getDistinctIndividualChats();
+        for (const chatId of pastChats) {
+          if (this.isValidIndividualJid(chatId) && !this.contactsMap.has(chatId)) {
+            this.recordContact(chatId);
+          }
+        }
+      } catch {}
+
+      if (this.contactsMap.size > 0) {
         console.log(`📢 [BroadcastService] Loaded ${this.contactsMap.size} persisted contacts for broadcasting.`);
       }
 
@@ -93,22 +113,15 @@ export class BroadcastService {
 
   /**
    * Records or updates a contact whenever a message or sync event is seen.
-   * Strictly filters out status broadcasts, groups, LID devices, and bot identity.
+   * Strictly filters out status broadcasts, groups, and bot identity.
    */
   public recordContact(jid: string, name?: string, isGroup?: boolean): void {
-    if (
-      !jid ||
-      isGroup ||
-      !jid.endsWith('@s.whatsapp.net') ||
-      jid.includes('@lid') ||
-      jid.includes('status@broadcast') ||
-      jid.endsWith('@g.us')
-    ) {
+    if (!jid || isGroup || !this.isValidIndividualJid(jid)) {
       return;
     }
 
     const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
-    if (this.botJid && phone === this.botJid) {
+    if (this.botJid && (phone === this.botJid || jid.includes(this.botJid))) {
       return;
     }
 
@@ -138,6 +151,25 @@ export class BroadcastService {
         phone: contact.phone,
       }).catch(() => {});
     }
+  }
+
+  /**
+   * Allows manual bulk import of phone numbers by admin.
+   */
+  public addManualNumbers(rawInput: string): number {
+    const tokens = rawInput.split(/[\s,;\n]+/);
+    let added = 0;
+    for (const token of tokens) {
+      const clean = token.replace(/[^0-9]/g, '');
+      if (clean.length >= 7) {
+        const jid = `${clean}@s.whatsapp.net`;
+        if (!this.contactsMap.has(jid)) {
+          this.recordContact(jid);
+          added++;
+        }
+      }
+    }
+    return added;
   }
 
   /**
@@ -181,9 +213,8 @@ export class BroadcastService {
       if (cleanAdmin && c.jid.replace(/[^0-9]/g, '') === cleanAdmin) return false;
       // Must not be bot's own number
       if (this.botJid && c.jid.replace(/[^0-9]/g, '') === this.botJid) return false;
-      // Must be individual phone contact
-      if (!c.jid.endsWith('@s.whatsapp.net')) return false;
-      if (c.jid.includes('@lid')) return false;
+      // Must be individual phone contact or LID
+      if (!this.isValidIndividualJid(c.jid)) return false;
       return true;
     });
   }

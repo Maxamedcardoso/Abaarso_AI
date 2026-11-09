@@ -90,7 +90,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       printQRInTerminal: false, // We handle QR with qrcode-terminal
       logger,
       browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
-      syncFullHistory: false, // Prevent history flood desync
+      syncFullHistory: true, // Sync full chat & contact history from WhatsApp Multi-Device
       getMessage: async (key) => {
         if (key?.id && this.rawMessages.has(key.id)) {
           return this.rawMessages.get(key.id)?.message;
@@ -146,14 +146,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     this.socket.ev.on('messaging-history.set', ({ chats, contacts }: any) => {
       if (Array.isArray(contacts)) {
         for (const contact of contacts) {
-          if (contact.id && contact.id.endsWith('@s.whatsapp.net') && !contact.id.includes('@lid')) {
+          if (contact.id && broadcastService.isValidIndividualJid(contact.id)) {
             broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
           }
         }
       }
       if (Array.isArray(chats)) {
         for (const chat of chats) {
-          if (chat.id && chat.id.endsWith('@s.whatsapp.net') && !chat.id.includes('@lid')) {
+          if (chat.id && broadcastService.isValidIndividualJid(chat.id)) {
             broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
           }
         }
@@ -164,7 +164,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     this.socket.ev.on('chats.upsert', (chats: any[]) => {
       if (!Array.isArray(chats)) return;
       for (const chat of chats) {
-        if (chat.id && chat.id.endsWith('@s.whatsapp.net') && !chat.id.includes('@lid')) {
+        if (chat.id && broadcastService.isValidIndividualJid(chat.id)) {
           broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
         }
       }
@@ -173,7 +173,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     this.socket.ev.on('contacts.upsert', (contacts: any[]) => {
       if (!Array.isArray(contacts)) return;
       for (const contact of contacts) {
-        if (contact.id && contact.id.endsWith('@s.whatsapp.net') && !contact.id.includes('@lid')) {
+        if (contact.id && broadcastService.isValidIndividualJid(contact.id)) {
           broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
         }
       }

@@ -114,6 +114,14 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   const resetAvailable = batchService.getAvailableRecipients();
   assert(resetAvailable.length === 3, 'Reset restores full pool of recipients');
 
+  // 9. Modern WhatsApp Multi-Device LID and manual import support
+  batchService.recordContact('277923424645192@lid', 'LID User');
+  assert(batchService.getContacts().some(c => c.jid === '277923424645192@lid'), 'Supports WhatsApp Multi-Device @lid contacts');
+
+  const manualAdded = batchService.addManualNumbers('252615999888, 252615777666');
+  assert(manualAdded === 2, 'Manually imports bulk numbers via !dar/!add');
+  assert(batchService.getContacts().some(c => c.jid === '252615999888@s.whatsapp.net'), 'Manual contact exists in recipient list');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');
