@@ -164,7 +164,7 @@ export class StudentAdvisorEngine {
         language: lang,
         latencyMs: Date.now() - startTime,
         replyMedia: voiceReply
-          ? { type: 'audio', dataBuffer: voiceReply.buffer, mimeType: voiceReply.mimeType || 'audio/mpeg', ptt: false }
+          ? { type: 'audio', dataBuffer: voiceReply.buffer, mimeType: voiceReply.mimeType || 'audio/mpeg', ptt: true }
           : undefined,
       };
     }
@@ -188,7 +188,7 @@ export class StudentAdvisorEngine {
         language: lang,
         latencyMs: Date.now() - startTime,
         replyMedia: demoVoice
-          ? { type: 'audio', dataBuffer: demoVoice.buffer, mimeType: demoVoice.mimeType || 'audio/mpeg', ptt: false }
+          ? { type: 'audio', dataBuffer: demoVoice.buffer, mimeType: demoVoice.mimeType || 'audio/mpeg', ptt: true }
           : undefined,
       };
     }
@@ -437,6 +437,8 @@ You are listening directly to an authentic human voice message (spoken audio).
 3. Answer ONLY what was asked in the voice note — never wander into other topics ("wixii la waydiiya kaliya ka jawaaba oo aan mowduuc kale dhex galin").
 4. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said ("AI la moodin"). Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
 5. Match the length of your answer to the depth of what they asked ("hadalka aad igu jawaabayso wuxuu ku waydiiyey intuu leeg yahay ugu jawaab").
+6. Optional Transcription metadata: At the very end of your response, output a single-line hidden transcript comment:
+<!-- transcript: [the user's exact words spoken in the audio] -->
 
 [User Spoken Audio Attached]: ${enrichedPrompt}`;
     }
@@ -472,6 +474,17 @@ You are listening directly to an authentic human voice message (spoken audio).
       media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
 
+    // Extract voice transcript tag if provided, to store real user words into SQLite conversation memory
+    let userTurnSavedContent = content;
+    const transcriptMatch = aiResult.text.match(/<!--\s*transcript:\s*([\s\S]*?)-->/i);
+    if (transcriptMatch) {
+      const cleanTranscript = transcriptMatch[1].trim();
+      if (cleanTranscript.length > 0 && !cleanTranscript.startsWith('[')) {
+        userTurnSavedContent = `🎙️ "${cleanTranscript}"`;
+      }
+      aiResult.text = aiResult.text.replace(/<!--\s*transcript:\s*[\s\S]*?-->/gi, '').trim();
+    }
+
     // Store successful generic responses in cache for subsequent users
     if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error')) {
       ResponseCacheService.set(content, lang, aiResult.text);
@@ -490,9 +503,9 @@ You are listening directly to an authentic human voice message (spoken audio).
             type: 'audio',
             dataBuffer: voiceResult.buffer,
             mimeType: voiceResult.mimeType || 'audio/mpeg',
-            ptt: false,
+            ptt: true,
           };
-          console.log(`✅ [AdvisorEngine] Voice note la diyaariyay — ${voiceResult.buffer.length} bytes`);
+          console.log(`✅ [AdvisorEngine] Voice note (PTT Waveform) la diyaariyay — ${voiceResult.buffer.length} bytes`);
         }
       } catch (voiceErr) {
         console.warn('[AdvisorEngine] Voice synthesis error:', voiceErr);
@@ -500,12 +513,12 @@ You are listening directly to an authentic human voice message (spoken audio).
     }
 
     // 12. Save conversation turns to database memory
-    // User turn is always saved to ensure complete conversation history
+    // User turn is always saved (with audio transcription if available) to ensure complete conversation history
     await this.memory.saveMessage({
       studentId: student.studentId,
       chatId,
       role: 'user',
-      content,
+      content: userTurnSavedContent,
       languageDetected: lang,
       timestamp,
     });

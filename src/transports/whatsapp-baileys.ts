@@ -483,25 +483,28 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         } else if (media.type === 'audio') {
           // Send universally playable audio note for WhatsApp (MP3 format natively supported across iOS, Android, and Web)
+          // When ptt is true (default for voice notes), WhatsApp renders it as a native voice note with waveforms!
+          const isPtt = media.ptt ?? true;
+          const audioPayload: any = {
+            audio: media.dataBuffer,
+            mimetype: media.mimeType || 'audio/mpeg',
+            ptt: isPtt,
+          };
+          if (!isPtt && media.fileName) {
+            audioPayload.fileName = media.fileName;
+          }
+
           try {
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
-              {
-                audio: media.dataBuffer,
-                mimetype: media.mimeType || 'audio/mpeg',
-                fileName: 'cardoso-codka.mp3',
-              },
+              audioPayload,
               rawQuoted ? { quoted: rawQuoted } : undefined
             );
           } catch (quotedErr) {
             console.warn('[WhatsAppBaileys] Quoted audio send failed, falling back to direct send:', quotedErr);
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
-              {
-                audio: media.dataBuffer,
-                mimetype: media.mimeType || 'audio/mpeg',
-                fileName: 'cardoso-codka.mp3',
-              }
+              audioPayload
             );
           }
         }

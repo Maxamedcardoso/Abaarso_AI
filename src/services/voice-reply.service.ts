@@ -112,7 +112,7 @@ export class VoiceReplyService {
     // Try up to 2 attempts for 100% zero-error reliability against transient network glitches
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const result = await this.synthesizeSingleAttempt(clean, voiceName);
+        const result = await this.synthesizeSingleAttempt(clean, voiceName, language);
         if (result && result.buffer.length > 0) {
           return result;
         }
@@ -126,7 +126,7 @@ export class VoiceReplyService {
     return null;
   }
 
-  private static synthesizeSingleAttempt(clean: string, voiceName: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  private static synthesizeSingleAttempt(clean: string, voiceName: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {
     return new Promise((resolve) => {
       const tts = new MsEdgeTTS();
       let isResolved = false;
@@ -143,7 +143,10 @@ export class VoiceReplyService {
       (async () => {
         try {
           await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-          const { audioStream } = tts.toStream(clean);
+          const { audioStream } = tts.toStream(clean, {
+            rate: language === 'so' ? '-4%' : '-2%',
+            pitch: '+0Hz',
+          });
 
           const chunks: Buffer[] = [];
           audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));

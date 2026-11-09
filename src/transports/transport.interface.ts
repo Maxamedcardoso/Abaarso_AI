@@ -35,6 +35,7 @@ export interface OutgoingMedia {
   mimeType: string;
   caption?: string;
   ptt?: boolean; // When true, rendered as authentic WhatsApp Voice Note
+  fileName?: string;
 }
 
 /**
