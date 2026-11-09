@@ -7,6 +7,7 @@ export type AdvisorIntent =
   | 'help'
   | 'greeting'
   | 'creator'
+  | 'owner_inquiry'
   | 'general';
 
 export interface ClassifiedIntent {
@@ -40,6 +41,12 @@ export class IntentClassifier {
     const isCreatorQuery = /(yaa\s+(ku\s+)?(sameey[aey]|dhis[ay]|abuur[ay]|furt[ay])|kumaa\s+(ku\s+)?(sameey[aey]|dhis[ay])|who\s+(created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(creator|developer|maker|author|owner)|yaa\s+iska\s*leh|yaa\s+sameeyay\s+(cardoso|bot|abaarso)|yaa\s+dhisay\s+(cardoso|bot|abaarso)|(halkee?|meelkee?|halkuu|xaggee|xagguu)\s+(buu\s+|uu\s+)?(joogaa?|deggan\s*yahay|ku\s*nool\s*yahay)|where\s+(does|is)\s+(he|mohamed|the\s+creator)\s+(live|located|stay))/i.test(lower);
     if (isCreatorQuery) {
       return { intent: 'creator', confidence: 0.98, tags: ['creator', 'developer'] };
+    }
+
+    // 3.5. WhatsApp Owner inquiries ("Qofkii WhatsApp-ka lahaa aaway?", "Ninkii lambarka lahaa aaway?", "Owner-ka aaway?", etc.)
+    const isOwnerQuery = /(?:qofki[ti]\s+(?:whatsapp(?:-?ka)?|lambark?a|number(?:-?ka)?|phone(?:-?ka)?|telefoonka)\s+lahaa(?:\s+(?:aaway|mee[hd]?|xaggee|halkee|ma\s+joogaa))?|(?:ninkii|qofkii|ruuxii)\s+(?:lambarka|number(?:-?ka)?)\s+lahaa(?:\s+(?:aaway|mee[hd]?|xaggee|halkee|ma\s+joogaa))?|owner(?:-?k[aiei])?(?:\s+(?:lambarka|number(?:-?ka)?|whatsapp(?:-?ka)?))?\s*(?:aaway|mee[hd]?|where|ma\s+joogaa)|(?:qofkii|ninkii)\s+lambarka\s+(?:aaway|mee[hd]?|ma\s+joogaa)|yaa\s+(?:leh|iska\s*leh|haya|maamul[aey]|haysta)\s+(?:lambark?a|number(?:-?kan?)?|whatsapp(?:-?kan?)?)|(?:number(?:-?kan?)?|lambark?a)\s+yaa\s+(?:leh|iska\s*leh|haya)|where\s+is\s+the\s+owner|who\s+(?:is\s+the\s+owner|owns\s+this\s+number|owns\s+this\s+phone|owns\s+this\s+whatsapp)|is\s+the\s+owner\s+(?:here|around)|whose\s+(?:number|phone|whatsapp)\s+is\s+this|qofkii\s+number\s+lahaa\s+aaway)/i.test(lower);
+    if (isOwnerQuery) {
+      return { intent: 'owner_inquiry', confidence: 0.98, tags: ['owner', 'whatsapp_manager'] };
     }
 
     // 4. Pure Greetings — Somali & English casual greetings (all common variants)

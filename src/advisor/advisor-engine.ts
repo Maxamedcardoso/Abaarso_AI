@@ -22,6 +22,9 @@ export interface ProcessMessageInput {
   timestamp?: number;
   media?: MessageMedia;
   forceVoiceReply?: boolean;
+  forbidVoiceReply?: boolean;
+  hasCardosoMention?: boolean;
+  rawContent?: string;
 }
 
 export interface ProcessMessageOutput {
@@ -314,6 +317,27 @@ export class StudentAdvisorEngine {
       return { replyText: aiCreator.text, studentId: student.studentId, intent: 'creator', language: lang, latencyMs: Date.now() - startTime };
     }
 
+    // 7.6. Handle WhatsApp Owner inquiry ("Qofkii WhatsApp-ka lahaa aaway?", "Ninkii lambarka lahaa aaway?")
+    if (intentResult.intent === 'owner_inquiry') {
+      let ownerReply: string;
+      if (lang === 'so') {
+        ownerReply = `Walaal, hadda aniga ayaa maamulaya oo haya lambarkan, qofkii lambarka lahaa hadda ma joogo (wuu maqan yahay). Ma jirtaa fariin ama wax aan kuu qaban karo oo aan u reebo ama kaa caawiyo? 😊`;
+      } else if (lang === 'en') {
+        ownerReply = `Hello! I am currently managing and holding this number; the owner of the number isn't around right now. Is there a message you'd like me to leave for them, or anything I can help you with? 😊`;
+      } else if (lang === 'ar') {
+        ownerReply = `أهلاً بك! أنا حالياً من يدير ويحمل هذا الرقم، وصاحب الرقم غير متواجد حالياً. هل هناك رسالة تود تركها له أو أي شيء يمكنني مساعدتك به؟ 😊`;
+      } else {
+        ownerReply = `Hello! I am currently managing and holding this number; the owner of the number isn't around right now. Is there a message or anything I can help you with? 😊`;
+      }
+      return {
+        replyText: ownerReply,
+        studentId: student.studentId,
+        intent: 'owner_inquiry',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
     // 8. Handle Help command — reply in user's language
     if (intentResult.intent === 'help') {
       if (lang === 'so') {
@@ -360,14 +384,19 @@ export class StudentAdvisorEngine {
     }
 
     // 8.9. Detect early whether this response will be delivered as an audio voice note
-    // Triggers voice reply when:
-    //   • input.forceVoiceReply is true (e.g. user invoked with @cod or !cod)
-    //   • User sent an audio/voice note (media.type === 'audio')
-    //   • User explicitly asked for voice in Somali or English text
-    const wantsVoice =
+    // STRICT USER RULE: "@cardoso hadii qoro marnaba qof cod hagu jaawibin"
+    // If the message contains "@cardoso", NEVER reply with a voice note! Always text!
+    const isCardosoMentioned =
+      Boolean(input.hasCardosoMention) ||
+      Boolean(input.forbidVoiceReply) ||
+      /@cardoso\b/i.test(content) ||
+      /@cardoso\b/i.test(input.rawContent || '');
+
+    const wantsVoice = !isCardosoMentioned && (
       Boolean(input.forceVoiceReply) ||
       media?.type === 'audio' ||
-      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content);
+      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content)
+    );
 
     // 9. Build system instruction (includes language directive + emotion guidance + extended voice mode)
     const systemInstruction = PromptBuilder.buildSystemInstruction({
@@ -383,15 +412,17 @@ export class StudentAdvisorEngine {
     // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context
     let enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
 
-    // Spoken Voice Note Duration Extension:
-    // If user requested voice, instruct Gemini to provide a rich, detailed, full-length spoken explanation.
+    // Spoken Voice Note Natural & Proportional Guidance:
     if (wantsVoice) {
-      enrichedPrompt = `[🎙️ MANDATORY EXTENDED VOICE NOTE MODE — LONG DURATION REQUIRED]:
-The user is listening to your response as an AUDIO VOICE NOTE on WhatsApp.
-The user explicitly wants a LONGER, SUBSTANTIAL, FULL-LENGTH DURATION (not a brief 2-sentence reply).
-- You MUST provide a rich, detailed, comprehensive explanation (at least 250 - 450 words, 3 to 5 thorough spoken paragraphs).
-- Provide background, core concepts, detailed points/examples, and thoughtful closing remarks.
-- Do NOT abbreviate or cut your answer short. Speak fully so the voice note lasts 1.5 to 3 minutes!
+      enrichedPrompt = `[🎙️ SPOKEN VOICE NOTE MODE — NATURAL & PROPORTIONAL DIRECTIVE]:
+The user is listening to your answer as a SPOKEN AUDIO VOICE NOTE on WhatsApp.
+1. Answer ONLY what the user asked — do NOT bring in other topics or unasked background ("wixii la waydiiya kaliya ka jawaaba oo aan mowduuc kale dhex galin").
+2. Match your spoken answer length to the length/scope of their question ("hadalka aad ugu jawaabayso wuxuu ku waydiiyey intuu leeg yahay ugu jawaab"):
+   - If they gave a simple question or greeting, give a short, warm spoken reply (1-2 sentences).
+   - If they asked a moderate question, give a clear, direct spoken answer (approx. 20-45 seconds of speech).
+   - If they asked an in-depth question or asked for detail, give a well-structured spoken answer.
+   - Do NOT artificially inflate, repeat, or pad your answer.
+3. Speak naturally like a real human caring friend on WhatsApp (no emojis, no markdown asterisks or bullet points, smooth spoken sentences).
 
 ${enrichedPrompt}`;
     }
@@ -401,10 +432,11 @@ ${enrichedPrompt}`;
     if (media?.type === 'audio') {
       enrichedPrompt = `[🎧 HIGH-ACCURACY VOICE NOTE COMPREHENSION DIRECTIVE]:
 You are listening directly to an authentic human voice message (spoken audio).
-1. Listen with acute, human-level attention to every word, phrase, regional accent, and emotional nuance spoken.
-2. The speaker may speak standard Somali, colloquial/informal Somali (e.g. sxb, sxp, wll, ii sheeg, maxaad ka taqaan, iwm), English, or Arabic. Accurately transcribe and understand their words even with background noise or natural speed.
-3. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said. Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
-4. Provide a rich, thorough, and complete explanation tailored to what the user asked — do NOT artificially truncate or shorten the response. Give full substance so the user receives a complete, satisfying answer.
+1. Listen with acute, human-level attention to every word, phrase, regional accent, and emotional nuance spoken ("codka uu ku soo duubay fahan ereyada uu ku hadlayo ka jawaab").
+2. Accurately understand colloquial Somali (e.g. sxb, sxp, wll, wlo, haye, see tahay, maxaa cusub, ii sheeg, maxaad ka taqaan, iwm), standard Somali, English, or Arabic.
+3. Answer ONLY what was asked in the voice note — never wander into other topics ("wixii la waydiiya kaliya ka jawaaba oo aan mowduuc kale dhex galin").
+4. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said ("AI la moodin"). Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
+5. Match the length of your answer to the depth of what they asked ("hadalka aad igu jawaabayso wuxuu ku waydiiyey intuu leeg yahay ugu jawaab").
 
 [User Spoken Audio Attached]: ${enrichedPrompt}`;
     }
@@ -467,21 +499,22 @@ You are listening directly to an authentic human voice message (spoken audio).
       }
     }
 
-    // 12. Save conversation turns to database memory (only save clean responses, not system errors)
+    // 12. Save conversation turns to database memory
+    // User turn is always saved to ensure complete conversation history
+    await this.memory.saveMessage({
+      studentId: student.studentId,
+      chatId,
+      role: 'user',
+      content,
+      languageDetected: lang,
+      timestamp,
+    });
+
     const isErrorOutput = aiResult.text.includes('CARDOSO AI Error') ||
       aiResult.text.includes('Gemini API request failed') ||
       aiResult.text.includes('Zero-Cost Safeguard');
 
     if (!isErrorOutput) {
-      await this.memory.saveMessage({
-        studentId: student.studentId,
-        chatId,
-        role: 'user',
-        content,
-        languageDetected: lang,
-        timestamp,
-      });
-
       await this.memory.saveMessage({
         studentId: student.studentId,
         chatId,

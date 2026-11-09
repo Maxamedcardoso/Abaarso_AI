@@ -158,10 +158,11 @@ export class MessageRouter {
     // In groups, only respond if @mentioned (@cardoso), short triggers (@cod, @sawir), prefixed, or isMentioned=true
     // (isMentioned is set to true by the transport when user swipe-replies to bot's message).
     // For voice notes (media with no text): isMentioned=true is the only signal — allow it through.
-    const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
+    const hasCardosoText = lowerText.includes('@cardoso');
+    const hasVoiceCommand = !hasCardosoText && (lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText));
     const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
     const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!cod') || lowerText.startsWith('!sawir') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || lowerText.includes('@cardoso') || hasVoiceCommand || hasImageCommand;
+    const hasMention = message.isMentioned || hasCardosoText || hasVoiceCommand || hasImageCommand;
     const isMediaWithNoText = !text && !!(message as any).media;
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
@@ -231,12 +232,17 @@ export class MessageRouter {
       timestamp: message.rawTimestamp,
       media: (message as any).media,
       forceVoiceReply: hasVoiceCommand,
+      forbidVoiceReply: hasCardosoText,
+      hasCardosoMention: hasCardosoText,
+      rawContent: text,
     });
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);
 
     // 8. Dispatch reply through transport (with media support for images & voice notes)
-    if (advisorResult.replyMedia && transport.sendMedia) {
+    // STRICT USER RULE: "@cardoso hadii qoro marnaba qof cod hagu jaawibin"
+    // If the message contains @cardoso, suppress any audio replyMedia and send strictly text!
+    if (advisorResult.replyMedia && transport.sendMedia && !(hasCardosoText && advisorResult.replyMedia.type === 'audio')) {
       if (advisorResult.replyMedia.type === 'image') {
         // Send generated image with caption
         const sent = await transport.sendMedia(message.chatId, advisorResult.replyMedia, {
