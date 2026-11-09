@@ -97,6 +97,23 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(directResult.success === true, 'Direct broadcast starts immediately without confirmation');
   assert(directResult.message.includes('FARIIN-WADAREED BILAABATAY'), 'Direct broadcast returns immediate acknowledgment');
 
+  // 8. Exclusion & Anti-Repeat Test (recipients already sent are NEVER contacted again)
+  const batchService = new BroadcastService();
+  batchService.recordContact('252610000001@s.whatsapp.net', 'User1');
+  batchService.recordContact('252610000002@s.whatsapp.net', 'User2');
+  batchService.recordContact('252610000003@s.whatsapp.net', 'User3');
+
+  // Mark User1 as already sent
+  await batchService.markAsSent('252610000001@s.whatsapp.net');
+  const available = batchService.getAvailableRecipients();
+  assert(available.length === 2, 'Excludes already-contacted recipient (User1)');
+  assert(!available.some(c => c.jid === '252610000001@s.whatsapp.net'), 'User1 is strictly excluded from available pool');
+
+  // Test reset history
+  await batchService.resetSentHistory();
+  const resetAvailable = batchService.getAvailableRecipients();
+  assert(resetAvailable.length === 3, 'Reset restores full pool of recipients');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

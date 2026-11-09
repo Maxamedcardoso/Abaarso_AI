@@ -63,6 +63,12 @@ export class SQLiteStudentMemory implements IStudentMemory {
         phone TEXT,
         last_seen INTEGER
       );
+
+      CREATE TABLE IF NOT EXISTS broadcast_sent_history (
+        jid TEXT PRIMARY KEY,
+        sent_at INTEGER NOT NULL,
+        message_preview TEXT
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -241,6 +247,41 @@ export class SQLiteStudentMemory implements IStudentMemory {
       }));
     } catch {
       return [];
+    }
+  }
+
+  public async markBroadcastSent(jid: string, preview?: string): Promise<void> {
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO broadcast_sent_history (jid, sent_at, message_preview)
+        VALUES (?, ?, ?)
+        ON CONFLICT(jid) DO UPDATE SET
+          sent_at = excluded.sent_at,
+          message_preview = excluded.message_preview;
+      `).run(jid, Date.now(), (preview || '').slice(0, 100));
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed marking broadcast sent:', err.message);
+    }
+  }
+
+  public async getSentBroadcastJids(): Promise<Set<string>> {
+    if (!this.db) return new Set();
+    try {
+      const rows = this.db.prepare('SELECT jid FROM broadcast_sent_history').all() as any[];
+      return new Set(rows.map(r => r.jid));
+    } catch {
+      return new Set();
+    }
+  }
+
+  public async resetBroadcastSentHistory(): Promise<number> {
+    if (!this.db) return 0;
+    try {
+      const result = this.db.prepare('DELETE FROM broadcast_sent_history').run();
+      return Number(result.changes);
+    } catch {
+      return 0;
     }
   }
 

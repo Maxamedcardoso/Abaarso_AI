@@ -129,10 +129,10 @@ export class MessageRouter {
 
     // 2c. Broadcast Query Contacts Command (!contacts / !liis)
     if (/^!(?:contacts|liis|xiriir)$/i.test(lowerText.trim()) && isAdminUser) {
-      const count = broadcastService.getContactsCount();
+      const stats = broadcastService.getStats();
       await transport.sendMessage(
         message.chatId,
-        `📋 *[CARDOSO AI Contacts]*: Waxaa hadda ku kaydsan *${count} qof* oo diyaar u ah fariin-wadareed.\n\nSi aad fariin ugu dirto, qor:\n\`!broadcast <fariintaada>\``
+        `📋 *[CARDOSO AI Contacts & Broadcast]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Fariinta Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*\n\nSi aad 50 qof oo cusub ugu dirto, qor:\n\`!fariin <fariintaada>\`\n\nHaddii aad doonayso inaad dib uga bilowdo dhamaan, qor:\n\`!fariin reset\``
       );
       return { handled: true, reason: 'Contacts query' };
     }
@@ -143,12 +143,32 @@ export class MessageRouter {
       const personalized = broadcastService.formatPersonalizedMessage(sampleText, message.senderName || 'Saaxiib');
       await transport.sendMessage(
         message.chatId,
-        `🧪 *[CARDOSO AI Broadcast Test Preview]*:\n\nSidan ayay u gaadhi doontaa qofka:\n"${personalized}"\n\nHaddii ay ku qanciso, u dir dhammaan adigoo isticmaalaya:\n\`!broadcast ${sampleText}\``
+        `🧪 *[CARDOSO AI Broadcast Test Preview]*:\n\nSidan ayay u gaadhi doontaa qofka:\n"${personalized}"\n\nHaddii ay ku qanciso, u dir dhammaan adigoo isticmaalaya:\n\`!fariin ${sampleText}\``
       );
       return { handled: true, reason: 'Broadcast test preview' };
     }
 
-    // 2e. Direct Broadcast Command (!broadcast / !fariin) — sends to up to 50 contacts immediately!
+    // 2e. Broadcast Reset Command (!fariin reset / !broadcast reset)
+    if (/^!(?:broadcast|fariin)\s+reset$/i.test(lowerText.trim()) && isAdminUser) {
+      await broadcastService.resetSentHistory();
+      await transport.sendMessage(
+        message.chatId,
+        '🔄 *[CARDOSO AI]*: Liiskii dadka fariinta loo diray waa la nadiifiyay! Hadda waxaad dib ugu bilaabi kartaa fariin cusub dhammaan contacts-ka.'
+      );
+      return { handled: true, reason: 'Broadcast history reset' };
+    }
+
+    // 2f. Broadcast Stats Command (!fariin stats / !broadcast stats)
+    if (/^!(?:broadcast|fariin)\s+(?:stats|status)$/i.test(lowerText.trim()) && isAdminUser) {
+      const stats = broadcastService.getStats();
+      await transport.sendMessage(
+        message.chatId,
+        `📊 *[CARDOSO AI Smart Broadcast Xogteeda]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*`
+      );
+      return { handled: true, reason: 'Broadcast stats' };
+    }
+
+    // 2g. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
     if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
       const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);

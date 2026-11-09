@@ -35,6 +35,8 @@ export interface BroadcastProgress {
  */
 export class BroadcastService {
   private contactsMap: Map<string, BroadcastContact> = new Map();
+  private sentJids: Set<string> = new Set();
+  private botJid: string = '';
   private pendingDrafts: Map<string, BroadcastDraft> = new Map();
   private activeBroadcast: BroadcastProgress = {
     isActive: false,
@@ -53,24 +55,36 @@ export class BroadcastService {
     this.memory = memory;
   }
 
+  public setBotJid(jid: string): void {
+    if (!jid) return;
+    this.botJid = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+  }
+
   /**
-   * Loads persisted contacts from SQLite database on startup
+   * Loads persisted contacts and sent broadcast history from SQLite database on startup
    */
   public async loadPersistedContacts(): Promise<void> {
     if (!this.memory) return;
     try {
       const persisted = await this.memory.getBroadcastContacts();
       for (const c of persisted) {
-        this.contactsMap.set(c.jid, {
-          jid: c.jid,
-          name: c.name,
-          firstName: c.firstName || this.extractCleanFirstName(c.name),
-          phone: c.phone,
-          lastSeen: Date.now(),
-        });
+        if (c.jid && c.jid.endsWith('@s.whatsapp.net') && !c.jid.includes('@lid')) {
+          this.contactsMap.set(c.jid, {
+            jid: c.jid,
+            name: c.name,
+            firstName: c.firstName || this.extractCleanFirstName(c.name),
+            phone: c.phone,
+            lastSeen: Date.now(),
+          });
+        }
       }
       if (persisted.length > 0) {
-        console.log(`📢 [BroadcastService] Loaded ${persisted.length} persisted contacts for broadcasting.`);
+        console.log(`📢 [BroadcastService] Loaded ${this.contactsMap.size} persisted contacts for broadcasting.`);
+      }
+
+      this.sentJids = await this.memory.getSentBroadcastJids();
+      if (this.sentJids.size > 0) {
+        console.log(`📢 [BroadcastService] Loaded ${this.sentJids.size} previously contacted recipients (won't re-send).`);
       }
     } catch (err: any) {
       console.warn('[BroadcastService] Warning loading persisted contacts:', err.message);
@@ -78,17 +92,28 @@ export class BroadcastService {
   }
 
   /**
-   * Records or updates a contact whenever a message is seen.
-   * Excludes status broadcasts, groups, and bot identity.
+   * Records or updates a contact whenever a message or sync event is seen.
+   * Strictly filters out status broadcasts, groups, LID devices, and bot identity.
    */
   public recordContact(jid: string, name?: string, isGroup?: boolean): void {
-    if (!jid || isGroup || jid.endsWith('@g.us') || jid.includes('status@broadcast')) {
+    if (
+      !jid ||
+      isGroup ||
+      !jid.endsWith('@s.whatsapp.net') ||
+      jid.includes('@lid') ||
+      jid.includes('status@broadcast') ||
+      jid.endsWith('@g.us')
+    ) {
+      return;
+    }
+
+    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
+    if (this.botJid && phone === this.botJid) {
       return;
     }
 
     const cleanName = (name && name.trim().length > 0) ? name.trim() : undefined;
     const firstName = this.extractCleanFirstName(cleanName);
-    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
 
     const existing = this.contactsMap.get(jid);
     const resolvedName = cleanName || existing?.name;
@@ -140,6 +165,61 @@ export class BroadcastService {
 
   public getContactsCount(): number {
     return this.contactsMap.size;
+  }
+
+  /**
+   * Returns eligible contacts that have NEVER been sent a broadcast yet,
+   * strictly excluding admin, bot, and previously contacted JIDs.
+   */
+  public getAvailableRecipients(adminChatId?: string): BroadcastContact[] {
+    const cleanAdmin = adminChatId?.split(':')[0]?.split('@')[0]?.replace(/[^0-9]/g, '');
+    return Array.from(this.contactsMap.values()).filter(c => {
+      // Must not be in already-sent set
+      if (this.sentJids.has(c.jid)) return false;
+      // Must not be admin chat
+      if (adminChatId && c.jid === adminChatId) return false;
+      if (cleanAdmin && c.jid.replace(/[^0-9]/g, '') === cleanAdmin) return false;
+      // Must not be bot's own number
+      if (this.botJid && c.jid.replace(/[^0-9]/g, '') === this.botJid) return false;
+      // Must be individual phone contact
+      if (!c.jid.endsWith('@s.whatsapp.net')) return false;
+      if (c.jid.includes('@lid')) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Marks a contact as having received a broadcast so they are never contacted again.
+   */
+  public async markAsSent(jid: string, preview?: string): Promise<void> {
+    this.sentJids.add(jid);
+    if (this.memory) {
+      await this.memory.markBroadcastSent(jid, preview);
+    }
+  }
+
+  /**
+   * Resets broadcast history if admin wants to run a brand new campaign.
+   */
+  public async resetSentHistory(): Promise<number> {
+    this.sentJids.clear();
+    if (this.memory) {
+      return await this.memory.resetBroadcastSentHistory();
+    }
+    return 0;
+  }
+
+  /**
+   * Gets broadcast delivery statistics.
+   */
+  public getStats(): { total: number; sent: number; remaining: number } {
+    const total = this.contactsMap.size;
+    const sent = this.sentJids.size;
+    return {
+      total,
+      sent,
+      remaining: Math.max(0, total - sent),
+    };
   }
 
   /**
@@ -210,7 +290,9 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
 
   /**
    * Starts a direct broadcast immediately without confirmation step.
-   * Can send to up to maxLimit contacts (default 50).
+   * Sends to the next batch of uncontacted contacts (up to maxLimit, default 50).
+   * Once sent to, contacts are recorded in persistent SQLite history so they
+   * are NEVER contacted again.
    */
   public async startDirectBroadcast(
     adminChatId: string,
@@ -233,16 +315,25 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       };
     }
 
-    // Get up to maxLimit individual contacts excluding adminChatId
-    const allRecipients = this.getContacts().filter(c => c.jid !== adminChatId);
-    const recipients = allRecipients.slice(0, maxLimit);
+    // Get uncontacted individual contacts excluding adminChatId and bot
+    const availableRecipients = this.getAvailableRecipients(adminChatId);
 
-    if (recipients.length === 0) {
+    if (availableRecipients.length === 0) {
+      const stats = this.getStats();
+      if (stats.total === 0) {
+        return {
+          success: false,
+          message: '⚠️ Wali ma jiraan contacts ku kaydsan bot-ka oo fariin loo diri karo!\nBot-ku wuxuu si toos ah u soo qaadanayaa dadka WhatsApp-ka kula hadla ama ku jira liiskaaga.',
+        };
+      }
       return {
         success: false,
-        message: '⚠️ Wali ma jiraan contacts ku kaydsan bot-ka oo fariin loo diri karo!\nBot-ku wuxuu si toos ah u soo qaadanayaa dadka WhatsApp-ka kula hadla ama ku jira liiskaaga.',
+        message: `ℹ️ *[CARDOSO AI — DHAMMAAN WAA LA GAARSIISAY]*\n\nDhammaan contacts-ka bot-ka ku jira (*${stats.sent}/${stats.total} qof*) fariinta horey ayaa loo gaarsiiyay!\nQofna mar labaad looma celinayo.\n\nHaddii aad doonayso inaad olole cusub bilowdo oo liiska dib u bilowdo, qor:\n\`!fariin reset\``,
       };
     }
+
+    const recipients = availableRecipients.slice(0, maxLimit);
+    const remainingAfter = availableRecipients.length - recipients.length;
 
     // Set active progress
     this.activeBroadcast = {
@@ -260,7 +351,7 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       createdAt: Date.now(),
     };
 
-    const estimatedMinutes = Math.ceil((recipients.length * 14) / 60);
+    const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * 5) / 60));
     const sampleName = recipients[0]?.firstName || 'Axmed';
     const samplePreview = this.formatPersonalizedMessage(messageText, sampleName);
 
@@ -273,12 +364,13 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       success: true,
       message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*
 
-Fariinta waxaa toos loogu bilaabay *${recipients.length} qof* (ilaa 50 qof).
+Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Dufcaddan: ilaa 50 qof).
+📊 Xaaladda: *${recipients.length}* hadda loo dirayaa | *${remainingAfter}* ayaa dhiman.
 
 📝 *Tusaale sida ay ugu dhacayso:*
 "${samplePreview}"
 
-⏱️ *Waqtiga:* Qof kasta fariin gaar ah ayay ku socotaa (~${estimatedMinutes} daqiiqo) si lambarkaagu u nabadgalo.
+🛡️ *Xeerka Badbaadada:* Qofna fariin laguma celcelin doono. Qof kasta fariin gaar ah ayuu ku helayaa (~${estimatedMinutes} daqiiqo).
 🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
     };
   }
@@ -405,14 +497,16 @@ Fariinta waxaa toos loogu bilaabay *${recipients.length} qof* (ilaa 50 qof).
       try {
         await transport.sendMessage(recipient.jid, personalized);
         this.activeBroadcast.sentCount++;
+        await this.markAsSent(recipient.jid, messageText);
         console.log(`✅ [Broadcast] Sent to ${recipient.firstName || recipient.jid} (${i + 1}/${recipients.length})`);
       } catch (err: any) {
         this.activeBroadcast.failedCount++;
+        await this.markAsSent(recipient.jid, messageText);
         console.warn(`⚠️ [Broadcast] Failed sending to ${recipient.jid}: ${err.message}`);
       }
 
-      // Progress update to admin every 15 sent messages
-      if ((i + 1) % 15 === 0 && (i + 1) < recipients.length) {
+      // Progress update to admin every 10 sent messages
+      if ((i + 1) % 10 === 0 && (i + 1) < recipients.length) {
         await transport.sendMessage(
           adminChatId,
           `⏳ *[Smart Broadcast Progress]*: Waxaa la diray *${i + 1}/${recipients.length} qof*... shaqadu way socotaa.`
@@ -421,26 +515,30 @@ Fariinta waxaa toos loogu bilaabay *${recipients.length} qof* (ilaa 50 qof).
 
       // Do NOT delay after the very last message
       if (i < recipients.length - 1) {
-        // Random human delay between 10 to 18 seconds (10,000ms - 18,000ms)
-        const delayMs = Math.floor(10000 + Math.random() * 8000);
+        // Safe natural human delay between 3.5 to 6 seconds (3,500ms - 6,000ms)
+        const delayMs = Math.floor(3500 + Math.random() * 2500);
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
 
     this.activeBroadcast.isActive = false;
 
+    const remainingNow = this.getAvailableRecipients(adminChatId).length;
+
     // Send final celebratory completion report to Admin
     const summary = `🎉 *[CARDOSO AI SMART BROADCAST — GUUL]*
 
-Dhammaan fariimihii waxaa loo wada diray si nabad ah!
+Dufcaddii *${recipients.length} qof* si nabad ah ayaa loo wada gaarsiiyay!
 • Guuleystay: *${this.activeBroadcast.sentCount} qof*
 • Cillad ku dhacday: *${this.activeBroadcast.failedCount} qof*
-• Total: *${recipients.length} qof*
+• Total la diray: *${recipients.length} qof*
+• Qofna dib looguma celinayo dadkan (History saved).
+• Hadhay (Aan wali helin): *${remainingNow} qof*
 
-Dhammaan fariimaha waxaa loo diray si dabiici ah oo badbaado buuxda u ah lambarkaaga. ✅`;
+${remainingNow > 0 ? `Si aad 50-ka xiga ugu dirto, mar kale qor:\n\`!fariin ${messageText}\`` : 'Dhammaan contacts-kaagii fariinta waa wada heleen! 💯'}`;
 
     await transport.sendMessage(adminChatId, summary);
-    console.log(`🎉 [BroadcastService] Completed broadcast. Sent: ${this.activeBroadcast.sentCount}, Failed: ${this.activeBroadcast.failedCount}`);
+    console.log(`🎉 [BroadcastService] Completed broadcast. Sent: ${this.activeBroadcast.sentCount}, Remaining: ${remainingNow}`);
   }
 }
 

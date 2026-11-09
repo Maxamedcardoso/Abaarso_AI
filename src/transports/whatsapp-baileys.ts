@@ -133,42 +133,47 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.connected = true;
         this.currentQR = null;
         this.lastActivityTimestamp = Date.now();
+        const botId = this.socket?.user?.id || '';
+        if (botId) {
+          broadcastService.setBotJid(botId);
+        }
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
       }
     });
 
     // ─── Contact & Chat Synchronization for Smart Broadcasting ───────────────
-    this.socket.ev.on('chats.set' as any, ({ chats }: any) => {
+    // Baileys multi-device emits 'messaging-history.set' with full initial sync of chats & contacts
+    this.socket.ev.on('messaging-history.set', ({ chats, contacts }: any) => {
+      if (Array.isArray(contacts)) {
+        for (const contact of contacts) {
+          if (contact.id && contact.id.endsWith('@s.whatsapp.net') && !contact.id.includes('@lid')) {
+            broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
+          }
+        }
+      }
+      if (Array.isArray(chats)) {
+        for (const chat of chats) {
+          if (chat.id && chat.id.endsWith('@s.whatsapp.net') && !chat.id.includes('@lid')) {
+            broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
+          }
+        }
+      }
+      console.log(`📋 [Contacts Sync] Synchronized ${broadcastService.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
+    });
+
+    this.socket.ev.on('chats.upsert', (chats: any[]) => {
       if (!Array.isArray(chats)) return;
       for (const chat of chats) {
-        if (chat.id && !chat.id.endsWith('@g.us') && !chat.id.includes('status@broadcast')) {
+        if (chat.id && chat.id.endsWith('@s.whatsapp.net') && !chat.id.includes('@lid')) {
           broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
         }
       }
     });
 
-    this.socket.ev.on('chats.upsert' as any, (chats: any[]) => {
-      if (!Array.isArray(chats)) return;
-      for (const chat of chats) {
-        if (chat.id && !chat.id.endsWith('@g.us') && !chat.id.includes('status@broadcast')) {
-          broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
-        }
-      }
-    });
-
-    this.socket.ev.on('contacts.set' as any, ({ contacts }: any) => {
+    this.socket.ev.on('contacts.upsert', (contacts: any[]) => {
       if (!Array.isArray(contacts)) return;
       for (const contact of contacts) {
-        if (contact.id && !contact.id.endsWith('@g.us') && !contact.id.includes('status@broadcast')) {
-          broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
-        }
-      }
-    });
-
-    this.socket.ev.on('contacts.upsert' as any, (contacts: any[]) => {
-      if (!Array.isArray(contacts)) return;
-      for (const contact of contacts) {
-        if (contact.id && !contact.id.endsWith('@g.us') && !contact.id.includes('status@broadcast')) {
+        if (contact.id && contact.id.endsWith('@s.whatsapp.net') && !contact.id.includes('@lid')) {
           broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
         }
       }
