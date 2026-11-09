@@ -74,6 +74,12 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
     },
     onMessage: () => {},
     stop: async () => {},
+    getStatus: () => ({
+      name: 'mock',
+      connected: true,
+      activeChats: 0,
+      lastActivity: Date.now(),
+    }),
   };
 
   // Re-create draft and confirm
