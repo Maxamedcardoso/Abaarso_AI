@@ -14,6 +14,7 @@ import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingM
 import { MediaProcessorService } from '../services/media-processor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
+import { broadcastService } from '../services/broadcast.service.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
@@ -133,6 +134,43 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.currentQR = null;
         this.lastActivityTimestamp = Date.now();
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
+      }
+    });
+
+    // ─── Contact & Chat Synchronization for Smart Broadcasting ───────────────
+    this.socket.ev.on('chats.set' as any, ({ chats }: any) => {
+      if (!Array.isArray(chats)) return;
+      for (const chat of chats) {
+        if (chat.id && !chat.id.endsWith('@g.us') && !chat.id.includes('status@broadcast')) {
+          broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
+        }
+      }
+    });
+
+    this.socket.ev.on('chats.upsert' as any, (chats: any[]) => {
+      if (!Array.isArray(chats)) return;
+      for (const chat of chats) {
+        if (chat.id && !chat.id.endsWith('@g.us') && !chat.id.includes('status@broadcast')) {
+          broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
+        }
+      }
+    });
+
+    this.socket.ev.on('contacts.set' as any, ({ contacts }: any) => {
+      if (!Array.isArray(contacts)) return;
+      for (const contact of contacts) {
+        if (contact.id && !contact.id.endsWith('@g.us') && !contact.id.includes('status@broadcast')) {
+          broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
+        }
+      }
+    });
+
+    this.socket.ev.on('contacts.upsert' as any, (contacts: any[]) => {
+      if (!Array.isArray(contacts)) return;
+      for (const contact of contacts) {
+        if (contact.id && !contact.id.endsWith('@g.us') && !contact.id.includes('status@broadcast')) {
+          broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
+        }
       }
     });
 
@@ -307,14 +345,27 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           continue;
         }
 
-        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', or image trigger '@sawir'/'!sawir'
+        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', or broadcast commands
         const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
         const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
-        const hasCardosoMention = lowerText.includes('@cardoso') || lowerText.startsWith('!cardoso') || hasVoiceCommand || hasImageCommand;
+        const hasBroadcastCommand =
+          lowerText.startsWith('!fariin') ||
+          lowerText.startsWith('!broadcast') ||
+          lowerText.startsWith('!contacts') ||
+          lowerText.startsWith('!liis') ||
+          lowerText.startsWith('!jooji') ||
+          lowerText.startsWith('!admin');
+
+        const hasCardosoMention =
+          lowerText.includes('@cardoso') ||
+          lowerText.startsWith('!cardoso') ||
+          hasVoiceCommand ||
+          hasImageCommand ||
+          hasBroadcastCommand;
 
         // 4. Strict fromMe Handling:
         // Any message sent by the bot or from the host phone (fromMe):
-        // MUST NEVER be processed UNLESS the host explicitly typed '!cardoso', '@cardoso', '@cod', or '@sawir' to test the bot.
+        // Allow if the host explicitly typed '!cardoso', '@cardoso', '@cod', '@sawir', or broadcast commands '!fariin', '!broadcast', '!contacts', '!jooji'
         if (msg.key.fromMe) {
           if (!hasCardosoMention) {
             continue;

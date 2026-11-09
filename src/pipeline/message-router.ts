@@ -148,12 +148,12 @@ export class MessageRouter {
       return { handled: true, reason: 'Broadcast test preview' };
     }
 
-    // 2e. Create Broadcast Command (!broadcast / !fariin)
+    // 2e. Direct Broadcast Command (!broadcast / !fariin) — sends to up to 50 contacts immediately!
     if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
-      const result = broadcastService.createDraft(message.chatId, broadcastContent);
+      const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);
       await transport.sendMessage(message.chatId, result.message);
-      return { handled: true, reason: 'Broadcast draft initiated' };
+      return { handled: true, reason: 'Direct broadcast initiated' };
     }
 
     // 2f. Admin System Commands Handling (!admin on/off/stats)

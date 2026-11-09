@@ -32,7 +32,7 @@ suite.test('IntentClassifier recognizes questions about WhatsApp owner', () => {
 suite.test('Engine replies politely and naturally to WhatsApp owner inquiry', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -66,7 +66,7 @@ suite.test('Engine replies politely and naturally to WhatsApp owner inquiry', as
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('PromptBuilder embeds strict topic discipline, proportional length, and human persona', () => {
@@ -86,7 +86,7 @@ suite.test('PromptBuilder embeds strict topic discipline, proportional length, a
 suite.test('When @cardoso is written, router and engine NEVER return voice note', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -121,7 +121,7 @@ suite.test('When @cardoso is written, router and engine NEVER return voice note'
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.run().then(summary => {

@@ -89,6 +89,14 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(sentMessages.length >= 1, 'Sends immediate start confirmation to admin');
   assert(sentMessages[0].text.includes('Smart Broadcast Bilaabatay'), 'Admin notified of start');
 
+  // 7. Direct Broadcast Test (no confirmation step needed, up to 50 recipients)
+  const directService = new BroadcastService();
+  directService.recordContact('252611111111@s.whatsapp.net', 'Cali');
+  directService.recordContact('252622222222@s.whatsapp.net', 'Faadumo');
+  const directResult = await directService.startDirectBroadcast('admin_123', 'Asc dhamaan, ogeysiis toos ah', mockTransport, 50);
+  assert(directResult.success === true, 'Direct broadcast starts immediately without confirmation');
+  assert(directResult.message.includes('FARIIN-WADAREED BILAABATAY'), 'Direct broadcast returns immediate acknowledgment');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

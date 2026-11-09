@@ -209,6 +209,81 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
   }
 
   /**
+   * Starts a direct broadcast immediately without confirmation step.
+   * Can send to up to maxLimit contacts (default 50).
+   */
+  public async startDirectBroadcast(
+    adminChatId: string,
+    rawText: string,
+    transport: IMessagingTransport,
+    maxLimit: number = 50
+  ): Promise<{ success: boolean; message: string }> {
+    if (this.activeBroadcast.isActive) {
+      return {
+        success: false,
+        message: '⚠️ Waxaa hadda socota fariin-wadareed kale! Fadlan sug inta ay ka dhamaaneyso ama qor `!jooji` si aad u baajiso.',
+      };
+    }
+
+    const messageText = rawText.trim();
+    if (messageText.length < 2) {
+      return {
+        success: false,
+        message: '⚠️ Fadlan qor fariinta aad doonayso inaad dirto. Tusaale:\n`!fariin Asc dhamaan, berbera waxaan ku qabanaynaa kulan muhiim ah.`',
+      };
+    }
+
+    // Get up to maxLimit individual contacts excluding adminChatId
+    const allRecipients = this.getContacts().filter(c => c.jid !== adminChatId);
+    const recipients = allRecipients.slice(0, maxLimit);
+
+    if (recipients.length === 0) {
+      return {
+        success: false,
+        message: '⚠️ Wali ma jiraan contacts ku kaydsan bot-ka oo fariin loo diri karo!\nBot-ku wuxuu si toos ah u soo qaadanayaa dadka WhatsApp-ka kula hadla ama ku jira liiskaaga.',
+      };
+    }
+
+    // Set active progress
+    this.activeBroadcast = {
+      isActive: true,
+      total: recipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      isAborted: false,
+    };
+
+    const draft: BroadcastDraft = {
+      adminChatId,
+      messageText,
+      recipients,
+      createdAt: Date.now(),
+    };
+
+    const estimatedMinutes = Math.ceil((recipients.length * 14) / 60);
+    const sampleName = recipients[0]?.firstName || 'Axmed';
+    const samplePreview = this.formatPersonalizedMessage(messageText, sampleName);
+
+    // Run background transmission loop asynchronously (non-blocking)
+    this.runBroadcastLoop(draft, transport).catch(err => {
+      console.error('❌ [BroadcastService] Critical loop error:', err);
+    });
+
+    return {
+      success: true,
+      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*
+
+Fariinta waxaa toos loogu bilaabay *${recipients.length} qof* (ilaa 50 qof).
+
+📝 *Tusaale sida ay ugu dhacayso:*
+"${samplePreview}"
+
+⏱️ *Waqtiga:* Qof kasta fariin gaar ah ayay ku socotaa (~${estimatedMinutes} daqiiqo) si lambarkaagu u nabadgalo.
+🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
+    };
+  }
+
+  /**
    * Confirms and starts the background broadcast.
    */
   public async confirmDraft(adminChatId: string, transport: IMessagingTransport): Promise<boolean> {
@@ -262,6 +337,7 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
   public abortBroadcast(): boolean {
     if (this.activeBroadcast.isActive) {
       this.activeBroadcast.isAborted = true;
+      this.activeBroadcast.isActive = false;
       return true;
     }
     return false;
@@ -370,3 +446,4 @@ Dhammaan fariimaha waxaa loo diray si dabiici ah oo badbaado buuxda u ah lambark
 
 // Singleton export
 export const broadcastService = new BroadcastService();
+
