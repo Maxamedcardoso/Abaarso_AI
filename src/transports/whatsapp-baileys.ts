@@ -251,8 +251,24 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           (isAudio ? '🎙️ [Voice Note]' : '') ||
           '';
 
+        // Ingest native WhatsApp shared contact cards (Share Contacts via WhatsApp)
+        if (msg.message.contactMessage?.vcard) {
+          const res = broadcastService.importFromText(msg.message.contactMessage.vcard);
+          console.log(`👤 [WhatsApp Contact Shared]: Processed vCard (${res.added} new added).`);
+        }
+        if (msg.message.contactsArrayMessage?.contacts) {
+          let totalAdded = 0;
+          for (const c of msg.message.contactsArrayMessage.contacts) {
+            if (c.vcard) {
+              const res = broadcastService.importFromText(c.vcard);
+              totalAdded += res.added;
+            }
+          }
+          console.log(`👥 [WhatsApp Contacts Shared]: Processed contacts batch (${totalAdded} new added).`);
+        }
+
         // Skip completely empty non-media messages
-        if (!text.trim() && !isMedia) continue;
+        if (!text.trim() && !isMedia && !msg.message.contactMessage && !msg.message.contactsArrayMessage) continue;
 
         // ─── Log incoming message ─────────────────────────────────────────────────
         if (isGroup) {

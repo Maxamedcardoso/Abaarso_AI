@@ -102,6 +102,33 @@ export class MessageRouter {
 
     const isAdminUser = this.isAdmin(message.senderId, message.isGroup);
 
+    // 1d. Handle incoming contacts document (.vcf, .csv, .txt) sent by admin
+    if (message.media?.type === 'document' && isAdminUser && message.media.dataBase64) {
+      const fileName = (message.media.fileName || '').toLowerCase();
+      const mime = (message.media.mimeType || '').toLowerCase();
+      if (
+        fileName.endsWith('.vcf') ||
+        fileName.endsWith('.txt') ||
+        fileName.endsWith('.csv') ||
+        mime.includes('vcard') ||
+        mime.includes('text/plain') ||
+        mime.includes('text/csv')
+      ) {
+        try {
+          const content = Buffer.from(message.media.dataBase64, 'base64').toString('utf8');
+          const result = broadcastService.importFromText(content);
+          const stats = broadcastService.getStats();
+          await transport.sendMessage(
+            message.chatId,
+            `🎉 *[CARDOSO AI — CONTACTS IMPORT]*\n\nFaylka *${message.media.fileName || 'Contacts'}* si buuxda ayaa loo akhriyay!\n• Waxaa laga helay: *${result.totalParsed} contacts*\n• Waxaa cusub oo lagu daray: *${result.added} qof*\n• Wadarta Guud ee Bot-ka: *${stats.total} qof*\n\nHadda waxaad diyaar u tahay inaad fariin u dirto:\n\`!fariin <fariintaada>\``
+          );
+          return { handled: true, reason: 'Contacts file imported via document' };
+        } catch (err: any) {
+          console.warn('[Router] Failed importing document contacts:', err.message);
+        }
+      }
+    }
+
     // 2. Broadcast Confirmation Handling (HAA / MAYA)
     if (broadcastService.hasPendingDraft(message.chatId)) {
       const cleanReply = lowerText.trim();
@@ -180,7 +207,18 @@ export class MessageRouter {
       return { handled: true, reason: 'Manual numbers added' };
     }
 
-    // 2h. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
+    // 2h. Check and auto-import contacts files (!shub / !import)
+    if (/^!(?:shub|import|load-contacts)$/i.test(lowerText.trim()) && isAdminUser) {
+      const imported = await broadcastService.checkAndAutoImportFiles();
+      const stats = broadcastService.getStats();
+      await transport.sendMessage(
+        message.chatId,
+        `📋 *[CARDOSO AI — IMPORT]*\nWaxaa faylasha laga soo galiyay *${imported} contacts* oo cusub!\nWadarta guud ee hadda ku jirta: *${stats.total} qof*.\n\nHaddii aad haysato faylka VCF ee taleefanka (2,384 contacts), waxaad toos ugu soo diri kartaa halkan chat-ka dukumenti ahaan!`
+      );
+      return { handled: true, reason: 'Contacts auto-import triggered' };
+    }
+
+    // 2i. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
     if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
       const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);

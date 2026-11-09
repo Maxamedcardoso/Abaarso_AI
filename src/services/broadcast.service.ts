@@ -1,5 +1,72 @@
+import fs from 'fs';
+import path from 'path';
 import { IMessagingTransport } from '../transports/transport.interface.js';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
+
+export function normalizePhoneNumber(raw: string): string {
+  let clean = raw.replace(/[^0-9]/g, '');
+  // If starts with 061, 062, 063, 065, 068, 090 (10 digits local e.g. 0615123456)
+  if (/^0[69]\d{8}$/.test(clean)) {
+    clean = '252' + clean.slice(1);
+  }
+  // If starts with 61, 62, 63, 65, 68, 90 (9 digits local e.g. 615123456)
+  else if (/^[69]\d{8}$/.test(clean)) {
+    clean = '252' + clean;
+  }
+  return clean;
+}
+
+export function parseContactsText(content: string): Array<{ name?: string; phone: string }> {
+  const results: Array<{ name?: string; phone: string }> = [];
+
+  // 1. Check if VCF format
+  if (content.includes('BEGIN:VCARD') || content.includes('END:VCARD')) {
+    const cards = content.split(/END:VCARD/i);
+    for (const card of cards) {
+      if (!card.includes('BEGIN:VCARD')) continue;
+
+      // Extract Full Name (FN: or N:)
+      const fnMatch = card.match(/(?:^|\n)FN(?:;[^:]*)?:([^\r\n]+)/i);
+      const nMatch = card.match(/(?:^|\n)N(?:;[^:]*)?:([^\r\n]+)/i);
+      const name = fnMatch ? fnMatch[1].trim() : (nMatch ? nMatch[1].replace(/;/g, ' ').trim() : undefined);
+
+      // Extract Phone Number (TEL:)
+      const telMatches = card.matchAll(/(?:^|\n)TEL(?:;[^:]*)?:([^\r\n]+)/gi);
+      for (const tm of telMatches) {
+        const rawPhone = normalizePhoneNumber(tm[1]);
+        if (rawPhone.length >= 7) {
+          results.push({ name, phone: rawPhone });
+        }
+      }
+    }
+    return results;
+  }
+
+  // 2. Otherwise line-by-line (CSV, Tab-delimited, or plain list of numbers)
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    if (trimmed.includes(',') || trimmed.includes('\t') || trimmed.includes(';')) {
+      const parts = trimmed.split(/[,;\t]+/).map(p => p.trim());
+      const phoneIndex = parts.findIndex(p => p.replace(/[^0-9]/g, '').length >= 7);
+      if (phoneIndex !== -1) {
+        const rawPhone = normalizePhoneNumber(parts[phoneIndex]);
+        const nameParts = parts.filter((_, idx) => idx !== phoneIndex).join(' ').trim();
+        results.push({ name: nameParts || undefined, phone: rawPhone });
+        continue;
+      }
+    }
+
+    const rawPhone = normalizePhoneNumber(trimmed);
+    if (rawPhone.length >= 7) {
+      results.push({ phone: rawPhone });
+    }
+  }
+
+  return results;
+}
 
 export interface BroadcastContact {
   jid: string;
@@ -102,6 +169,9 @@ export class BroadcastService {
         console.log(`📢 [BroadcastService] Loaded ${this.contactsMap.size} persisted contacts for broadcasting.`);
       }
 
+      // Auto-import contacts files (e.g. data/contacts.vcf or contacts.txt)
+      await this.checkAndAutoImportFiles();
+
       this.sentJids = await this.memory.getSentBroadcastJids();
       if (this.sentJids.size > 0) {
         console.log(`📢 [BroadcastService] Loaded ${this.sentJids.size} previously contacted recipients (won't re-send).`);
@@ -109,6 +179,56 @@ export class BroadcastService {
     } catch (err: any) {
       console.warn('[BroadcastService] Warning loading persisted contacts:', err.message);
     }
+  }
+
+  /**
+   * Imports contacts from any VCF (vCard), CSV, or plain text content.
+   */
+  public importFromText(content: string): { totalParsed: number; added: number } {
+    const parsed = parseContactsText(content);
+    let added = 0;
+    for (const item of parsed) {
+      const cleanPhone = normalizePhoneNumber(item.phone);
+      if (cleanPhone.length >= 7) {
+        const jid = `${cleanPhone}@s.whatsapp.net`;
+        const exists = this.contactsMap.has(jid);
+        this.recordContact(jid, item.name);
+        if (!exists) {
+          added++;
+        }
+      }
+    }
+    return { totalParsed: parsed.length, added };
+  }
+
+  /**
+   * Checks for any contacts file in project or data directory and auto-imports it.
+   */
+  public async checkAndAutoImportFiles(): Promise<number> {
+    const candidatePaths = [
+      './data/contacts.vcf',
+      './data/contacts.txt',
+      './data/contacts.csv',
+      './contacts.vcf',
+      './contacts.txt',
+      './contacts.csv',
+    ];
+
+    let totalImported = 0;
+    for (const filePath of candidatePaths) {
+      try {
+        if (fs.existsSync(filePath)) {
+          console.log(`📁 [BroadcastService] Found contacts file: ${filePath}. Auto-importing...`);
+          const fileContent = fs.readFileSync(filePath, 'utf8');
+          const result = this.importFromText(fileContent);
+          totalImported += result.added;
+          console.log(`✅ [BroadcastService] Imported ${result.added} new contacts from ${filePath} (Total: ${this.contactsMap.size}).`);
+        }
+      } catch (err: any) {
+        console.warn(`[BroadcastService] Failed reading ${filePath}:`, err.message);
+      }
+    }
+    return totalImported;
   }
 
   /**
