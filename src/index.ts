@@ -9,6 +9,7 @@ import { ConsoleSimulatorTransport } from './transports/console-simulator.js';
 import { WhatsAppBaileysTransport } from './transports/whatsapp-baileys.js';
 import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
 import { reminderService } from './services/reminder.service.js';
+import { broadcastService } from './services/broadcast.service.js';
 
 async function bootstrap() {
   console.log(`\n======================================================`);
@@ -30,6 +31,10 @@ async function bootstrap() {
   const memory = new SQLiteStudentMemory(config.database.path);
   await memory.initialize();
   console.log(`✅ [Database] SQLite Student Memory initialized at ${config.database.path}`);
+
+  // 2b. Initialize Broadcast Service with persistent database
+  broadcastService.setMemory(memory);
+  await broadcastService.loadPersistedContacts();
 
   // 3. Initialize AI Orchestrator
   const ai = new AIOrchestrator(config);

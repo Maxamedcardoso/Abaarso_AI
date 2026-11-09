@@ -55,6 +55,14 @@ export class SQLiteStudentMemory implements IStudentMemory {
       CREATE INDEX IF NOT EXISTS idx_conv_student ON conversations(student_id);
       CREATE INDEX IF NOT EXISTS idx_conv_timestamp ON conversations(timestamp);
       CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversations(chat_id);
+
+      CREATE TABLE IF NOT EXISTS broadcast_contacts (
+        jid TEXT PRIMARY KEY,
+        name TEXT,
+        first_name TEXT,
+        phone TEXT,
+        last_seen INTEGER
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -202,6 +210,38 @@ export class SQLiteStudentMemory implements IStudentMemory {
 
     values.push(studentId);
     this.db.prepare(`UPDATE students SET ${setClauses.join(', ')} WHERE student_id = ?`).run(...values);
+  }
+
+  public async saveBroadcastContact(contact: { jid: string; name?: string; firstName?: string; phone?: string }): Promise<void> {
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO broadcast_contacts (jid, name, first_name, phone, last_seen)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(jid) DO UPDATE SET
+          name = COALESCE(excluded.name, broadcast_contacts.name),
+          first_name = COALESCE(excluded.first_name, broadcast_contacts.first_name),
+          phone = COALESCE(excluded.phone, broadcast_contacts.phone),
+          last_seen = excluded.last_seen;
+      `).run(contact.jid, contact.name || null, contact.firstName || null, contact.phone || null, Date.now());
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed saving broadcast contact:', err.message);
+    }
+  }
+
+  public async getBroadcastContacts(): Promise<Array<{ jid: string; name?: string; firstName?: string; phone?: string }>> {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare('SELECT jid, name, first_name as firstName, phone FROM broadcast_contacts ORDER BY last_seen DESC').all() as any[];
+      return rows.map(r => ({
+        jid: r.jid,
+        name: r.name || undefined,
+        firstName: r.firstName || undefined,
+        phone: r.phone || undefined,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   public async close(): Promise<void> {

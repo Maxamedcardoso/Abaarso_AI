@@ -3,6 +3,7 @@ import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { MessageDeduplicator } from './deduplicator.js';
 import { RateLimiter } from './rate-limiter.js';
 import { AppConfig } from '../config/env.js';
+import { broadcastService } from '../services/broadcast.service.js';
 
 export class MessageRouter {
   private engine: StudentAdvisorEngine;
@@ -24,8 +25,12 @@ export class MessageRouter {
     this.rateLimiter = rateLimiter || new RateLimiter();
   }
 
-  public isAdmin(senderNumber: string): boolean {
+  public isAdmin(senderNumber: string, isGroup: boolean = false): boolean {
     const clean = senderNumber.replace(/[^0-9]/g, '');
+    if (this.config.security.adminPhoneNumbers.length === 0) {
+      // In 1-on-1 private chat, allow if no specific admin whitelist is set
+      return !isGroup;
+    }
     return this.config.security.adminPhoneNumbers.some(admin => clean.endsWith(admin) || admin.endsWith(clean));
   }
 
@@ -90,9 +95,68 @@ export class MessageRouter {
       return { handled: false, reason: 'Bot echo discarded' };
     }
 
-    const isAdminUser = this.isAdmin(message.senderId);
+    // 1c. Record contact for smart broadcasting (individual chats only)
+    if (!message.isGroup) {
+      broadcastService.recordContact(message.chatId, message.senderName, false);
+    }
 
-    // 2. Admin Command Handling
+    const isAdminUser = this.isAdmin(message.senderId, message.isGroup);
+
+    // 2. Broadcast Confirmation Handling (HAA / MAYA)
+    if (broadcastService.hasPendingDraft(message.chatId)) {
+      const cleanReply = lowerText.trim();
+      if (/^(?:haa|ha|yes|y|bilaaw|bilaab)$/i.test(cleanReply)) {
+        await broadcastService.confirmDraft(message.chatId, transport);
+        return { handled: true, reason: 'Broadcast confirmed and started' };
+      }
+      if (/^(?:maya|may|no|n|baaji|cancel)$/i.test(cleanReply)) {
+        broadcastService.cancelDraft(message.chatId);
+        await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI]*: Fariin-wadareedkii waa la baajiyay.');
+        return { handled: true, reason: 'Broadcast cancelled' };
+      }
+    }
+
+    // 2b. Broadcast Abort Command (!jooji)
+    if (/^!(?:jooji|stop-broadcast|cancel-broadcast)$/i.test(lowerText.trim()) && isAdminUser) {
+      const aborted = broadcastService.abortBroadcast();
+      if (aborted) {
+        await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI]*: Waxaa la diray amarka joojinta fariin-wadareedka. Way is-taagaysaa isla markiiba.');
+      } else {
+        await transport.sendMessage(message.chatId, 'ℹ️ Hadda ma jirto fariin-wadareed socota.');
+      }
+      return { handled: true, reason: 'Broadcast abort command' };
+    }
+
+    // 2c. Broadcast Query Contacts Command (!contacts / !liis)
+    if (/^!(?:contacts|liis|xiriir)$/i.test(lowerText.trim()) && isAdminUser) {
+      const count = broadcastService.getContactsCount();
+      await transport.sendMessage(
+        message.chatId,
+        `📋 *[CARDOSO AI Contacts]*: Waxaa hadda ku kaydsan *${count} qof* oo diyaar u ah fariin-wadareed.\n\nSi aad fariin ugu dirto, qor:\n\`!broadcast <fariintaada>\``
+      );
+      return { handled: true, reason: 'Contacts query' };
+    }
+
+    // 2d. Broadcast Test Command (!broadcast-test)
+    if (/^!(?:broadcast-test|fariin-test)\s+/i.test(lowerText) && isAdminUser) {
+      const sampleText = text.replace(/^!(?:broadcast-test|fariin-test)\s+/i, '');
+      const personalized = broadcastService.formatPersonalizedMessage(sampleText, message.senderName || 'Saaxiib');
+      await transport.sendMessage(
+        message.chatId,
+        `🧪 *[CARDOSO AI Broadcast Test Preview]*:\n\nSidan ayay u gaadhi doontaa qofka:\n"${personalized}"\n\nHaddii ay ku qanciso, u dir dhammaan adigoo isticmaalaya:\n\`!broadcast ${sampleText}\``
+      );
+      return { handled: true, reason: 'Broadcast test preview' };
+    }
+
+    // 2e. Create Broadcast Command (!broadcast / !fariin)
+    if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
+      const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
+      const result = broadcastService.createDraft(message.chatId, broadcastContent);
+      await transport.sendMessage(message.chatId, result.message);
+      return { handled: true, reason: 'Broadcast draft initiated' };
+    }
+
+    // 2f. Admin System Commands Handling (!admin on/off/stats)
     if (
       lowerText.startsWith('!cardoso') ||
       lowerText.startsWith('!admin') ||

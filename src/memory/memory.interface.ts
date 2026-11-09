@@ -77,6 +77,16 @@ export interface IStudentMemory {
   updateUserProfile(studentId: string, updates: { firstName?: string; interests?: string; occupation?: string; preferredLanguage?: string }): Promise<void>;
 
   /**
+   * Saves or updates a contact for broadcasting
+   */
+  saveBroadcastContact(contact: { jid: string; name?: string; firstName?: string; phone?: string }): Promise<void>;
+
+  /**
+   * Retrieves all contacts saved for broadcasting
+   */
+  getBroadcastContacts(): Promise<Array<{ jid: string; name?: string; firstName?: string; phone?: string }>>;
+
+  /**
    * Closes database connections cleanly
    */
   close(): Promise<void>;
