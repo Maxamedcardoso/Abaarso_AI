@@ -482,12 +482,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             );
           }
         } else if (media.type === 'audio') {
-          // Send universally playable audio note for WhatsApp (MP3 format natively supported across iOS, Android, and Web)
-          // When ptt is true (default for voice notes), WhatsApp renders it as a native voice note with waveforms!
+          // Send authentic playable voice note for WhatsApp with waveform (PTT)
           const isPtt = media.ptt ?? true;
+          const isOgg = (media.mimeType && media.mimeType.includes('ogg')) || media.dataBuffer.slice(0, 4).toString() === 'OggS';
           const audioPayload: any = {
             audio: media.dataBuffer,
-            mimetype: media.mimeType || 'audio/mpeg',
+            mimetype: isOgg ? 'audio/ogg; codecs=opus' : (media.mimeType || 'audio/mpeg'),
             ptt: isPtt,
           };
           if (!isPtt && media.fileName) {

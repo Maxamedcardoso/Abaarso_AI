@@ -1,4 +1,15 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { Readable, PassThrough } from 'stream';
+
+try {
+  if (ffmpegInstaller && ffmpegInstaller.path) {
+    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+  }
+} catch (e) {
+  console.warn('[VoiceReply] FFmpeg initialization notice:', e);
+}
 
 /**
  * VoiceReplyService — Synthesizes natural, high-definition speech for WhatsApp Voice Notes
@@ -114,7 +125,14 @@ export class VoiceReplyService {
       try {
         const result = await this.synthesizeSingleAttempt(clean, voiceName, language);
         if (result && result.buffer.length > 0) {
-          return result;
+          // Convert MP3 to WhatsApp-native Ogg Opus container ("OggS" header).
+          // WhatsApp PTT (Voice Note) player strictly requires Ogg Opus to render waveforms and play without "This audio is not available" error.
+          const opusBuffer = await this.convertMp3ToOggOpus(result.buffer);
+          const isOggOpus = opusBuffer.slice(0, 4).toString() === 'OggS';
+          return {
+            buffer: opusBuffer,
+            mimeType: isOggOpus ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
+          };
         }
       } catch (err) {
         console.warn(`[VoiceReply] Attempt ${attempt} failed:`, err);
@@ -124,6 +142,46 @@ export class VoiceReplyService {
       }
     }
     return null;
+  }
+
+  /**
+   * Converts an MP3 audio buffer to WhatsApp-native Ogg Opus format.
+   * WhatsApp PTT (Voice Note) player strictly requires Ogg Opus container ("OggS" header).
+   * This eliminates the "This audio is not available" error on WhatsApp!
+   */
+  public static async convertMp3ToOggOpus(mp3Buffer: Buffer): Promise<Buffer> {
+    return new Promise((resolve) => {
+      try {
+        const inputStream = new Readable();
+        inputStream.push(mp3Buffer);
+        inputStream.push(null);
+
+        const chunks: Buffer[] = [];
+        const outputStream = new PassThrough();
+
+        outputStream.on('data', chunk => chunks.push(chunk));
+        outputStream.on('end', () => resolve(Buffer.concat(chunks)));
+        outputStream.on('error', (err) => {
+          console.warn('[VoiceReply] FFmpeg Opus conversion stream error:', err?.message || err);
+          resolve(mp3Buffer);
+        });
+
+        ffmpeg(inputStream)
+          .audioCodec('libopus')
+          .audioBitrate('48k')
+          .audioFrequency(48000)
+          .audioChannels(1)
+          .format('ogg')
+          .on('error', (err) => {
+            console.warn('[VoiceReply] FFmpeg Opus conversion error:', err?.message || err);
+            resolve(mp3Buffer);
+          })
+          .pipe(outputStream, { end: true });
+      } catch (err) {
+        console.warn('[VoiceReply] FFmpeg setup failed:', err);
+        resolve(mp3Buffer);
+      }
+    });
   }
 
   private static synthesizeSingleAttempt(clean: string, voiceName: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {
