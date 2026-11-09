@@ -8,6 +8,7 @@ const testFiles = [
   'tests/phase6.test.ts',
   'tests/phase7.test.ts',
   'tests/user-custom-rules.test.ts',
+  'tests/human-persona.test.ts',
   'tests/e2e-master.test.ts',
 ];
 

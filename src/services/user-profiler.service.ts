@@ -116,5 +116,52 @@ export class UserProfiler {
     }
     return detected;
   }
+
+  /**
+   * Detects whether the user is male or female from their name or linguistic cues.
+   * Returns 'male' | 'female' | 'unknown'.
+   */
+  public static detectGender(name?: string, text?: string): 'male' | 'female' | 'unknown' {
+    // 1. Check text cues first (self-identification / gendered address)
+    if (text) {
+      const lowerText = text.toLowerCase();
+      if (/\b(abaayo|abaay|walaashay|inaanta|habaryar|eedo|hooyo|gabadh|naag|anigoo gabadh ah|gabadh baan ahay)\b/i.test(lowerText)) {
+        return 'female';
+      }
+      if (/\b(aboowe|walaalkay|ninyahow|wiilka|adeer|aabo|nin baan ahay|wiil baan ahay|anigoo wiil ah)\b/i.test(lowerText)) {
+        return 'male';
+      }
+    }
+
+    // 2. Check name if available
+    if (name) {
+      const firstName = name.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, '');
+      if (!firstName) return 'unknown';
+
+      const femaleNames = new Set([
+        'fadumo', 'faadumo', 'fatima', 'fatuma', 'amina', 'aamina', 'sahra', 'zara', 'hodan', 'maryan',
+        'marian', 'xaawo', 'hawo', 'leyla', 'laila', 'layla', 'hani', 'deeqa', 'deqa', 'fardowsa',
+        'fardowso', 'asma', 'nimco', 'nimca', 'muna', 'safiya', 'safia', 'samsam', 'zamzam', 'nasra',
+        'ruun', 'raxma', 'rahma', 'khadra', 'ubax', 'canab', 'idil', 'hibaaq', 'hibo', 'fartuun',
+        'shukri', 'ikraan', 'ikran', 'sacdiyo', 'sadiya', 'suhuur', 'shamsi', 'yasmiin', 'yasmin',
+        'falxado', 'kaltuun', 'shankaroon', 'warsan', 'barni', 'barno', 'cibaado', 'saynab', 'zainab'
+      ]);
+
+      const maleNames = new Set([
+        'maxamed', 'mohamed', 'muhamed', 'ahmed', 'axmed', 'cali', 'ali', 'xasan', 'hassan', 'cabdi',
+        'abdi', 'liibaan', 'liban', 'farxan', 'farhan', 'mustafe', 'mustafa', 'jaamac', 'jama', 'yuusuf',
+        'yusuf', 'khalid', 'cumar', 'omar', 'sakariye', 'zakaria', 'guuleed', 'guleed', 'sharmarke',
+        'warsame', 'mahad', 'bile', 'daahir', 'dahir', 'hamse', 'xamze', 'faysal', 'feisal', 'ibraahim',
+        'ibrahim', 'ismaciil', 'ismail', 'rooble', 'roble', 'cabdiraxmaan', 'abdirahman', 'cabdirisaaq',
+        'abdirizak', 'ayaanle', 'ayanle', 'nasir', 'naasir', 'cabdillahi', 'abdullahi', 'khadar', 'muse',
+        'muuse', 'said', 'siciid', 'saacid', 'yaasiin', 'yasin', 'bashiir', 'bashir'
+      ]);
+
+      if (femaleNames.has(firstName)) return 'female';
+      if (maleNames.has(firstName)) return 'male';
+    }
+
+    return 'unknown';
+  }
 }
 

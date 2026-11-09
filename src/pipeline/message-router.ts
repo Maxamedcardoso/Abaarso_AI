@@ -235,6 +235,7 @@ export class MessageRouter {
       forbidVoiceReply: hasCardosoText,
       hasCardosoMention: hasCardosoText,
       rawContent: text,
+      senderName: message.senderName,
     });
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);

@@ -25,6 +25,7 @@ export interface ProcessMessageInput {
   forbidVoiceReply?: boolean;
   hasCardosoMention?: boolean;
   rawContent?: string;
+  senderName?: string;
 }
 
 export interface ProcessMessageOutput {
@@ -383,6 +384,10 @@ export class StudentAdvisorEngine {
       currentStudent = { ...student, ...profileUpdates };
     }
 
+    // Determine effective user name & inferred gender (nin mise naag)
+    const effectiveUserName = currentStudent.firstName || input.senderName;
+    const detectedGender = UserProfiler.detectGender(effectiveUserName, content);
+
     // 8.9. Detect early whether this response will be delivered as an audio voice note
     // STRICT USER RULE: "@cardoso hadii qoro marnaba qof cod hagu jaawibin"
     // If the message contains "@cardoso", NEVER reply with a voice note! Always text!
@@ -402,7 +407,8 @@ export class StudentAdvisorEngine {
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
-      userName: currentStudent.firstName,
+      userName: effectiveUserName,
+      userGender: detectedGender,
       userInterests: currentStudent.interests,
       userOccupation: currentStudent.occupation,
       emotionResult,
