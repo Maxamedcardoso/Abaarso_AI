@@ -102,12 +102,12 @@ export class GeminiProvider implements IAIProvider {
 
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
-    // 3. Candidate models fallback list — Updated to current active Gemini models (Nov 2026)
+    // 3. Candidate models fallback list — Active Google Gemini Models
     const candidateModels = Array.from(new Set([
-      this.modelName,          // Primary model from config (default: gemini-3.8-flash)
-      'gemini-3.8-flash',      // Latest recommended model (Google's official recommendation)
-      'gemini-2.0-flash-001',  // Stable 2.0 flash
-      'gemini-2.0-flash-lite', // Lightweight fallback
+      this.modelName,          // Primary model from config (default: gemini-3.5-flash)
+      'gemini-3.5-flash',      // High-quota stable production model
+      'gemini-3.5-flash-lite', // Lightweight, fast production fallback
+      'gemini-3.8-flash',      // Advanced preview model
     ])).filter(m => Boolean(m));
 
     let lastError: any = null;
@@ -154,9 +154,9 @@ export class GeminiProvider implements IAIProvider {
               }
             })();
 
-            // Enforce strict 8.5s timeout per model attempt to prevent hanging requests
+            // Allow sufficient time for cloud latency and AI generation (25s)
             const timeoutPromise = new Promise<string>((_, reject) => {
-              setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 8500ms`)), 8500);
+              setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 25000ms`)), 25000);
             });
 
             return await Promise.race([callPromise, timeoutPromise]);

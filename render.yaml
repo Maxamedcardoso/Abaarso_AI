@@ -12,7 +12,7 @@ services:
       - key: MESSAGING_MODE
         value: baileys
       - key: GEMINI_MODEL
-        value: gemini-1.5-flash
+        value: gemini-3.5-flash
       - key: BOT_PREFIX
         value: "!abaarso"
       - key: ALLOWED_GROUPS
