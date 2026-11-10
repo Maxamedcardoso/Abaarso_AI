@@ -38,6 +38,25 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     return this.connected;
   }
 
+  public getBotNumber(): string | null {
+    if (!this.socket?.user?.id) return null;
+    return this.socket.user.id.split(':')[0].split('@')[0];
+  }
+
+  public async unlinkSession(): Promise<void> {
+    try {
+      if (this.socket) {
+        await this.socket.logout();
+      }
+    } catch {}
+    try {
+      fs.rmSync(this.authDir, { recursive: true, force: true });
+    } catch {}
+    this.connected = false;
+    this.currentQR = null;
+    setTimeout(() => this.start(), 1500);
+  }
+
   public async start(): Promise<void> {
     this.printSafetyWarning();
 

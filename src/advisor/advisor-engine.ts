@@ -435,10 +435,14 @@ export class StudentAdvisorEngine {
     let learnedVocab: Array<{ word: string; frequency: number }> | undefined;
     let vocabCount: number | undefined;
     let recentPhrases: string[] | undefined;
+    let customConfig: { botName?: string; businessName?: string; systemRole?: string; knowledgeBase?: string } | undefined;
     if (this.memory instanceof SQLiteStudentMemory) {
       learnedVocab = this.memory.getTopVocab(60);
       vocabCount = this.memory.getVocabCount();
       recentPhrases = this.memory.getRecentPhrases(chatId, 12);
+      try {
+        customConfig = await this.memory.getBotConfig();
+      } catch {}
     }
 
     const systemInstruction = PromptBuilder.buildSystemInstruction({
@@ -454,6 +458,7 @@ export class StudentAdvisorEngine {
       vocabCount,
       recentPhrases,
       chatId,
+      customConfig,
     });
 
     // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context

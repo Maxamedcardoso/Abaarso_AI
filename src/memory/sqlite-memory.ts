@@ -88,6 +88,15 @@ export class SQLiteStudentMemory implements IStudentMemory {
         last_used INTEGER NOT NULL,
         PRIMARY KEY (chat_id, phrase)
       );
+
+      CREATE TABLE IF NOT EXISTS bot_custom_config (
+        id TEXT PRIMARY KEY,
+        bot_name TEXT DEFAULT 'CARDOSO AI',
+        business_name TEXT DEFAULT '',
+        system_role TEXT DEFAULT '',
+        knowledge_base TEXT DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -401,6 +410,53 @@ export class SQLiteStudentMemory implements IStudentMemory {
       ).all(chatId, limit) as any[];
       return rows.map(r => r.phrase);
     } catch { return []; }
+  }
+
+  /**
+   * Saves custom bot persona & business knowledge base
+   */
+  public async saveBotConfig(config: { botName?: string; businessName?: string; systemRole?: string; knowledgeBase?: string }): Promise<void> {
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO bot_custom_config (id, bot_name, business_name, system_role, knowledge_base, updated_at)
+        VALUES ('default', ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          bot_name = COALESCE(excluded.bot_name, bot_custom_config.bot_name),
+          business_name = COALESCE(excluded.business_name, bot_custom_config.business_name),
+          system_role = COALESCE(excluded.system_role, bot_custom_config.system_role),
+          knowledge_base = COALESCE(excluded.knowledge_base, bot_custom_config.knowledge_base),
+          updated_at = excluded.updated_at;
+      `).run(
+        config.botName || 'CARDOSO AI',
+        config.businessName || '',
+        config.systemRole || '',
+        config.knowledgeBase || '',
+        Date.now()
+      );
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed saving bot config:', err.message);
+    }
+  }
+
+  /**
+   * Retrieves custom bot persona & business knowledge base
+   */
+  public async getBotConfig(): Promise<{ botName: string; businessName: string; systemRole: string; knowledgeBase: string }> {
+    if (!this.db) return { botName: 'CARDOSO AI', businessName: '', systemRole: '', knowledgeBase: '' };
+    try {
+      const row: any = this.db.prepare(
+        'SELECT bot_name as botName, business_name as businessName, system_role as systemRole, knowledge_base as knowledgeBase FROM bot_custom_config WHERE id = ?'
+      ).get('default');
+      return {
+        botName: row?.botName || 'CARDOSO AI',
+        businessName: row?.businessName || '',
+        systemRole: row?.systemRole || '',
+        knowledgeBase: row?.knowledgeBase || '',
+      };
+    } catch {
+      return { botName: 'CARDOSO AI', businessName: '', systemRole: '', knowledgeBase: '' };
+    }
   }
 
   public async close(): Promise<void> {

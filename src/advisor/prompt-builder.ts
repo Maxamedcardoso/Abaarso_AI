@@ -16,6 +16,12 @@ export interface PromptContext {
   vocabCount?: number;           // Total unique words learned so far
   recentPhrases?: string[];      // Recently used phrases (avoid repeating)
   chatId?: string;               // Chat ID for per-user phrase tracking
+  customConfig?: {
+    botName?: string;
+    businessName?: string;
+    systemRole?: string;
+    knowledgeBase?: string;
+  };
 }
 
 export class PromptBuilder {
@@ -496,7 +502,27 @@ Always find fresh, natural ways to express the same warmth. Variety makes you so
 `;
     }
 
-    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}${vocabBlock}${antiRepeatBlock}`;
+    // ── Custom Business / Meherad Knowledge Base ──────────────────────────────
+    let customKnowledgeBlock = '';
+    const customConfig = context.customConfig;
+    if (customConfig && (customConfig.businessName || customConfig.knowledgeBase || customConfig.systemRole)) {
+      customKnowledgeBlock = `
+
+## CUSTOM BUSINESS / MEHERAD KNOWLEDGE BASE & ROLE
+You are officially representing: *${customConfig.businessName || customConfig.botName || 'This Business'}*
+${customConfig.systemRole ? `Your Specific Assigned Role: ${customConfig.systemRole}` : ''}
+
+### Verified Business Catalog & Information (Xogta Rasmiga ah ee Meheradda):
+${customConfig.knowledgeBase || 'No extra catalog specified yet.'}
+
+**CRITICAL INSTRUCTIONS FOR CUSTOM BUSINESS ROLE:**
+1. Whenever customers ask about items, products, prices, opening hours, delivery, phone numbers, or rules, answer PRECISELY using the Verified Business Catalog above!
+2. Answer warmly and professionally in natural Somali (or English/Arabic if the customer speaks English/Arabic).
+3. If an item or detail is NOT in the catalog above, state politely that you will check with the management or provide the contact number from the catalog.
+`;
+    }
+
+    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}${vocabBlock}${antiRepeatBlock}${customKnowledgeBlock}`;
   }
 
   /**

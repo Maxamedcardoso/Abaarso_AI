@@ -87,6 +87,16 @@ export interface IStudentMemory {
   getBroadcastContacts(): Promise<Array<{ jid: string; name?: string; firstName?: string; phone?: string }>>;
 
   /**
+   * Saves custom bot persona & business knowledge base
+   */
+  saveBotConfig?(config: { botName?: string; businessName?: string; systemRole?: string; knowledgeBase?: string }): Promise<void>;
+
+  /**
+   * Retrieves custom bot persona & business knowledge base
+   */
+  getBotConfig?(): Promise<{ botName: string; businessName: string; systemRole: string; knowledgeBase: string }>;
+
+  /**
    * Closes database connections cleanly
    */
   close(): Promise<void>;
