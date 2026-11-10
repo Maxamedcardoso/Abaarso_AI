@@ -13,6 +13,8 @@ import { ImageGeneratorService } from '../services/image-generator.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { ResponseCacheService } from '../services/response-cache.service.js';
 import { EmotionDetector } from './emotion-detector.js';
+import { detectInstantGreetingReply } from './somali-dictionary.js';
+import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -61,6 +63,29 @@ export class StudentAdvisorEngine {
     // 3. Detect language (Somali, English, Arabic, French, Turkish, mixed, or other)
     const langResult = this.detector.detect(content);
     const lang = langResult.language;
+
+    // 1.5. Instant Islamic/Somali greeting shortcut — reply immediately without AI call
+    const instantReply = detectInstantGreetingReply(content);
+    if (instantReply && !media) {
+      // Still learn vocab & save message for context
+      if (this.memory instanceof SQLiteStudentMemory) {
+        this.memory.learnVocabFromText(content);
+      }
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'user', content, languageDetected: lang, timestamp });
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'model', content: instantReply, languageDetected: lang, timestamp: Date.now() });
+      return {
+        replyText: instantReply,
+        studentId: student.studentId,
+        intent: 'greeting',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
+    // 1.6. Learn Somali vocabulary from every incoming user message (background, non-blocking)
+    if (this.memory instanceof SQLiteStudentMemory) {
+      this.memory.learnVocabFromText(content);
+    }
 
     // 3.5. Detect emotional tone — used to shape empathetic AI responses
     const emotionResult = EmotionDetector.detect(content);
@@ -263,7 +288,9 @@ export class StudentAdvisorEngine {
       const isFirstTime = student.totalMessagesCount <= 1;
       let greetingReply: string;
 
-      if (/^(hello|hi|hey|how\s+are\s+you|good\s+(morning|afternoon|evening)|wassup|whats\s*up|howdy)/i.test(clean)) {
+      if (/^(s[\s.]*c[\s.]*w|scw|sallallahu\s*calayhi\s*wasallam|calayhi\s*salaatu\s*wasalaam|nnkh)/i.test(clean)) {
+        greetingReply = 'Sallallaahu Calayhi Wasallam 🌿 (SCW ﷺ)';
+      } else if (/^(hello|hi|hey|how\s+are\s+you|good\s+(morning|afternoon|evening)|wassup|whats\s*up|howdy)/i.test(clean)) {
         greetingReply = isFirstTime
           ? 'Hi! Welcome to *CARDOSO AI*! 🌟 I am your smart personal companion — feel free to ask me anything, send voice notes, photos, or ask me to generate images. How are you? 😊'
           : 'Hi! How are you? 😊';
@@ -404,6 +431,16 @@ export class StudentAdvisorEngine {
     );
 
     // 9. Build system instruction (includes language directive + emotion guidance + extended voice mode)
+    // Inject learned vocabulary and anti-repetition phrases for human-like responses
+    let learnedVocab: Array<{ word: string; frequency: number }> | undefined;
+    let vocabCount: number | undefined;
+    let recentPhrases: string[] | undefined;
+    if (this.memory instanceof SQLiteStudentMemory) {
+      learnedVocab = this.memory.getTopVocab(60);
+      vocabCount = this.memory.getVocabCount();
+      recentPhrases = this.memory.getRecentPhrases(chatId, 12);
+    }
+
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
@@ -413,6 +450,10 @@ export class StudentAdvisorEngine {
       userOccupation: currentStudent.occupation,
       emotionResult,
       isVoiceReply: wantsVoice,
+      learnedVocab,
+      vocabCount,
+      recentPhrases,
+      chatId,
     });
 
     // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context
@@ -494,6 +535,15 @@ You are listening directly to an authentic human voice message (spoken audio).
     // Store successful generic responses in cache for subsequent users
     if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error')) {
       ResponseCacheService.set(content, lang, aiResult.text);
+    }
+
+    // 11.4. Track opening phrase of bot reply to avoid repeating same openers per chat
+    if (this.memory instanceof SQLiteStudentMemory && aiResult.text.length > 5) {
+      // Extract first sentence / first 80 chars as the "phrase fingerprint"
+      const firstPhrase = aiResult.text.split(/[.!?\n]/)[0]?.trim().slice(0, 80) || '';
+      if (firstPhrase.length > 5) {
+        this.memory.recordPhraseUsed(chatId, firstPhrase);
+      }
     }
 
     // 11.5. Synthesize voice reply if user sent a voice note or explicitly requested voice.

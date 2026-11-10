@@ -41,11 +41,25 @@ export async function runHumanPersonaTests(): Promise<{ passed: boolean; message
   const genderFemale1 = UserProfiler.detectGender('Fadumo Ahmed');
   assert(genderFemale1 === 'female', 'Detects female gender from name "Fadumo"');
 
-  const genderFemaleCue = UserProfiler.detectGender(undefined, 'Abaayo sidee wax yihiin?');
-  assert(genderFemaleCue === 'female', 'Detects female gender from linguistic cue "abaayo"');
+  const genderFemaleCue = UserProfiler.detectGender(undefined, 'Gabadh baan ahay, sidee wax yihiin?');
+  assert(genderFemaleCue === 'female', 'Detects female gender from self-identification "gabadh baan ahay"');
 
-  const genderMaleCue = UserProfiler.detectGender(undefined, 'Ninyahow ii waran saaka');
-  assert(genderMaleCue === 'male', 'Detects male gender from linguistic cue "ninyahow"');
+  const genderAbaayoAddress = UserProfiler.detectGender(undefined, 'Abaayo sidee wax yihiin?');
+  assert(genderAbaayoAddress === 'unknown', 'Addressing bot as "abaayo" does NOT mark the user as female');
+
+  const genderMaleCue = UserProfiler.detectGender(undefined, 'Nin baan ahay, ii waran saaka');
+  assert(genderMaleCue === 'male', 'Detects male gender from self-identification "nin baan ahay"');
+
+  // 3.5. Instant Islamic/Somali greeting & Saliga Nabiga (SCW vs WCS)
+  const { detectInstantGreetingReply } = await import('../src/advisor/somali-dictionary.ts');
+  const scwReply = detectInstantGreetingReply('scw');
+  assert(scwReply !== null && (scwReply.toLowerCase().includes('sallallaahu calayhi wasallam') || scwReply.includes('SCW')), 'Replies with Saliga Nabiga to "scw" (NOT wcs)');
+
+  const scwPunctuation = detectInstantGreetingReply('S.C.W.');
+  assert(scwPunctuation !== null && (scwPunctuation.toLowerCase().includes('sallallaahu calayhi wasallam') || scwPunctuation.includes('SCW')), 'Handles "S.C.W." with punctuation');
+
+  const ascReply = detectInstantGreetingReply('asc');
+  assert(ascReply !== null && scwReply !== null && !scwReply.toLowerCase().includes('wcs') && ascReply.toLowerCase().includes('calaykum salaam'), 'Replies with Wa Calaykum Salaam to "asc"');
 
   // 4. PromptBuilder Verification
   const systemInstruction = PromptBuilder.buildSystemInstruction({
@@ -60,6 +74,8 @@ export async function runHumanPersonaTests(): Promise<{ passed: boolean; message
   assert(systemInstruction.includes('kiniin laq ama dawo cun haku dhihin'), 'System instruction strictly forbids prescribing pills');
   assert(systemInstruction.includes('SOMALI BANTER & WITTY COMEBACKS'), 'System instruction includes Somali banter/comebacks rule');
   assert(systemInstruction.includes('WHATSAPP OWNER PROXY'), 'System instruction includes owner proxy representation');
+  assert(systemInstruction.includes('SALIGA NABIGA (SCW)'), 'System instruction includes SCW vs WCS rule');
+  assert(systemInstruction.includes('Qof nin ah marnaba \'abaayo\' ha ku dhihin'), 'System instruction strictly forbids calling men abaayo');
 
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);

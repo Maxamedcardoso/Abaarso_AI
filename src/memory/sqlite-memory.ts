@@ -69,6 +69,25 @@ export class SQLiteStudentMemory implements IStudentMemory {
         sent_at INTEGER NOT NULL,
         message_preview TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS user_vocab (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        word TEXT NOT NULL,
+        normalized TEXT NOT NULL,
+        frequency INTEGER DEFAULT 1,
+        first_seen INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        example_context TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_normalized ON user_vocab(normalized);
+
+      CREATE TABLE IF NOT EXISTS user_phrase_style (
+        chat_id TEXT NOT NULL,
+        phrase TEXT NOT NULL,
+        used_count INTEGER DEFAULT 1,
+        last_used INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, phrase)
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -300,6 +319,88 @@ export class SQLiteStudentMemory implements IStudentMemory {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Learns new Somali words from user messages and stores them with frequency.
+   * Words must be ≥3 chars, Somali-alphabet only, not in a stopword list.
+   */
+  public learnVocabFromText(text: string): void {
+    if (!this.db) return;
+    const STOP = new Set([
+      'waa','wuu','way','waan','ayaa','baa','oo','iyo','la','ku','ka','si','ma','ha',
+      'in','ina','aan','aad','aya','ay','taa','tan','taas','kan','kaas','kuu','kaga',
+      'haa','haye','maya','okay','ok','scw','wcs','sxb','lol','yes','no','hi','hey',
+    ]);
+    // Extract Somali words: letters only, 3-30 chars
+    const tokens = text.toLowerCase().match(/[a-zxcqdhwjklmnprstuy']{3,30}/gi) || [];
+    const now = Date.now();
+    for (const raw of tokens) {
+      const word = raw.replace(/'/g, '');
+      if (word.length < 3 || STOP.has(word)) continue;
+      try {
+        this.db.prepare(`
+          INSERT INTO user_vocab (word, normalized, frequency, first_seen, last_seen, example_context)
+          VALUES (?, ?, 1, ?, ?, ?)
+          ON CONFLICT(normalized) DO UPDATE SET
+            frequency = frequency + 1,
+            last_seen = excluded.last_seen
+        `).run(raw, word, now, now, text.slice(0, 80));
+      } catch {}
+    }
+  }
+
+  /**
+   * Returns total unique Somali words learned so far.
+   */
+  public getVocabCount(): number {
+    if (!this.db) return 0;
+    try {
+      const row: any = this.db.prepare('SELECT COUNT(*) as cnt FROM user_vocab').get();
+      return row?.cnt || 0;
+    } catch { return 0; }
+  }
+
+  /**
+   * Returns the top N most common words learned (for prompt injection).
+   */
+  public getTopVocab(limit = 60): Array<{ word: string; frequency: number }> {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare(
+        'SELECT word, frequency FROM user_vocab ORDER BY frequency DESC LIMIT ?'
+      ).all(limit) as any[];
+      return rows.map(r => ({ word: r.word, frequency: r.frequency }));
+    } catch { return []; }
+  }
+
+  /**
+   * Records a phrase style used by the bot for a specific chat (anti-repetition).
+   */
+  public recordPhraseUsed(chatId: string, phrase: string): void {
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO user_phrase_style (chat_id, phrase, used_count, last_used)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(chat_id, phrase) DO UPDATE SET
+          used_count = used_count + 1,
+          last_used = excluded.last_used
+      `).run(chatId, phrase.slice(0, 100), Date.now());
+    } catch {}
+  }
+
+  /**
+   * Returns the most recently used phrases for a chat (to avoid repeating them).
+   */
+  public getRecentPhrases(chatId: string, limit = 15): string[] {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare(
+        'SELECT phrase FROM user_phrase_style WHERE chat_id = ? ORDER BY last_used DESC LIMIT ?'
+      ).all(chatId, limit) as any[];
+      return rows.map(r => r.phrase);
+    } catch { return []; }
   }
 
   public async close(): Promise<void> {

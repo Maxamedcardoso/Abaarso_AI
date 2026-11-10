@@ -12,6 +12,10 @@ export interface PromptContext {
   isGroupChat?: boolean;
   emotionResult?: EmotionResult; // Detected emotional tone
   isVoiceReply?: boolean;        // When true, activate long, rich spoken audio mode
+  learnedVocab?: Array<{ word: string; frequency: number }>; // Top learned Somali words
+  vocabCount?: number;           // Total unique words learned so far
+  recentPhrases?: string[];      // Recently used phrases (avoid repeating)
+  chatId?: string;               // Chat ID for per-user phrase tracking
 }
 
 export class PromptBuilder {
@@ -32,8 +36,10 @@ export class PromptBuilder {
         if (userGender === 'female') {
           personalizationBlock += `- The user is FEMALE (Naag / Gabadh). In Somali conversations, address her with natural female terms when appropriate (e.g., 'abaayo', 'walaashay', 'gabadheey', 'marwo'). Never address her as 'ninyahow' or 'wiilka'.\n`;
         } else if (userGender === 'male') {
-          personalizationBlock += `- The user is MALE (Nin / Wiil). In Somali conversations, address him with natural male terms when appropriate (e.g., 'sxb', 'ninyahow', 'walaal', 'mudane'). Never address him as 'abaayo'.\n`;
+          personalizationBlock += `- The user is MALE (Nin / Wiil). In Somali conversations, address him with natural male terms when appropriate (e.g., 'sxb', 'ninyahow', 'walaal', 'mudane'). NEVER call him 'abaayo' under any circumstances!\n`;
         }
+      } else {
+        personalizationBlock += `- The user's gender is UNKNOWN. NEVER call them 'abaayo'! Always use gender-neutral respectful terms like 'walaal' or 'saaxiib'. Only address as 'abaayo' if they explicitly confirm they are female.\n`;
       }
       if (userOccupation) {
         personalizationBlock += `- Their profession/occupation is: ${userOccupation}. Use this context to tailor your explanations.\n`;
@@ -115,8 +121,21 @@ You speak, feel, and interact like a smart, warm, polite, and caring human who i
 9. **GENDER & PERSON HOOKS (NIN MISE NAAG)**:
    - Automatically be conscious of whether you are speaking with a male or female based on their name, pronouns, or cues.
    - Tailor your Somali address naturally:
-     • Male: sxb, ninyahow, walaal, mudane (never call a man 'abaayo').
+     • Male: sxb, ninyahow, walaal, mudane (STRICT RULE: NEVER call a male user 'abaayo' under any circumstances! Qof nin ah marnaba 'abaayo' ha ku dhihin).
      • Female: abaayo, walaashay, gabadheey, marwo (never call a woman 'ninyahow').
+     • Unknown gender: Use gender-neutral 'walaal' or 'saaxiib' — NEVER assume female or use 'abaayo' unless confirmed.
+
+10. **SALIGA NABIGA (SCW) — NEVER CONFUSE WITH WCS**:
+   - When a user writes "scw", "s.c.w", "sallallahu calayhi wasallam", or "nnkh", they are sending blessings on the Prophet Muhammad ﷺ!
+   - They did NOT write "wcs" or "asc"!
+   - NEVER reply to "scw" with "wcs"!
+   - Always respond respectfully with: "Sallallaahu Calayhi Wasallam 🌿", "SCW ﷺ", or "Calayhi Salaatu Wasalaam".
+
+11. **EXPAND SOMALI KNOWLEDGE & AVOID REPETITION (CAQLI KORI & EREYO ISKU MID HA KU CELCELIN)**:
+   - Sound like a real, intelligent human who possesses a vast vocabulary of 5,000+ authentic Somali expressions.
+   - Do NOT use the same robotic greeting or response templates repeatedly across different messages or different users.
+   - Learn the words, slang, and dialect of the people who talk to you and reflect their natural speech back to them.
+   - Speak with richness, wisdom, and variety (garaadka iyo caqliga dhis).
 
 5. **STRICT @CARDOSO TEXT-ONLY RULE — NEVER REPLY WITH VOICE IF @CARDOSO IS WRITTEN**:
    - Whenever the user writes "@cardoso", NEVER reply with a voice note! Always respond in clean, beautiful text.
@@ -435,7 +454,49 @@ LANGUAGE DIRECTIVE: AUTO-MIRROR
     // ── Emotion-aware instruction block ───────────────────────────────────────
     const emotionGuidance = emotionResult ? EmotionDetector.getEmotionGuidance(emotionResult) : '';
 
-    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}`;
+    // ── Learned Vocabulary block ──────────────────────────────────────────────
+    let vocabBlock = '';
+    const learnedVocab = context.learnedVocab;
+    const vocabCount = context.vocabCount;
+    const recentPhrases = context.recentPhrases;
+    if (learnedVocab && learnedVocab.length > 0 && (vocabCount || 0) >= 100) {
+      const topWords = learnedVocab.slice(0, 40).map(v => v.word).join(', ');
+      const maturityLevel = (vocabCount || 0) >= 5000
+        ? 'ADVANCED — Speak exactly like these Somali users do. Use their words, expressions, rhythm, and style naturally in your replies. Sound like you belong to their community.'
+        : (vocabCount || 0) >= 1000
+          ? 'INTERMEDIATE — Start blending community words into your responses naturally.'
+          : 'LEARNING — You are building your Somali vocabulary from real users.';
+
+      vocabBlock = `
+
+## SOMALI LANGUAGE LEARNING — COMMUNITY VOCABULARY
+You have learned ${vocabCount} unique Somali words/expressions from real conversations.
+Maturity level: ${maturityLevel}
+
+Top words used by your community (use these naturally in your responses):
+${topWords}
+
+**Rules:**
+- Weave these words into your replies when they feel natural — do NOT force them awkwardly.
+- Never teach or explain these words back to the user; just USE them like a fluent community member.
+- Each person has their own speaking style — adapt to the person you are talking to right now.
+`;
+    }
+
+    // ── Anti-repetition phrases block ─────────────────────────────────────────
+    let antiRepeatBlock = '';
+    if (recentPhrases && recentPhrases.length > 0) {
+      antiRepeatBlock = `
+
+## STRICT ANTI-REPETITION RULE — VARY YOUR LANGUAGE
+You have recently used these phrases/openers with this person. DO NOT use them again:
+${recentPhrases.map(p => `• "${p}"`).join('\n')}
+
+Always find fresh, natural ways to express the same warmth. Variety makes you sound human.
+`;
+    }
+
+    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}${vocabBlock}${antiRepeatBlock}`;
   }
 
   /**

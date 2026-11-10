@@ -118,17 +118,23 @@ export class UserProfiler {
   }
 
   /**
-   * Detects whether the user is male or female from their name or linguistic cues.
+   * Detects whether the user is male or female from their name or explicit self-identification.
    * Returns 'male' | 'female' | 'unknown'.
+   * 
+   * CRITICAL RULE: When a user writes "abaayo ii sheeg", they are addressing the bot,
+   * NOT identifying themselves! Do NOT assume the user is female just because they wrote "abaayo".
+   * Only explicit self-identification ("gabadh baan ahay") or verified female names qualify.
    */
   public static detectGender(name?: string, text?: string): 'male' | 'female' | 'unknown' {
-    // 1. Check text cues first (self-identification / gendered address)
+    // 1. Check EXPLICIT self-identification in text (not mere address words like 'abaayo ii sheeg')
     if (text) {
       const lowerText = text.toLowerCase();
-      if (/\b(abaayo|abaay|walaashay|inaanta|habaryar|eedo|hooyo|gabadh|naag|anigoo gabadh ah|gabadh baan ahay)\b/i.test(lowerText)) {
+      // Female self-identification
+      if (/\b(gabadh\s+baan\s+ahay|naag\s+baan\s+ahay|anigoo\s+gabadh\s+ah|anigu\s+waxaan\s+ahay\s+gabadh|i\s+am\s+(?:a\s+)?(?:girl|woman|female))\b/i.test(lowerText)) {
         return 'female';
       }
-      if (/\b(aboowe|walaalkay|ninyahow|wiilka|adeer|aabo|nin baan ahay|wiil baan ahay|anigoo wiil ah)\b/i.test(lowerText)) {
+      // Male self-identification
+      if (/\b(nin\s+baan\s+ahay|wiil\s+baan\s+ahay|anigoo\s+wiil\s+ah|anigoo\s+nin\s+ah|anigu\s+waxaan\s+ahay\s+(?:wiil|nin)|i\s+am\s+(?:a\s+)?(?:boy|man|male))\b/i.test(lowerText)) {
         return 'male';
       }
     }
@@ -144,17 +150,23 @@ export class UserProfiler {
         'fardowso', 'asma', 'nimco', 'nimca', 'muna', 'safiya', 'safia', 'samsam', 'zamzam', 'nasra',
         'ruun', 'raxma', 'rahma', 'khadra', 'ubax', 'canab', 'idil', 'hibaaq', 'hibo', 'fartuun',
         'shukri', 'ikraan', 'ikran', 'sacdiyo', 'sadiya', 'suhuur', 'shamsi', 'yasmiin', 'yasmin',
-        'falxado', 'kaltuun', 'shankaroon', 'warsan', 'barni', 'barno', 'cibaado', 'saynab', 'zainab'
+        'falxado', 'kaltuun', 'shankaroon', 'warsan', 'barni', 'barno', 'cibaado', 'saynab', 'zainab',
+        'xamdi', 'hamdi', 'naciimo', 'naima', 'najma', 'hinda', 'najax', 'rooda', 'rhoda', 'leylo',
+        'sharmuuke', 'sumaya', 'sumayo', 'samira', 'samiiro', 'hafsa', 'marwa', 'salma', 'asmaa'
       ]);
 
       const maleNames = new Set([
         'maxamed', 'mohamed', 'muhamed', 'ahmed', 'axmed', 'cali', 'ali', 'xasan', 'hassan', 'cabdi',
         'abdi', 'liibaan', 'liban', 'farxan', 'farhan', 'mustafe', 'mustafa', 'jaamac', 'jama', 'yuusuf',
-        'yusuf', 'khalid', 'cumar', 'omar', 'sakariye', 'zakaria', 'guuleed', 'guleed', 'sharmarke',
-        'warsame', 'mahad', 'bile', 'daahir', 'dahir', 'hamse', 'xamze', 'faysal', 'feisal', 'ibraahim',
-        'ibrahim', 'ismaciil', 'ismail', 'rooble', 'roble', 'cabdiraxmaan', 'abdirahman', 'cabdirisaaq',
-        'abdirizak', 'ayaanle', 'ayanle', 'nasir', 'naasir', 'cabdillahi', 'abdullahi', 'khadar', 'muse',
-        'muuse', 'said', 'siciid', 'saacid', 'yaasiin', 'yasin', 'bashiir', 'bashir'
+        'yusuf', 'khalid', 'khaalid', 'cumar', 'omar', 'sakariye', 'zakaria', 'zakariya', 'guuleed', 'guleed',
+        'sharmarke', 'sharmaarke', 'warsame', 'mahad', 'bile', 'daahir', 'dahir', 'hamse', 'xamze', 'faysal',
+        'feisal', 'ibraahim', 'ibrahim', 'ismaciil', 'ismail', 'rooble', 'roble', 'cabdiraxmaan', 'abdirahman',
+        'cabdirisaaq', 'abdirizak', 'ayaanle', 'ayanle', 'nasir', 'naasir', 'cabdillahi', 'abdullahi',
+        'cabdullaahi', 'khadar', 'muse', 'muuse', 'said', 'siciid', 'saacid', 'yaasiin', 'yasin', 'bashiir',
+        'bashir', 'xuseen', 'hussein', 'cusmaan', 'osman', 'cabdinaasir', 'abdinasir', 'cabdifataax',
+        'abdifatah', 'cabdishakuur', 'abdishakur', 'cabdiwali', 'abdiwali', 'nuur', 'nur', 'maxamuud',
+        'mohamud', 'mahamud', 'ridwaan', 'ridwan', 'mukhtaar', 'mukhtar', 'aadan', 'adan', 'illyaas',
+        'ilyas', 'haruun', 'harun', 'tariq', 'sayid', 'sayidcali'
       ]);
 
       if (femaleNames.has(firstName)) return 'female';

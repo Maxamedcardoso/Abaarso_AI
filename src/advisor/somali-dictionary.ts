@@ -114,3 +114,50 @@ export function findTechnicalTermsInText(text: string): TechnicalTermExplanation
   return found;
 }
 
+/**
+ * Checks whether a message is a pure Islamic / Somali greeting that deserves
+ * an instant scripted reply instead of sending it through the AI engine.
+ * Returns the reply string if it matches, or null otherwise.
+ */
+export function detectInstantGreetingReply(text: string): string | null {
+  const t = text.trim().toLowerCase().replace(/[.!،؟?،\s]+/g, ' ').trim();
+
+  // Mapping of greeting patterns → instant replies
+  const GREETING_PAIRS: Array<[RegExp, string[]]> = [
+    // Saliga Nabiga (SCW - Sallallaahu Calayhi Wasallam) — STRICT: Never reply with WCS!
+    [/^(s[\s.]*c[\s.]*w|scw|sallallahu\s*calayhi\s*wasallam|calayhi\s*salaatu\s*wasalaam|nnkh)(\s+(sxb|wll|walaal|nabiga|rasuulka))?$/i,
+     ['Sallallaahu Calayhi Wasallam 🌿', 'SCW ﷺ Calayhi Salaatu Wasalaam! 🤲', 'Sallallaahu Calayhi Wasallam ﷺ']],
+
+    // Islamic greetings (highest priority)
+    [/^(assalaamu?\s*calaykum|a[\s.]*s[\s.]*c|asc|salaam(u?\s*(calaykum)?)?|al[\s-]?salaam[\s-]?calaykum|alsalamu alaykum)(\s+warahmatullahi\s+wabarakaatuh)?$/i,
+     ['Wa Calaykum Salaam warahmatullahi wabarakaatuh 🌿', 'Wa calaykum Salaam! Sidee tahay walaal? 😊', 'Wa calaykum Salaam, mahadsanid! 🤲']],
+
+    // Reply to wcs (someone is replying to our salam)
+    [/^(wa[\s.]*calaykum[\s.]*salaam?|w[\s.]*c[\s.]*s|wcs)(\s+warahmatullahi.*)?$/i,
+     ['Alhamdulillah walaal, Ilaahay kaa barakeeyo! 🌿', 'Barakallahu fiik! Maxaa cusub? 😊']],
+
+    // Somali greetings
+    [/^(nabad[\s-]?miyaa|nabad|nabadgelyo)$/i,
+     ['Nabad iyo nolol! Sidee tahay? 😊', 'Nabadgelyo walaal! Maxaa cusub? 😄']],
+
+    [/^(iska\s*warran|iskawarran|warran|ii\s*warran|iwaran|sidee\s*tahay|see\s*tahy|see\s*tahay|sideed\s*tahay)(\?)?$/i,
+     ['Waan fiicanahay, mahadsanid walaal! Adiguna sidee tahay? 😊', 'Nabad iyo khayr! Adiguna xaggaaga see wax yihiin? 😄', 'Alhamdulillah! Adiguna nabad miyaa? 🤲']],
+
+    // Hi / Hello / Hey
+    [/^(hi+|hey+|hello+|helo|howdy)(\s+there)?[.!]?$/i,
+     ['Hey! 😊 How are you doing?', 'Hello! 👋 What\'s up?', 'Hi there! 😄 How can I help?']],
+
+    // Somali "good morning/evening"
+    [/^(subax\s*wanaagsan|subax[\s-]?nabad|galab\s*wanaagsan|galab[\s-]?nabad|habeenimo\s*wanaagsan|habeenkii\s*wanaagsan)$/i,
+     ['Subax wanaagsan walaal! Sidee tahay maanta? ☀️', 'Galab wanaagsan! Sideed u dareemaysaa? 🌤️', 'Habeenimo wanaagsan! Nabad ayaad tahay? 🌙']],
+  ];
+
+  for (const [pattern, replies] of GREETING_PAIRS) {
+    if (pattern.test(t)) {
+      // Pick a random reply from the list
+      return replies[Math.floor(Math.random() * replies.length)];
+    }
+  }
+  return null;
+}
+
