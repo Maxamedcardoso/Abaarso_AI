@@ -153,8 +153,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.currentQR = null;
         this.lastActivityTimestamp = Date.now();
         const botId = this.socket?.user?.id || '';
-        if (botId) {
-          broadcastService.setBotJid(botId);
+        const botLid = (this.socket?.user as any)?.lid || '';
+        if (botId || botLid) {
+          broadcastService.setBotJid(botId, botLid);
         }
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
       }
@@ -403,15 +404,28 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           lowerText.startsWith('!broadcast') ||
           lowerText.startsWith('!contacts') ||
           lowerText.startsWith('!liis') ||
+          lowerText.startsWith('!xiriir') ||
           lowerText.startsWith('!jooji') ||
+          lowerText.startsWith('!dar') ||
+          lowerText.startsWith('!add') ||
+          lowerText.startsWith('!kudar') ||
+          lowerText.startsWith('!shub') ||
+          lowerText.startsWith('!import') ||
+          lowerText.startsWith('!load-contacts') ||
           lowerText.startsWith('!admin');
+
+        const isContactsDoc = Boolean(
+          mediaAttachment?.type === 'document' &&
+          /\.(vcf|csv|txt)$/i.test(mediaAttachment.fileName || '')
+        );
 
         const hasCardosoMention =
           lowerText.includes('@cardoso') ||
           lowerText.startsWith('!cardoso') ||
           hasVoiceCommand ||
           hasImageCommand ||
-          hasBroadcastCommand;
+          hasBroadcastCommand ||
+          isContactsDoc;
 
         // 4. Strict fromMe Handling:
         // Any message sent by the bot or from the host phone (fromMe):
@@ -473,6 +487,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan sharax]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
           rawTimestamp: (msg.messageTimestamp as number) * 1000 || Date.now(),
           isMentioned,
+          isFromMe: Boolean(msg.key.fromMe),
           replyToMessageId: msg.key.id || undefined,
           media: mediaAttachment,
         };

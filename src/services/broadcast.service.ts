@@ -126,6 +126,7 @@ export class BroadcastService {
   private optedOutJids: Set<string> = new Set();
   private sentTimestamps: number[] = [];
   private botJid: string = '';
+  private botLid: string = '';
   private pendingDrafts: Map<string, BroadcastDraft> = new Map();
   private activeBroadcast: BroadcastProgress = {
     isActive: false,
@@ -150,9 +151,13 @@ export class BroadcastService {
     this.memory = memory;
   }
 
-  public setBotJid(jid: string): void {
-    if (!jid) return;
-    this.botJid = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+  public setBotJid(jid: string, lid?: string): void {
+    if (jid) {
+      this.botJid = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    }
+    if (lid) {
+      this.botLid = lid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    }
   }
 
   public isValidIndividualJid(jid: string): boolean {
@@ -277,6 +282,9 @@ export class BroadcastService {
     if (this.botJid && (phone === this.botJid || jid.includes(this.botJid))) {
       return;
     }
+    if (this.botLid && (phone === this.botLid || jid.includes(this.botLid))) {
+      return;
+    }
 
     const cleanName = (name && name.trim().length > 0) ? name.trim() : undefined;
     const firstName = this.extractCleanFirstName(cleanName);
@@ -376,8 +384,9 @@ export class BroadcastService {
       // Must not be admin chat
       if (adminChatId && c.jid === adminChatId) return false;
       if (cleanAdmin && c.jid.replace(/[^0-9]/g, '') === cleanAdmin) return false;
-      // Must not be bot's own number
+      // Must not be bot's own number or LID
       if (this.botJid && c.jid.replace(/[^0-9]/g, '') === this.botJid) return false;
+      if (this.botLid && c.jid.replace(/[^0-9]/g, '') === this.botLid) return false;
       // Must be individual phone contact or LID
       if (!this.isValidIndividualJid(c.jid)) return false;
       return true;

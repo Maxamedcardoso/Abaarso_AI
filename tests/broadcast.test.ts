@@ -1,5 +1,6 @@
-import { BroadcastService, BroadcastContact } from '../src/services/broadcast.service.js';
+import { BroadcastService, BroadcastContact, broadcastService as singletonBroadcast } from '../src/services/broadcast.service.js';
 import { IMessagingTransport } from '../src/transports/transport.interface.js';
+import { MessageRouter } from '../src/pipeline/message-router.js';
 
 export async function runBroadcastTests(): Promise<{ passed: boolean; message: string }> {
   console.log('\n========================================');
@@ -188,6 +189,44 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   );
   assert(new Set(batch50).size === 50, 'Generates 50 strictly unique messages for a 50-person batch');
   assert(batch50.every(m => m.includes('save me moh bulshaawi')), 'Preserves the exact original !fariin message inside all 50 messages');
+
+  // 13. Router integration: !fariin from host phone (isFromMe=true with @lid) must NEVER fall through to AI
+  singletonBroadcast.setSafetyConfig(fastTestTiming);
+  singletonBroadcast.recordContact('252610000099@s.whatsapp.net', 'Cabdi');
+  const routerReplies: string[] = [];
+  let aiCalled = false;
+  const mockEngine = {
+    processMessage: async () => {
+      aiCalled = true;
+      return { replyText: 'Waa la kaydiyay', studentId: 's1', intent: 'general', language: 'so', latencyMs: 1 };
+    },
+  } as any;
+  const mockConfig = {
+    messaging: { mode: 'baileys', prefix: '!cardoso', groupResponseMode: 'mention_only' },
+    security: { adminPhoneNumbers: ['252634949642'], allowedGroups: [] },
+  } as any;
+  const router = new MessageRouter(mockEngine, mockConfig);
+  const routerTransport: IMessagingTransport = {
+    ...mockTransport,
+    sendMessage: async (chatId, text) => {
+      if (chatId === '277923424645192@lid') routerReplies.push(text);
+      return true;
+    },
+  };
+  await router.handleIncomingMessage({
+    id: 'msg_fromme_fariin_1',
+    senderId: '277923424645192@lid',
+    chatId: '277923424645192@lid',
+    isGroup: false,
+    content: '!fariin save me moh bulshaawi',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, routerTransport);
+
+  assert(aiCalled === false, '!fariin from host @lid (isFromMe=true) is handled as broadcast and NEVER hits AI');
+  assert(routerReplies.some(r => r.includes('FARIIN-WADAREED') || r.includes('SMART BROADCAST')), 'Returns broadcast confirmation instead of AI "waa la kaydiyay"');
+  singletonBroadcast.abortBroadcast();
 
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);

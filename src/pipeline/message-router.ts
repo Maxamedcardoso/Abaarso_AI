@@ -86,6 +86,11 @@ export class MessageRouter {
     // 1b. Echo & Bot Self-Message Guard: Drop bot signatures, rate limit notices, and system errors
     if (
       lowerText.includes('[cardoso ai]') ||
+      lowerText.includes('[cardoso ai —') ||
+      lowerText.includes('[cardoso ai contacts') ||
+      lowerText.includes('[cardoso ai smart broadcast') ||
+      lowerText.includes('[smart broadcast') ||
+      lowerText.includes('[anti-ban emergency stop]') ||
       lowerText.includes('[cardoso ai cooldown]') ||
       lowerText.includes('xadkii daqiiqada') ||
       lowerText.includes('server-ku wuxuu gaadhay xadkii') ||
@@ -95,12 +100,13 @@ export class MessageRouter {
       return { handled: false, reason: 'Bot echo discarded' };
     }
 
-    // 1c. Record contact for smart broadcasting (individual chats only)
-    if (!message.isGroup) {
+    // 1c. Record contact for smart broadcasting (individual chats only, skip host's own fromMe messages)
+    if (!message.isGroup && !message.isFromMe) {
       broadcastService.recordContact(message.chatId, message.senderName, false);
     }
 
-    const isAdminUser = this.isAdmin(message.senderId, message.isGroup);
+    // Host phone's own outgoing commands (isFromMe) or whitelisted ADMIN_PHONE_NUMBERS are Admin
+    const isAdminUser = Boolean(message.isFromMe) || this.isAdmin(message.senderId, message.isGroup);
 
     // 1c-optout. Recipient opt-out guard (stops annoyed users from tapping WhatsApp "Report Spam")
     if (
@@ -233,11 +239,24 @@ export class MessageRouter {
     }
 
     // 2i. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
-    if (/^!(?:broadcast|fariin)\s+/i.test(lowerText) && isAdminUser) {
-      const broadcastContent = text.replace(/^!(?:broadcast|fariin)\s+/i, '');
+    if (/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i.test(lowerText) && isAdminUser) {
+      const broadcastContent = text.replace(/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i, '');
       const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);
       await transport.sendMessage(message.chatId, result.message);
       return { handled: true, reason: 'Direct broadcast initiated' };
+    }
+
+    // 2j. Guard: never let !fariin / !broadcast fall through to Gemini AI (where AI might reply "waa la kaydiyay")
+    if (/^!(?:broadcast|fariin|contacts|liis|jooji|dar|shub)\b/i.test(lowerText)) {
+      if (!isAdminUser) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admin-ka oo keliya.');
+      } else {
+        await transport.sendMessage(
+          message.chatId,
+          'ℹ️ *[CARDOSO AI]*: Fadlan qor fariinta ka dib `!fariin`, tusaale:\n`!fariin Salaan dhammaan, waxaan haynaa ogeysiis.`'
+        );
+      }
+      return { handled: true, reason: 'Broadcast command fallback guard' };
     }
 
     // 2f. Admin System Commands Handling (!admin on/off/stats)

@@ -17,6 +17,7 @@ export interface IncomingMessage {
   content: string;               // Clean text of the message
   rawTimestamp: number;          // Epoch timestamp in milliseconds
   isMentioned: boolean;          // True if the bot was explicitly @mentioned
+  isFromMe?: boolean;            // True if sent directly from the connected host WhatsApp account
   replyToMessageId?: string;     // If message is a quoted reply
   media?: MessageMedia;          // Attached image, audio voice note, or PDF document
 }
