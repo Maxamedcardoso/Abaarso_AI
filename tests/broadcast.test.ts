@@ -182,6 +182,13 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   await new Promise(resolve => setTimeout(resolve, 250));
   assert(failingMessages.some(m => m.includes('ANTI-BAN EMERGENCY STOP')), 'Triggers emergency auto-stop after consecutive failures');
 
+  // 12. 50-message batch uniqueness guarantee (even when all 50 recipients are unnamed)
+  const batch50 = Array.from({ length: 50 }, (_, idx) =>
+    broadcastService.formatPersonalizedMessage('save me moh bulshaawi', undefined, idx)
+  );
+  assert(new Set(batch50).size === 50, 'Generates 50 strictly unique messages for a 50-person batch');
+  assert(batch50.every(m => m.includes('save me moh bulshaawi')), 'Preserves the exact original !fariin message inside all 50 messages');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

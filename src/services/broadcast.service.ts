@@ -710,6 +710,10 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     (name) => `Assalaamu calaykum ${name}, `,
     (name) => `${name}, nabad miyaa? `,
     (name) => `Haye ${name}, `,
+    (name) => `Salaan sare ${name}, `,
+    (name) => `${name} walaal, sidee tahay? `,
+    (name) => `Maalin wanaagsan ${name}, `,
+    (name) => `Asc ${name} walaal, `,
   ];
 
   private static readonly UNNAMED_SOMALI_GREETINGS: string[] = [
@@ -721,6 +725,21 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     'Asc saaxiib, ',
     'Haye walaal, ',
     'Assalaamu calaykum walaal, ',
+    'Sidee tahay walaal? ',
+    'Salaan sare saaxiib, ',
+    'Nabad iyo khayr walaal, ',
+    'Maalin wanaagsan walaal, ',
+  ];
+
+  // 7 lead-in phrases (coprime with 12 greetings & 11 closings => 924 strictly unique combinations)
+  private static readonly SOMALI_LEAD_INS: string[] = [
+    '',
+    'fariin yar: ',
+    'waxaan rabay inaan kuu sheego — ',
+    'halkan ka eeg: ',
+    'ogeysiis kooban: ',
+    'fadlan arag: ',
+    'adigaan kuu soo diray — ',
   ];
 
   private static readonly NAMED_ENGLISH_GREETINGS: Array<(name: string) => string> = [
@@ -729,6 +748,7 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     (name) => `Hello ${name}, `,
     (name) => `${name}, greetings! `,
     (name) => `Hey ${name}, `,
+    (name) => `Good day ${name}, `,
   ];
 
   private static readonly UNNAMED_ENGLISH_GREETINGS: string[] = [
@@ -737,15 +757,40 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     'Hey friend, ',
     'Greetings, ',
     'Good day, ',
+    'Hi, ',
   ];
 
+  private static readonly ENGLISH_LEAD_INS: string[] = [
+    '',
+    'quick note: ',
+    'wanted to share this — ',
+    'please check: ',
+    'just a quick update: ',
+  ];
+
+  private static readonly ENGLISH_CLOSINGS: string[] = [
+    '',
+    '\n\nThank you!',
+    '\n\nBest regards.',
+    '\n\nHave a great day!',
+    '\n\nAppreciate your time.',
+    '\n\nWishing you all the best.',
+    '\n\nTake care!',
+  ];
+
+  // 11 warm Somali closings (pairwise coprime with 12 & 7)
   private static readonly SOMALI_CLOSINGS: string[] = [
-    '',
-    '\n\nMahadsanid.',
-    '',
+    '\n\nMahadsanid walaal.',
     '\n\nKhayr baan kuu rajaynayaa.',
-    '',
     '\n\nNabadgelyo.',
+    '\n\nAlle ha ku barakeeyo.',
+    '\n\nWada-hadal wanaagsan!',
+    '\n\nMahadsanid, nabad iyo caafimaad.',
+    '\n\nIlaahay haku xafido.',
+    '\n\nWaad ku mahadsan tahay waqtigaaga.',
+    '\n\nFarxad iyo nolol wanaagsan!',
+    '\n\nGuul iyo barwaaqo.',
+    '\n\nSalaan iyo qaddarin.',
   ];
 
   /**
@@ -800,14 +845,17 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
         const prefix = cleanName
           ? BroadcastService.NAMED_ENGLISH_GREETINGS[idx % BroadcastService.NAMED_ENGLISH_GREETINGS.length](cleanName)
           : BroadcastService.UNNAMED_ENGLISH_GREETINGS[idx % BroadcastService.UNNAMED_ENGLISH_GREETINGS.length];
-        return `${prefix}${body}`;
+        const leadIn = BroadcastService.ENGLISH_LEAD_INS[idx % BroadcastService.ENGLISH_LEAD_INS.length];
+        const closing = BroadcastService.ENGLISH_CLOSINGS[idx % BroadcastService.ENGLISH_CLOSINGS.length];
+        return `${prefix}${leadIn}${body}${closing}`;
       }
 
       const prefix = cleanName
         ? BroadcastService.NAMED_SOMALI_GREETINGS[idx % BroadcastService.NAMED_SOMALI_GREETINGS.length](cleanName)
         : BroadcastService.UNNAMED_SOMALI_GREETINGS[idx % BroadcastService.UNNAMED_SOMALI_GREETINGS.length];
+      const leadIn = BroadcastService.SOMALI_LEAD_INS[idx % BroadcastService.SOMALI_LEAD_INS.length];
       const closing = BroadcastService.SOMALI_CLOSINGS[idx % BroadcastService.SOMALI_CLOSINGS.length];
-      return `${prefix}${body}${closing}`;
+      return `${prefix}${leadIn}${body}${closing}`;
     }
 
     // 3. Deterministic default (when variantIndex is omitted)
