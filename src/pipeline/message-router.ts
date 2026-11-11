@@ -239,6 +239,15 @@ export class MessageRouter {
       return { handled: true, reason: 'Contacts auto-import triggered' };
     }
 
+    // 2i-barasho. Smart Barasho Command (!barasho [Magacaaga]) — sends tailored intro for named vs unnamed contacts
+    if (/^!barasho(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^!barasho(?:\s+(.+))?$/i);
+      const ownerName = (match?.[1] || '').trim() || 'Maxamed';
+      const result = await broadcastService.startBarashoBroadcast(message.chatId, transport, 50, ownerName);
+      await transport.sendMessage(message.chatId, result.message);
+      return { handled: true, reason: 'Barasho broadcast initiated' };
+    }
+
     // 2i. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
     if (/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i.test(lowerText) && isAdminUser) {
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i, '');
@@ -247,8 +256,8 @@ export class MessageRouter {
       return { handled: true, reason: 'Direct broadcast initiated' };
     }
 
-    // 2j. Guard: never let !fariin / !broadcast fall through to Gemini AI (where AI might reply "waa la kaydiyay")
-    if (/^!(?:broadcast|fariin|contacts|liis|jooji|dar|shub)\b/i.test(lowerText)) {
+    // 2j. Guard: never let !fariin / !barasho / !broadcast fall through to Gemini AI (where AI might reply "waa la kaydiyay")
+    if (/^!(?:broadcast|fariin|barasho|contacts|liis|jooji|dar|shub)\b/i.test(lowerText)) {
       if (!isAdminUser) {
         await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admin-ka oo keliya.');
       } else {

@@ -391,6 +391,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
         const hasBroadcastCommand =
           lowerText.startsWith('!fariin') ||
+          lowerText.startsWith('!barasho') ||
           lowerText.startsWith('!broadcast') ||
           lowerText.startsWith('!contacts') ||
           lowerText.startsWith('!liis') ||

@@ -11,10 +11,11 @@ export class UserProfiler {
   public static extractName(text: string): string | null {
     const patterns = [
       // Somali
-      /magacaygu\s+(?:waa|waxaa\s+la\s+yidhaa|waxaa\s+la\s+dhahaa)\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
-      /magacaygu\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
-      /waxaa\s+la\s+ii\s+yidhaa\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
+      /magacayg[au]\s+(?:waa|waxaa\s+la\s+(?:yidhaa|yiraahdaa|dhahaa))\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
+      /magacayg[au]\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
+      /waxaa\s+la\s+ii?\s+(?:yidhaa|yiraahdaa|dhahaa)\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
       /waxaa\s+la\s+yidhaa\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
+      /(?:anigu|aniga)\s+waa\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})(?:\.|,|!|\s|$)/i,
       // English
       /my\s+name\s+is\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,
       /(?:call\s+me|i\s+am\s+called|i\s+go\s+by)\s+([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})/i,

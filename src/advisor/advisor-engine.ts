@@ -15,6 +15,7 @@ import { ResponseCacheService } from '../services/response-cache.service.js';
 import { EmotionDetector } from './emotion-detector.js';
 import { detectInstantGreetingReply } from './somali-dictionary.js';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
+import { broadcastService } from '../services/broadcast.service.js';
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -397,6 +398,10 @@ export class StudentAdvisorEngine {
 
     if (detectedName && detectedName !== student.firstName) {
       profileUpdates.firstName = detectedName;
+      // Also update the user's real name in the broadcast contacts list
+      if (!isGroup) {
+        broadcastService.recordContact(chatId, detectedName, false);
+      }
     }
     if (detectedOccupation && detectedOccupation !== student.occupation) {
       profileUpdates.occupation = detectedOccupation;

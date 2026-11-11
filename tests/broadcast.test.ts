@@ -1,6 +1,7 @@
 import { BroadcastService, BroadcastContact, broadcastService as singletonBroadcast } from '../src/services/broadcast.service.js';
 import { IMessagingTransport } from '../src/transports/transport.interface.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
+import { UserProfiler } from '../src/services/user-profiler.service.js';
 
 export async function runBroadcastTests(): Promise<{ passed: boolean; message: string }> {
   console.log('\n========================================');
@@ -254,6 +255,37 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(lidLabel === undefined, 'Does not use internal 15-digit @lid ID as a greeting name');
   const phoneMsg = broadcastService.formatPersonalizedMessage('save me moh bulshaawi', phoneLabel, 0);
   assert(phoneMsg.startsWith('0634112233, Asc! '), 'Addresses unnamed contact by phone number before Asc');
+
+  // 16. !barasho dual-template intros + name learning on reply
+  const barashoNamed = broadcastService.formatBarashoMessage({ jid: '252634112233@s.whatsapp.net', firstName: 'Axmed', phone: '252634112233' }, 0, 'Maxamed');
+  const barashoUnnamed = broadcastService.formatBarashoMessage({ jid: '252615009988@s.whatsapp.net', phone: '252615009988' }, 1, 'Maxamed');
+  assert(barashoNamed.includes('Axmed') && barashoNamed.includes('Lambarkaaga waan save-garaystay'), '!barasho sends "Lambarkaaga waan save-garaystay" template to named contact');
+  assert(barashoUnnamed.includes('0615009988') && barashoUnnamed.includes('haddii aynu is barano'), '!barasho sends intro "haddii aynu is barano" template to unnamed contact');
+
+  const barashoReplies: string[] = [];
+  await singletonBroadcast.resetSentHistory();
+  singletonBroadcast.recordContact('252610000099@s.whatsapp.net', 'Cabdi');
+  const barashoRouterTransport: IMessagingTransport = {
+    ...mockTransport,
+    sendMessage: async (chatId, text) => {
+      if (chatId === '277923424645192@lid') barashoReplies.push(text);
+      return true;
+    },
+  };
+  await router.handleIncomingMessage({
+    id: 'msg_barasho_1',
+    senderId: '277923424645192@lid',
+    chatId: '277923424645192@lid',
+    isGroup: false,
+    content: '!barasho',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, barashoRouterTransport);
+  assert(barashoReplies.some(r => r.includes('BARASHO BILAABATAY')), '!barasho command routes directly to Barasho broadcast');
+  singletonBroadcast.abortBroadcast();
+
+  assert(UserProfiler.extractName('Wcs Maxamed, magacaygu waa Cali') === 'Cali', 'Extracts Somali name from !barasho reply');
 
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);

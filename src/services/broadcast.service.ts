@@ -115,6 +115,8 @@ export interface BroadcastDraft {
   messageText: string;
   recipients: BroadcastContact[];
   createdAt: number;
+  mode?: 'standard' | 'barasho';
+  ownerName?: string;
 }
 
 export interface BroadcastProgress {
@@ -584,8 +586,6 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
   /**
    * Starts a direct broadcast immediately without confirmation step.
    * Sends to the next batch of uncontacted contacts (up to maxLimit, default 50).
-   * Once sent to, contacts are recorded in persistent SQLite history so they
-   * are NEVER contacted again.
    */
   public async startDirectBroadcast(
     adminChatId: string,
@@ -593,18 +593,42 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     transport: IMessagingTransport,
     maxLimit: number = 50
   ): Promise<{ success: boolean; message: string }> {
-    if (this.activeBroadcast.isActive) {
-      return {
-        success: false,
-        message: '⚠️ Waxaa hadda socota fariin-wadareed kale! Fadlan sug inta ay ka dhamaaneyso ama qor `!jooji` si aad u baajiso.',
-      };
-    }
-
     const messageText = rawText.trim();
     if (messageText.length < 2) {
       return {
         success: false,
         message: '⚠️ Fadlan qor fariinta aad doonayso inaad dirto. Tusaale:\n`!fariin Asc dhamaan, berbera waxaan ku qabanaynaa kulan muhiim ah.`',
+      };
+    }
+    return this.startBroadcastInternal(adminChatId, messageText, transport, maxLimit, 'standard');
+  }
+
+  /**
+   * Starts a smart "!barasho" campaign sending tailored Somali introductions
+   * depending on whether the contact already has a saved name or not.
+   */
+  public async startBarashoBroadcast(
+    adminChatId: string,
+    transport: IMessagingTransport,
+    maxLimit: number = 50,
+    ownerName: string = 'Maxamed'
+  ): Promise<{ success: boolean; message: string }> {
+    const cleanOwner = ownerName.trim() || 'Maxamed';
+    return this.startBroadcastInternal(adminChatId, `!barasho (${cleanOwner})`, transport, maxLimit, 'barasho', cleanOwner);
+  }
+
+  private async startBroadcastInternal(
+    adminChatId: string,
+    messageText: string,
+    transport: IMessagingTransport,
+    maxLimit: number,
+    mode: 'standard' | 'barasho',
+    ownerName: string = 'Maxamed'
+  ): Promise<{ success: boolean; message: string }> {
+    if (this.activeBroadcast.isActive) {
+      return {
+        success: false,
+        message: '⚠️ Waxaa hadda socota fariin-wadareed kale! Fadlan sug inta ay ka dhamaaneyso ama qor `!jooji` si aad u baajiso.',
       };
     }
 
@@ -652,6 +676,8 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       messageText,
       recipients,
       createdAt: Date.now(),
+      mode,
+      ownerName,
     };
 
     const avgDelaySec = (this.safety.minDelayMs + this.safety.maxDelayMs) / 2000;
@@ -659,32 +685,43 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     const avgCooldownSec = cooldownCount * ((this.safety.cooldownMinMs + this.safety.cooldownMaxMs) / 2000);
     const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * avgDelaySec + avgCooldownSec) / 60));
     const namedInBatch = recipients.filter(r => Boolean(r.firstName)).length;
-    const sample1 = this.formatPersonalizedMessage(messageText, this.formatContactLabel(recipients[0]), 0);
-    const sample2 = this.formatPersonalizedMessage(messageText, this.formatContactLabel(recipients[1]), 1);
+
+    const formatForPreview = (c: BroadcastContact | undefined, idx: number) => {
+      if (!c) return '';
+      return mode === 'barasho'
+        ? this.formatBarashoMessage(c, idx, ownerName)
+        : this.formatPersonalizedMessage(messageText, this.formatContactLabel(c), idx);
+    };
+
+    const sample1 = formatForPreview(recipients[0], 0);
+    const sample2 = recipients[1] ? formatForPreview(recipients[1], 1) : '';
 
     // Run background transmission loop asynchronously (non-blocking)
     this.runBroadcastLoop(draft, transport).catch(err => {
       console.error('❌ [BroadcastService] Critical loop error:', err);
     });
 
-    const unnamedNote = namedInBatch === 0
+    const unnamedNote = mode === 'standard' && namedInBatch === 0
       ? `\nℹ️ *Xog:* Dadkan magacoodu ma kaydsana — kuwa lambarkoodu muuqdo waxaa loogu yeerayaa *lambarkooda* (sida \`063...\`). Haddii aad rabto magacyadooda dhabta ah, u soo dir **contacts.vcf**.`
       : '';
+
+    const title = mode === 'barasho'
+      ? '🤝 *[CARDOSO AI — BARASHO BILAABATAY]*'
+      : '🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*';
 
     const limitLabel = dailyLimit > 0 ? `${dailyRemaining}/${dailyLimit} hadhay` : 'Xad la\'aan (Unlimited)';
     return {
       success: true,
-      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*
+      message: `${title}
 
 Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (${limitLabel}).
 📊 Xaaladda: *${recipients.length}* hadda | *${namedInBatch}/${recipients.length}* magac leh | *${remainingAfter}* hadhay.${unnamedNote}
 
 📝 *Tusaalayaal dhab ah sida ay ugu dhacayso:*
-1️⃣ "${sample1}"
-2️⃣ "${sample2}"
+1️⃣ "${sample1}"${sample2 ? `\n2️⃣ "${sample2}"` : ''}
 
 ⚡ *Habka Dirista:*
-• Kala-duwanaan salaan, spintax \`{a|b}\` & dhammaad.
+• Kala-duwanaan salaan & dhammaad${mode === 'barasho' ? ' + kala-saaris qofka magac leh iyo kan aan lahayn' : ''}.
 • Diris degdeg ah (*${Math.round(this.safety.minDelayMs / 1000)}-${Math.round(this.safety.maxDelayMs / 1000)}s* fariin kasta), qiyaas ahaan ~*${estimatedMinutes} daqiiqo*.
 🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
     };
@@ -879,6 +916,24 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
   }
 
   /**
+   * Formats a tailored "!barasho" introduction message:
+   * - Named contact: greets by name + "Magacaygu waa X, barasho wanaagsan! Lambarkaaga waan save-garaystay, adigu ma i save-garaysatay?"
+   * - Unnamed contact: greets by phone/walaal + "Ka warran haddii aynu is barano? Aniga magacaygu waa X, si aan kuu save-garaysto adiguna i save-garayso!"
+   */
+  public formatBarashoMessage(
+    contact: Pick<BroadcastContact, 'firstName' | 'phone' | 'jid'>,
+    variantIndex: number,
+    ownerName: string = 'Maxamed'
+  ): string {
+    const hasRealName = Boolean(contact.firstName && contact.firstName.trim().length > 0);
+    const label = this.formatContactLabel(contact);
+    const body = hasRealName
+      ? `{ii warran ma fiican tahay|sidee tahay maanta|iska warran}? Magacaygu waa ${ownerName}, barasho wanaagsan! Lambarkaaga waan save-garaystay, adigu ma i save-garaysatay?`
+      : `{sidee tahay|ma fiican tahay|iska warran}? Ka warran haddii aynu is barano? Aniga magacaygu waa ${ownerName}, si aan kuu save-garaysto adiguna i save-garayso!`;
+    return this.formatPersonalizedMessage(body, label, variantIndex);
+  }
+
+  /**
    * Formats the personalized message for a specific recipient.
    * When variantIndex is supplied (during broadcast loops), applies spintax, varies
    * greeting placement (including placing the recipient's name BEFORE "Asc"), and
@@ -976,8 +1031,9 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
       }
 
       const recipient = recipients[i];
-      const recipientLabel = this.formatContactLabel(recipient);
-      const personalized = this.formatPersonalizedMessage(messageText, recipientLabel, batchSeed + i);
+      const personalized = draft.mode === 'barasho'
+        ? this.formatBarashoMessage(recipient, batchSeed + i, draft.ownerName)
+        : this.formatPersonalizedMessage(messageText, this.formatContactLabel(recipient), batchSeed + i);
 
       let sentOk = false;
       try {
@@ -1041,16 +1097,17 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     const { sentToday, dailyLimit } = this.getDailyAllowance();
 
     // Send final celebratory completion report to Admin
+    const nextCmd = draft.mode === 'barasho' ? '!barasho' : `!fariin ${messageText}`;
     const summary = `🎉 *[CARDOSO AI SMART BROADCAST — GUUL]*
 
 Dufcaddii *${recipients.length} qof* waa la soo dhammeeyay!
 • Guuleystay: *${this.activeBroadcast.sentCount} qof*
 • Cillad ku dhacday: *${this.activeBroadcast.failedCount} qof*
-• Maanta la diray: *${sentToday}/${dailyLimit} qof*
+• Maanta la diray: *${sentToday}${dailyLimit > 0 ? `/${dailyLimit}` : ''} qof*
 • Qofna dib looguma celinayo dadkan (History saved).
 • Hadhay (Aan wali helin): *${remainingNow} qof*
 
-${remainingNow > 0 ? `Si aad dufcadda xigta ugu dirto, mar kale qor:\n\`!fariin ${messageText}\`` : 'Dhammaan contacts-kaagii fariinta waa wada heleen! 💯'}`;
+${remainingNow > 0 ? `Si aad dufcadda xigta ugu dirto, mar kale qor:\n\`${nextCmd}\`` : 'Dhammaan contacts-kaagii fariinta waa wada heleen! 💯'}`;
 
     await transport.sendMessage(adminChatId, summary);
     console.log(`🎉 [BroadcastService] Completed broadcast. Sent: ${this.activeBroadcast.sentCount}, Remaining: ${remainingNow}`);
