@@ -350,6 +350,27 @@ export class SQLiteStudentMemory implements IStudentMemory {
     }
   }
 
+  public async getDistinctIndividualChatsWithNames(): Promise<Array<{ chatId: string; firstName?: string }>> {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare(`
+        SELECT c.chat_id as chatId, MAX(s.first_name) as firstName
+        FROM conversations c
+        LEFT JOIN students s ON c.student_id = s.student_id
+        WHERE c.chat_id NOT LIKE '%@g.us'
+          AND c.chat_id NOT LIKE '%status@broadcast%'
+          AND c.chat_id NOT LIKE '%@newsletter%'
+          AND c.chat_id != 'student_direct_chat'
+        GROUP BY c.chat_id
+      `).all() as any[];
+      return rows
+        .filter(r => r.chatId)
+        .map(r => ({ chatId: r.chatId, firstName: r.firstName || undefined }));
+    } catch {
+      return [];
+    }
+  }
+
   public async getDistinctIndividualChats(): Promise<string[]> {
     if (!this.db) return [];
     try {

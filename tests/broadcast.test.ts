@@ -228,6 +228,25 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(routerReplies.some(r => r.includes('FARIIN-WADAREED') || r.includes('SMART BROADCAST')), 'Returns broadcast confirmation instead of AI "waa la kaydiyay"');
   singletonBroadcast.abortBroadcast();
 
+  // 14. VCF Quoted-Printable & Structured N: name parsing
+  const vcfSample = [
+    'BEGIN:VCARD',
+    'VERSION:2.1',
+    'N;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:;Faadumo;=41=78=6D=65=64;;',
+    'FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=46=61=61=64=75=6D=6F=20=43=61=6C=69',
+    'TEL;CELL:0634112233',
+    'END:VCARD',
+    'BEGIN:VCARD',
+    'N:Maxamed;Xasan;;;',
+    'TEL:+252 61 5001122',
+    'END:VCARD',
+  ].join('\n');
+  const vcfService = new BroadcastService(undefined, fastTestTiming);
+  const vcfRes = vcfService.importFromText(vcfSample);
+  assert(vcfRes.added === 2, 'Parses quoted-printable and structured N: vCard contacts');
+  const vcfContacts = vcfService.getContacts();
+  assert(vcfContacts[0].firstName === 'Faadumo' && vcfContacts[1].firstName === 'Xasan', 'Correctly extracts Somali first names from VCF v2.1 & N: fields');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

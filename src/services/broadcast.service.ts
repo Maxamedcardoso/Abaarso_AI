@@ -16,19 +16,53 @@ export function normalizePhoneNumber(raw: string): string {
   return clean;
 }
 
+function decodeVCardValue(raw: string, meta: string = ''): string {
+  let val = raw.trim();
+  if (/QUOTED-PRINTABLE/i.test(meta) || /=[0-9A-F]{2}/i.test(val)) {
+    try {
+      // Remove soft line breaks from quoted-printable and decode UTF-8 hex bytes
+      const unwrapped = val.replace(/=\r?\n/g, '');
+      const bytes: number[] = [];
+      for (let i = 0; i < unwrapped.length; i++) {
+        if (unwrapped[i] === '=' && /^[0-9A-F]{2}$/i.test(unwrapped.slice(i + 1, i + 3))) {
+          bytes.push(parseInt(unwrapped.slice(i + 1, i + 3), 16));
+          i += 2;
+        } else {
+          const buf = Buffer.from(unwrapped[i], 'utf8');
+          for (const b of buf) bytes.push(b);
+        }
+      }
+      val = Buffer.from(bytes).toString('utf8').trim();
+    } catch {}
+  }
+  return val;
+}
+
 export function parseContactsText(content: string): Array<{ name?: string; phone: string }> {
   const results: Array<{ name?: string; phone: string }> = [];
 
   // 1. Check if VCF format
   if (content.includes('BEGIN:VCARD') || content.includes('END:VCARD')) {
-    const cards = content.split(/END:VCARD/i);
+    // Unfold soft-wrapped vCard lines (RFC 6350 continuation lines & quoted-printable soft breaks)
+    const unfolded = content.replace(/=\r?\n/g, '=').replace(/\r?\n[ \t]/g, '');
+    const cards = unfolded.split(/END:VCARD/i);
     for (const card of cards) {
       if (!card.includes('BEGIN:VCARD')) continue;
 
-      // Extract Full Name (FN: or N:)
-      const fnMatch = card.match(/(?:^|\n)FN(?:;[^:]*)?:([^\r\n]+)/i);
-      const nMatch = card.match(/(?:^|\n)N(?:;[^:]*)?:([^\r\n]+)/i);
-      const name = fnMatch ? fnMatch[1].trim() : (nMatch ? nMatch[1].replace(/;/g, ' ').trim() : undefined);
+      // Extract Full Name (FN: or structured N:Last;First;Middle;;)
+      const fnMatch = card.match(/(?:^|\n)FN(;[^:]*)?:([^\r\n]+)/i);
+      const nMatch = card.match(/(?:^|\n)N(;[^:]*)?:([^\r\n]+)/i);
+
+      let name: string | undefined;
+      if (fnMatch) {
+        name = decodeVCardValue(fnMatch[2], fnMatch[1] || '');
+      } else if (nMatch) {
+        const decodedN = decodeVCardValue(nMatch[2], nMatch[1] || '');
+        const parts = decodedN.split(';').map(p => p.trim()).filter(Boolean);
+        // Structured N is Last;First;Middle — put First ahead of Last when >=2 parts exist
+        name = parts.length >= 2 ? `${parts[1]} ${parts[0]}` : parts.join(' ').trim();
+      }
+      if (name && name.length === 0) name = undefined;
 
       // Extract Phone Number (TEL:)
       const telMatches = card.matchAll(/(?:^|\n)TEL(?:;[^:]*)?:([^\r\n]+)/gi);
@@ -188,12 +222,15 @@ export class BroadcastService {
         }
       }
 
-      // Auto-seed from existing conversations if available
+      // Auto-seed from existing conversations (recovering stored student first_name when available)
       try {
-        const pastChats = await this.memory.getDistinctIndividualChats();
-        for (const chatId of pastChats) {
-          if (this.isValidIndividualJid(chatId) && !this.contactsMap.has(chatId)) {
-            this.recordContact(chatId);
+        const pastChats = await this.memory.getDistinctIndividualChatsWithNames();
+        for (const item of pastChats) {
+          if (this.isValidIndividualJid(item.chatId)) {
+            const existing = this.contactsMap.get(item.chatId);
+            if (!existing || (!existing.firstName && item.firstName)) {
+              this.recordContact(item.chatId, item.firstName);
+            }
           }
         }
       } catch {}
@@ -462,9 +499,10 @@ export class BroadcastService {
   /**
    * Gets broadcast delivery statistics.
    */
-  public getStats(): { total: number; sent: number; remaining: number; optedOut: number; sentToday: number; dailyLimit: number } {
+  public getStats(): { total: number; sent: number; remaining: number; optedOut: number; sentToday: number; dailyLimit: number; withNames: number } {
     const total = this.contactsMap.size;
     const sent = this.sentJids.size;
+    const withNames = Array.from(this.contactsMap.values()).filter(c => Boolean(c.firstName)).length;
     const { sentToday, dailyLimit } = this.getDailyAllowance();
     return {
       total,
@@ -473,6 +511,7 @@ export class BroadcastService {
       optedOut: this.optedOutJids.size,
       sentToday,
       dailyLimit,
+      withNames,
     };
   }
 
@@ -619,22 +658,27 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     const cooldownCount = this.safety.cooldownEvery > 0 ? Math.floor((recipients.length - 1) / this.safety.cooldownEvery) : 0;
     const avgCooldownSec = cooldownCount * ((this.safety.cooldownMinMs + this.safety.cooldownMaxMs) / 2000);
     const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * avgDelaySec + avgCooldownSec) / 60));
-    const sample1 = this.formatPersonalizedMessage(messageText, recipients[0]?.firstName || 'Axmed', 0);
-    const sample2 = this.formatPersonalizedMessage(messageText, recipients[1]?.firstName || 'Sahra', 1);
+    const namedInBatch = recipients.filter(r => Boolean(r.firstName)).length;
+    const sample1 = this.formatPersonalizedMessage(messageText, recipients[0]?.firstName, 0);
+    const sample2 = this.formatPersonalizedMessage(messageText, recipients[1]?.firstName, 1);
 
     // Run background transmission loop asynchronously (non-blocking)
     this.runBroadcastLoop(draft, transport).catch(err => {
       console.error('❌ [BroadcastService] Critical loop error:', err);
     });
 
+    const unnamedNote = namedInBatch === 0
+      ? `\n⚠️ *Ogeysiis:* Dadkan hadda la dirayo weli magacooda lagama hayo WhatsApp (waxaa loo dirayaa *"walaal/saaxiib"*). Si magacyadoodu u soo baxaan, u soo dir bot-ka faylka **contacts.vcf** ee taleefankaaga!`
+      : '';
+
     return {
       success: true,
       message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BADBAADO LEH]*
 
 Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Xadka maanta hadhay: ${dailyRemaining}/${dailyLimit}).
-📊 Xaaladda: *${recipients.length}* hadda loo dirayaa | *${remainingAfter}* ayaa dhiman.
+📊 Xaaladda: *${recipients.length}* hadda | *${namedInBatch}/${recipients.length}* magac leh | *${remainingAfter}* hadhay.${unnamedNote}
 
-📝 *Tusaalayaal sida kala duwan ee ay ugu dhacayso:*
+📝 *Tusaalayaal dhab ah sida ay ugu dhacayso:*
 1️⃣ "${sample1}"
 2️⃣ "${sample2}"
 

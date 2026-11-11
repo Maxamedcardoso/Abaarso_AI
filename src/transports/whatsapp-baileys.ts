@@ -162,51 +162,36 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     });
 
     // ─── Contact & Chat Synchronization for Smart Broadcasting ───────────────
+    const syncContactEntry = (entry: any) => {
+      if (!entry) return;
+      const resolvedName = entry.name || entry.notify || entry.verifiedName || entry.pushName;
+      const candidateIds = [entry.id, entry.lid, entry.pnJid, entry.phoneNumber]
+        .filter((v): v is string => typeof v === 'string' && v.length > 0);
+      for (const jid of candidateIds) {
+        const normalizedJid = jid.includes('@') ? jid : `${jid.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        if (broadcastService.isValidIndividualJid(normalizedJid)) {
+          broadcastService.recordContact(normalizedJid, resolvedName);
+        }
+      }
+    };
+
     // Baileys multi-device emits 'messaging-history.set' with full initial sync of chats & contacts
     this.socket.ev.on('messaging-history.set', ({ chats, contacts }: any) => {
-      if (Array.isArray(contacts)) {
-        for (const contact of contacts) {
-          if (contact.id && broadcastService.isValidIndividualJid(contact.id)) {
-            broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
-          }
-        }
-      }
-      if (Array.isArray(chats)) {
-        for (const chat of chats) {
-          if (chat.id && broadcastService.isValidIndividualJid(chat.id)) {
-            broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
-          }
-        }
-      }
+      if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
+      if (Array.isArray(chats)) chats.forEach(syncContactEntry);
       console.log(`📋 [Contacts Sync] Synchronized ${broadcastService.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
     });
 
     this.socket.ev.on('chats.upsert', (chats: any[]) => {
-      if (!Array.isArray(chats)) return;
-      for (const chat of chats) {
-        if (chat.id && broadcastService.isValidIndividualJid(chat.id)) {
-          broadcastService.recordContact(chat.id, (chat as any).name || (chat as any).notify);
-        }
-      }
+      if (Array.isArray(chats)) chats.forEach(syncContactEntry);
     });
 
     this.socket.ev.on('contacts.upsert', (contacts: any[]) => {
-      if (!Array.isArray(contacts)) return;
-      for (const contact of contacts) {
-        if (contact.id && broadcastService.isValidIndividualJid(contact.id)) {
-          broadcastService.recordContact(contact.id, contact.name || contact.notify || (contact as any).verifiedName);
-        }
-      }
+      if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
     });
 
     this.socket.ev.on('contacts.update', (updates: any[]) => {
-      if (!Array.isArray(updates)) return;
-      for (const contact of updates) {
-        const resolvedName = contact.name || contact.notify || (contact as any).verifiedName;
-        if (contact.id && resolvedName && broadcastService.isValidIndividualJid(contact.id)) {
-          broadcastService.recordContact(contact.id, resolvedName);
-        }
-      }
+      if (Array.isArray(updates)) updates.forEach(syncContactEntry);
     });
 
     // ─── Incoming Call Handler (Auto-reject & Voice Redirect) ────────────────
@@ -264,6 +249,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const chatId = msg.key.remoteJid || '';
         const isGroup = chatId.endsWith('@g.us');
         const senderId = msg.key.participant || msg.key.remoteJid || '';
+
+        // Always record sender pushName for individual incoming chats
+        if (!msg.key.fromMe && !isGroup && msg.pushName && broadcastService.isValidIndividualJid(chatId)) {
+          broadcastService.recordContact(chatId, msg.pushName, false);
+        }
 
         // ─── Detect message type (text, audio, image, document) ───────────────────
         const msgType = Object.keys(msg.message)[0];
