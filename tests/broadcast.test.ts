@@ -287,6 +287,14 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
 
   assert(UserProfiler.extractName('Wcs Maxamed, magacaygu waa Cali') === 'Cali', 'Extracts Somali name from !barasho reply');
 
+  // 17. WhatsApp self-chosen profile name (pushName/notify) beats saved phonebook nickname
+  const profileService = new BroadcastService(undefined, fastTestTiming);
+  profileService.recordContact('252634112233@s.whatsapp.net', 'Macmiil Dukaan', false, false);
+  profileService.recordContact('252634112233@s.whatsapp.net', 'Cabdiraxmaan', false, true);
+  // Even if phonebook sync re-runs later, keep WhatsApp self-chosen profile name
+  profileService.recordContact('252634112233@s.whatsapp.net', 'Macmiil Dukaan', false, false);
+  assert(profileService.getContacts()[0].firstName === 'Cabdiraxmaan', 'Prefers WhatsApp profile pushName over phonebook saved nickname');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

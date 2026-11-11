@@ -108,6 +108,7 @@ export interface BroadcastContact {
   firstName?: string;
   phone?: string;
   lastSeen: number;
+  hasProfileName?: boolean;
 }
 
 export interface BroadcastDraft {
@@ -310,9 +311,10 @@ export class BroadcastService {
 
   /**
    * Records or updates a contact whenever a message or sync event is seen.
+   * Prefers WhatsApp self-chosen profile names (pushName/notify/verifiedName) over phonebook saved nicknames.
    * Strictly filters out status broadcasts, groups, and bot identity.
    */
-  public recordContact(jid: string, name?: string, isGroup?: boolean): void {
+  public recordContact(jid: string, name?: string, isGroup?: boolean, isWhatsAppProfileName: boolean = false): void {
     if (!jid || isGroup || !this.isValidIndividualJid(jid)) {
       return;
     }
@@ -329,8 +331,10 @@ export class BroadcastService {
     const firstName = this.extractCleanFirstName(cleanName);
 
     const existing = this.contactsMap.get(jid);
-    const resolvedName = cleanName || existing?.name;
-    const resolvedFirstName = firstName || existing?.firstName;
+    const keepExistingProfile = Boolean(existing?.hasProfileName && !isWhatsAppProfileName && existing?.firstName);
+
+    const resolvedName = keepExistingProfile ? existing!.name : (cleanName || existing?.name);
+    const resolvedFirstName = keepExistingProfile ? existing!.firstName : (firstName || existing?.firstName);
 
     const contact: BroadcastContact = {
       jid,
@@ -338,6 +342,7 @@ export class BroadcastService {
       firstName: resolvedFirstName,
       phone: phone || existing?.phone,
       lastSeen: Date.now(),
+      hasProfileName: Boolean((isWhatsAppProfileName && firstName) || existing?.hasProfileName),
     };
 
     this.contactsMap.set(jid, contact);

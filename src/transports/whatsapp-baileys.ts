@@ -164,13 +164,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     // ─── Contact & Chat Synchronization for Smart Broadcasting ───────────────
     const syncContactEntry = (entry: any) => {
       if (!entry) return;
-      const resolvedName = entry.name || entry.notify || entry.verifiedName || entry.pushName;
+      // Prefer the user's own WhatsApp profile name (notify/pushName/verifiedName) over saved phonebook nickname (entry.name)
+      const profileName = entry.notify || entry.pushName || entry.verifiedName;
+      const resolvedName = profileName || entry.name;
+      const isProfileName = Boolean(profileName);
       const candidateIds = [entry.id, entry.lid, entry.pnJid, entry.phoneNumber]
         .filter((v): v is string => typeof v === 'string' && v.length > 0);
       for (const jid of candidateIds) {
         const normalizedJid = jid.includes('@') ? jid : `${jid.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
         if (broadcastService.isValidIndividualJid(normalizedJid)) {
-          broadcastService.recordContact(normalizedJid, resolvedName);
+          broadcastService.recordContact(normalizedJid, resolvedName, false, isProfileName);
         }
       }
     };
@@ -250,9 +253,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const isGroup = chatId.endsWith('@g.us');
         const senderId = msg.key.participant || msg.key.remoteJid || '';
 
-        // Always record sender pushName for individual incoming chats
-        if (!msg.key.fromMe && !isGroup && msg.pushName && broadcastService.isValidIndividualJid(chatId)) {
-          broadcastService.recordContact(chatId, msg.pushName, false);
+        // Always record sender WhatsApp profile pushName (both in DMs and group participant profiles)
+        if (!msg.key.fromMe && msg.pushName) {
+          const targetProfileJid = isGroup ? (msg.key.participant || '') : chatId;
+          if (broadcastService.isValidIndividualJid(targetProfileJid)) {
+            broadcastService.recordContact(targetProfileJid, msg.pushName, false, true);
+          }
         }
 
         // ─── Detect message type (text, audio, image, document) ───────────────────

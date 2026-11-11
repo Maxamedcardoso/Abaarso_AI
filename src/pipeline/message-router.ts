@@ -102,7 +102,7 @@ export class MessageRouter {
 
     // 1c. Record contact for smart broadcasting (individual chats only, skip host's own fromMe messages)
     if (!message.isGroup && !message.isFromMe) {
-      broadcastService.recordContact(message.chatId, message.senderName, false);
+      broadcastService.recordContact(message.chatId, message.senderName, false, true);
     }
 
     // Host phone's own outgoing commands (isFromMe) or whitelisted ADMIN_PHONE_NUMBERS are Admin
