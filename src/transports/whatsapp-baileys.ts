@@ -198,6 +198,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
+    this.socket.ev.on('contacts.update', (updates: any[]) => {
+      if (!Array.isArray(updates)) return;
+      for (const contact of updates) {
+        const resolvedName = contact.name || contact.notify || (contact as any).verifiedName;
+        if (contact.id && resolvedName && broadcastService.isValidIndividualJid(contact.id)) {
+          broadcastService.recordContact(contact.id, resolvedName);
+        }
+      }
+    });
+
     // ─── Incoming Call Handler (Auto-reject & Voice Redirect) ────────────────
     this.socket.ev.on('call', async (calls) => {
       for (const call of calls) {

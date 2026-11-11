@@ -122,6 +122,21 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(manualAdded === 2, 'Manually imports bulk numbers via !dar/!add');
   assert(batchService.getContacts().some(c => c.jid === '252615999888@s.whatsapp.net'), 'Manual contact exists in recipient list');
 
+  // 10. Varied personalization & name-first ordering
+  assert(broadcastService.extractCleanFirstName('Eng. Maxamed Daahir') === 'Maxamed', 'Skips title prefix "Eng." to extract real first name');
+  assert(broadcastService.extractCleanFirstName('+252 63 4949642') === undefined, 'Rejects raw phone numbers as first names');
+
+  const var0 = broadcastService.formatPersonalizedMessage('Asc wll berrito shir baa jira', 'Axmed', 0);
+  const var1 = broadcastService.formatPersonalizedMessage('Asc wll berrito shir baa jira', 'Sahra', 1);
+  const var2 = broadcastService.formatPersonalizedMessage('Asc wll berrito shir baa jira', 'Cali', 2);
+  assert(var0.startsWith('Axmed, Asc! '), 'Variant 0 places person name BEFORE Asc ("Axmed, Asc!")');
+  assert(var0 !== var1 && var1 !== var2, 'Produces varied greetings across recipients');
+
+  const unVar0 = broadcastService.formatPersonalizedMessage('Ogeysiis muhiim ah', undefined, 0);
+  const unVar1 = broadcastService.formatPersonalizedMessage('Ogeysiis muhiim ah', undefined, 1);
+  const unVar2 = broadcastService.formatPersonalizedMessage('Ogeysiis muhiim ah', undefined, 2);
+  assert(unVar0 !== unVar1 && unVar1 !== unVar2, 'Unnamed recipients do not receive identical "Asc walaal" prefix repeatedly');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

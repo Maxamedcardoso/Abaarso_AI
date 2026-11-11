@@ -294,18 +294,28 @@ export class BroadcastService {
 
   /**
    * Extracts a clean first name from contact's full name.
-   * Handles Somali names gracefully.
+   * Handles Somali names, titles, emojis, and rejects phone numbers gracefully.
    */
   public extractCleanFirstName(fullName?: string): string | undefined {
     if (!fullName) return undefined;
-    // Strip emojis and leading non-letters
-    const cleaned = fullName.replace(/[\p{Emoji}\p{Extended_Pictographic}]/gu, '').trim();
+    // Reject strings that look like raw phone numbers (e.g. "+252 63 4949642")
+    const withoutSpaces = fullName.replace(/[\s\-()+]/g, '');
+    if (/^[0-9]{6,}$/.test(withoutSpaces)) return undefined;
+
+    // Strip emojis and split into candidate words
+    const cleaned = fullName.replace(/[\p{Emoji}\p{Extended_Pictographic}]/gu, ' ').trim();
     if (!cleaned) return undefined;
-    const firstWord = cleaned.split(/\s+/)[0];
-    if (firstWord && firstWord.length >= 2 && !/^[0-9]+$/.test(firstWord)) {
-      return firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
-    }
-    return undefined;
+
+    const titles = new Set(['eng', 'dr', 'mr', 'mrs', 'ms', 'prof', 'ustad', 'ustaad', 'sh']);
+    const words = cleaned
+      .split(/\s+/)
+      .map(w => w.replace(/^[^a-zA-ZÀ-ÖØ-öø-ÿ]+|[^a-zA-ZÀ-ÖØ-öø-ÿ]+$/g, ''))
+      .filter(w => w.length >= 2 && /[a-zA-ZÀ-ÖØ-öø-ÿ]/.test(w) && !/^[0-9]+$/.test(w));
+
+    if (words.length === 0) return undefined;
+
+    const chosen = (words.length > 1 && titles.has(words[0].toLowerCase())) ? words[1] : words[0];
+    return chosen.charAt(0).toUpperCase() + chosen.slice(1).toLowerCase();
   }
 
   /**
@@ -503,8 +513,8 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     };
 
     const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * 5) / 60));
-    const sampleName = recipients[0]?.firstName || 'Axmed';
-    const samplePreview = this.formatPersonalizedMessage(messageText, sampleName);
+    const sample1 = this.formatPersonalizedMessage(messageText, recipients[0]?.firstName || 'Axmed', 0);
+    const sample2 = this.formatPersonalizedMessage(messageText, recipients[1]?.firstName || 'Sahra', 1);
 
     // Run background transmission loop asynchronously (non-blocking)
     this.runBroadcastLoop(draft, transport).catch(err => {
@@ -518,10 +528,11 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
 Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Dufcaddan: ilaa 50 qof).
 📊 Xaaladda: *${recipients.length}* hadda loo dirayaa | *${remainingAfter}* ayaa dhiman.
 
-📝 *Tusaale sida ay ugu dhacayso:*
-"${samplePreview}"
+📝 *Tusaalayaal sida kala duwan ee ay ugu dhacayso:*
+1️⃣ "${sample1}"
+2️⃣ "${sample2}"
 
-🛡️ *Xeerka Badbaadada:* Qofna fariin laguma celcelin doono. Qof kasta fariin gaar ah ayuu ku helayaa (~${estimatedMinutes} daqiiqo).
+🛡️ *Xeerka Badbaadada:* Qofna fariin laguma celcelin doono. Qof kasta magaciisa & salaan kala duwan ayuu ku helayaa (~${estimatedMinutes} daqiiqo).
 🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
     };
   }
@@ -590,22 +601,95 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     return this.activeBroadcast.isActive;
   }
 
+  private static readonly NAMED_SOMALI_GREETINGS: Array<(name: string) => string> = [
+    (name) => `${name}, Asc! `,
+    (name) => `Asc ${name}, `,
+    (name) => `${name} walaal, Asc — `,
+    (name) => `Salaan diirran ${name}, `,
+    (name) => `${name}, salaan wanaagsan! `,
+    (name) => `Assalaamu calaykum ${name}, `,
+    (name) => `${name}, nabad miyaa? `,
+    (name) => `Haye ${name}, `,
+  ];
+
+  private static readonly UNNAMED_SOMALI_GREETINGS: string[] = [
+    'Asc walaal, ',
+    'Assalaamu calaykum, ',
+    'Salaan wanaagsan, ',
+    'Nabad miyaa walaal? ',
+    'Salaan diirran walaal, ',
+    'Asc saaxiib, ',
+    'Haye walaal, ',
+    'Assalaamu calaykum walaal, ',
+  ];
+
+  private static readonly NAMED_ENGLISH_GREETINGS: Array<(name: string) => string> = [
+    (name) => `${name}, Hi! `,
+    (name) => `Hi ${name}, `,
+    (name) => `Hello ${name}, `,
+    (name) => `${name}, greetings! `,
+    (name) => `Hey ${name}, `,
+  ];
+
+  private static readonly UNNAMED_ENGLISH_GREETINGS: string[] = [
+    'Hi there, ',
+    'Hello, ',
+    'Hey friend, ',
+    'Greetings, ',
+    'Good day, ',
+  ];
+
   /**
    * Formats the personalized message for a specific recipient.
+   * When variantIndex is supplied (during broadcast loops), varies greeting placement
+   * (including placing the recipient's name BEFORE "Asc") and phrasing so no two
+   * consecutive messages start identically.
    */
-  public formatPersonalizedMessage(template: string, name?: string): string {
-    const recipientName = name || 'walaal';
+  public formatPersonalizedMessage(template: string, name?: string, variantIndex?: number): string {
+    const cleanName = name && name.trim().length > 0 ? name.trim() : undefined;
+    const recipientName = cleanName || 'walaal';
 
-    // 1. If explicit placeholder {magac} exists, replace it
+    // 1. If explicit placeholder {magac} or {name} exists, replace it
     if (template.includes('{magac}')) {
-      return template.replace(/\{magac\}/g, recipientName);
+      const altUnnamed = variantIndex !== undefined && !cleanName
+        ? (variantIndex % 2 === 0 ? 'walaal' : 'saaxiib')
+        : recipientName;
+      return template.replace(/\{magac\}/g, altUnnamed);
     }
     if (template.includes('{name}')) {
       return template.replace(/\{name\}/g, recipientName);
     }
 
-    // 2. If already starts with a greeting like "Asc" or "Asalaamu calaykum"
     const trimmed = template.trim();
+
+    // 2. Varied personalization mode (used when sending broadcasts)
+    if (variantIndex !== undefined) {
+      const idx = Math.abs(Math.floor(variantIndex));
+      const isEnglish = /^(?:hi|hello|hey)\b/i.test(trimmed);
+
+      // Strip any leading greeting typed by the admin so we never double-greet
+      const body = trimmed
+        .replace(/^(?:ass?alaam[u\s]*calaykum|asc(?:\s+(?:wll|walaal|sxb|dhamaantiin|dhammaan))?|salaan(?:\s+(?:diirran|wanaagsan|sare))?|hi|hello|hey)\b[\s,!.:—-]*/i, '')
+        .trim() || trimmed;
+
+      if (isEnglish) {
+        if (cleanName) {
+          const fn = BroadcastService.NAMED_ENGLISH_GREETINGS[idx % BroadcastService.NAMED_ENGLISH_GREETINGS.length];
+          return `${fn(cleanName)}${body}`;
+        }
+        const prefix = BroadcastService.UNNAMED_ENGLISH_GREETINGS[idx % BroadcastService.UNNAMED_ENGLISH_GREETINGS.length];
+        return `${prefix}${body}`;
+      }
+
+      if (cleanName) {
+        const fn = BroadcastService.NAMED_SOMALI_GREETINGS[idx % BroadcastService.NAMED_SOMALI_GREETINGS.length];
+        return `${fn(cleanName)}${body}`;
+      }
+      const prefix = BroadcastService.UNNAMED_SOMALI_GREETINGS[idx % BroadcastService.UNNAMED_SOMALI_GREETINGS.length];
+      return `${prefix}${body}`;
+    }
+
+    // 3. Deterministic default (when variantIndex is omitted)
     if (/^asc\b/i.test(trimmed)) {
       return trimmed.replace(/^asc\b[,\s]*/i, `Asc ${recipientName}, `);
     }
@@ -619,7 +703,6 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
       return trimmed.replace(/^hello\b[,\s]*/i, `Hello ${recipientName}, `);
     }
 
-    // 3. Otherwise prefix naturally with personalized greeting
     return `Asc ${recipientName}, ${trimmed}`;
   }
 
@@ -628,6 +711,7 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
    */
   private async runBroadcastLoop(draft: BroadcastDraft, transport: IMessagingTransport): Promise<void> {
     const { adminChatId, messageText, recipients } = draft;
+    const batchSeed = Math.floor(Math.random() * BroadcastService.NAMED_SOMALI_GREETINGS.length);
 
     console.log(`📢 [BroadcastService] Starting safe broadcast to ${recipients.length} recipients...`);
 
@@ -643,7 +727,7 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
       }
 
       const recipient = recipients[i];
-      const personalized = this.formatPersonalizedMessage(messageText, recipient.firstName);
+      const personalized = this.formatPersonalizedMessage(messageText, recipient.firstName, batchSeed + i);
 
       try {
         await transport.sendMessage(recipient.jid, personalized);
