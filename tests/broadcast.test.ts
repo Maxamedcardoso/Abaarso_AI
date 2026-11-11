@@ -247,6 +247,14 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   const vcfContacts = vcfService.getContacts();
   assert(vcfContacts[0].firstName === 'Faadumo' && vcfContacts[1].firstName === 'Xasan', 'Correctly extracts Somali first names from VCF v2.1 & N: fields');
 
+  // 15. Phone number greeting fallback for unnamed @s.whatsapp.net contacts (never leaks opaque @lid)
+  const phoneLabel = broadcastService.formatContactLabel({ jid: '252634112233@s.whatsapp.net', phone: '252634112233' });
+  const lidLabel = broadcastService.formatContactLabel({ jid: '277923424645192@lid', phone: '277923424645192' });
+  assert(phoneLabel === '0634112233', 'Formats unnamed Somali @s.whatsapp.net contact as local phone number "0634112233"');
+  assert(lidLabel === undefined, 'Does not use internal 15-digit @lid ID as a greeting name');
+  const phoneMsg = broadcastService.formatPersonalizedMessage('save me moh bulshaawi', phoneLabel, 0);
+  assert(phoneMsg.startsWith('0634112233, Asc! '), 'Addresses unnamed contact by phone number before Asc');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');

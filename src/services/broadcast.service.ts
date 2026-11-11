@@ -659,8 +659,8 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     const avgCooldownSec = cooldownCount * ((this.safety.cooldownMinMs + this.safety.cooldownMaxMs) / 2000);
     const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * avgDelaySec + avgCooldownSec) / 60));
     const namedInBatch = recipients.filter(r => Boolean(r.firstName)).length;
-    const sample1 = this.formatPersonalizedMessage(messageText, recipients[0]?.firstName, 0);
-    const sample2 = this.formatPersonalizedMessage(messageText, recipients[1]?.firstName, 1);
+    const sample1 = this.formatPersonalizedMessage(messageText, this.formatContactLabel(recipients[0]), 0);
+    const sample2 = this.formatPersonalizedMessage(messageText, this.formatContactLabel(recipients[1]), 1);
 
     // Run background transmission loop asynchronously (non-blocking)
     this.runBroadcastLoop(draft, transport).catch(err => {
@@ -668,7 +668,7 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
     });
 
     const unnamedNote = namedInBatch === 0
-      ? `\n⚠️ *Ogeysiis:* Dadkan hadda la dirayo weli magacooda lagama hayo WhatsApp (waxaa loo dirayaa *"walaal/saaxiib"*). Si magacyadoodu u soo baxaan, u soo dir bot-ka faylka **contacts.vcf** ee taleefankaaga!`
+      ? `\nℹ️ *Xog:* Dadkan magacoodu ma kaydsana — kuwa lambarkoodu muuqdo waxaa loogu yeerayaa *lambarkooda* (sida \`063...\`). Haddii aad rabto magacyadooda dhabta ah, u soo dir **contacts.vcf**.`
       : '';
 
     const limitLabel = dailyLimit > 0 ? `${dailyRemaining}/${dailyLimit} hadhay` : 'Xad la\'aan (Unlimited)';
@@ -859,6 +859,26 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
   }
 
   /**
+   * Returns a clean display label for greeting a recipient:
+   * 1. Saved firstName if present (e.g. "Axmed")
+   * 2. Formatted phone number if unnamed @s.whatsapp.net contact (e.g. "0634112233")
+   * 3. undefined for opaque @lid IDs without a name (avoids leaking internal IDs)
+   */
+  public formatContactLabel(contact?: Pick<BroadcastContact, 'firstName' | 'phone' | 'jid'>): string | undefined {
+    if (!contact) return undefined;
+    if (contact.firstName && contact.firstName.trim().length > 0) {
+      return contact.firstName.trim();
+    }
+    if (contact.jid && contact.jid.endsWith('@s.whatsapp.net')) {
+      const digits = (contact.phone || contact.jid.split('@')[0]).replace(/[^0-9]/g, '');
+      if (digits.length >= 7 && digits.length <= 15) {
+        return /^252[69]\d{8}$/.test(digits) ? `0${digits.slice(3)}` : digits;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Formats the personalized message for a specific recipient.
    * When variantIndex is supplied (during broadcast loops), applies spintax, varies
    * greeting placement (including placing the recipient's name BEFORE "Asc"), and
@@ -956,7 +976,8 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
       }
 
       const recipient = recipients[i];
-      const personalized = this.formatPersonalizedMessage(messageText, recipient.firstName, batchSeed + i);
+      const recipientLabel = this.formatContactLabel(recipient);
+      const personalized = this.formatPersonalizedMessage(messageText, recipientLabel, batchSeed + i);
 
       let sentOk = false;
       try {
