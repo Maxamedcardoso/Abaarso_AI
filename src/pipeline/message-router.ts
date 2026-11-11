@@ -102,6 +102,20 @@ export class MessageRouter {
 
     const isAdminUser = this.isAdmin(message.senderId, message.isGroup);
 
+    // 1c-optout. Recipient opt-out guard (stops annoyed users from tapping WhatsApp "Report Spam")
+    if (
+      !message.isGroup &&
+      !isAdminUser &&
+      /^(?:jooji|stop|unsubscribe|ha\s+ii\s+soo\s+dirin|ha\s+i\s+soo\s+dirin|fariimaha\s+jooji|iska\s+daa\s+fariimaha)[.!،\s]*$/i.test(lowerText)
+    ) {
+      broadcastService.optOut(message.chatId, text);
+      await transport.sendMessage(
+        message.chatId,
+        'Waa hagaag walaal, fariimaha dambe laguu soo diri maayo. Raalli ahow haddii ay ku dhibtay. Nabadgelyo. 🙏'
+      );
+      return { handled: true, reason: 'Recipient opted out of broadcasts' };
+    }
+
     // 1d. Handle incoming contacts document (.vcf, .csv, .txt) sent by admin
     if (message.media?.type === 'document' && isAdminUser && message.media.dataBase64) {
       const fileName = (message.media.fileName || '').toLowerCase();
@@ -159,7 +173,7 @@ export class MessageRouter {
       const stats = broadcastService.getStats();
       await transport.sendMessage(
         message.chatId,
-        `📋 *[CARDOSO AI Contacts & Broadcast]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Fariinta Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*\n\nSi aad 50 qof oo cusub ugu dirto, qor:\n\`!fariin <fariintaada>\`\n\nHaddii aad doonayso inaad dib uga bilowdo dhamaan, qor:\n\`!fariin reset\``
+        `📋 *[CARDOSO AI Contacts & Broadcast]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Fariinta Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*\n• Maanta (24h): *${stats.sentToday}/${stats.dailyLimit}*\n• Ka baxay (Opt-out): *${stats.optedOut} qof*\n\nSi aad ilaa 50 qof oo cusub ugu dirto, qor:\n\`!fariin <fariintaada>\`\n\nHaddii aad doonayso inaad dib uga bilowdo dhamaan, qor:\n\`!fariin reset\``
       );
       return { handled: true, reason: 'Contacts query' };
     }

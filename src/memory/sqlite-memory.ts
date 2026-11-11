@@ -97,6 +97,12 @@ export class SQLiteStudentMemory implements IStudentMemory {
         knowledge_base TEXT DEFAULT '',
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS broadcast_opt_outs (
+        jid TEXT PRIMARY KEY,
+        reason TEXT,
+        opted_out_at INTEGER NOT NULL
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -310,6 +316,37 @@ export class SQLiteStudentMemory implements IStudentMemory {
       return Number(result.changes);
     } catch {
       return 0;
+    }
+  }
+
+  public getBroadcastSentCountSince(sinceMs: number): number {
+    if (!this.db) return 0;
+    try {
+      const row: any = this.db.prepare('SELECT COUNT(*) as cnt FROM broadcast_sent_history WHERE sent_at >= ?').get(sinceMs);
+      return Number(row?.cnt || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  public addBroadcastOptOut(jid: string, reason?: string): void {
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO broadcast_opt_outs (jid, reason, opted_out_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(jid) DO UPDATE SET reason = excluded.reason, opted_out_at = excluded.opted_out_at;
+      `).run(jid, (reason || '').slice(0, 100), Date.now());
+    } catch {}
+  }
+
+  public getBroadcastOptOutJids(): Set<string> {
+    if (!this.db) return new Set();
+    try {
+      const rows = this.db.prepare('SELECT jid FROM broadcast_opt_outs').all() as any[];
+      return new Set(rows.map(r => r.jid));
+    } catch {
+      return new Set();
     }
   }
 

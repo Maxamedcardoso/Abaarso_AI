@@ -92,17 +92,39 @@ export interface BroadcastProgress {
   isAborted: boolean;
 }
 
+export interface BroadcastSafetyConfig {
+  minDelayMs: number;
+  maxDelayMs: number;
+  cooldownEvery: number;
+  cooldownMinMs: number;
+  cooldownMaxMs: number;
+  dailyLimit: number;
+  maxConsecutiveFailures: number;
+}
+
+const DEFAULT_SAFETY_CONFIG: BroadcastSafetyConfig = {
+  minDelayMs: 12_000,
+  maxDelayMs: 25_000,
+  cooldownEvery: 15,
+  cooldownMinMs: 90_000,
+  cooldownMaxMs: 150_000,
+  dailyLimit: Number(process.env.BROADCAST_DAILY_LIMIT) || 120,
+  maxConsecutiveFailures: 3,
+};
+
 /**
  * BroadcastService — Safe, Human-Like WhatsApp Broadcasting for CARDOSO AI.
  * Protects the WhatsApp number from bans using:
- * 1. Randomized human delay (10-18 seconds per message).
- * 2. Personalized messages addressed to each recipient by name.
- * 3. Two-step confirmation (Admin must confirm with 'HAA' before sending).
- * 4. Graceful stop command (!jooji).
+ * 1. Randomized human delay (12-25s per message) + cooldown pauses every 15 messages.
+ * 2. Daily send cap (default 120/24h) to prevent sudden volume spikes.
+ * 3. Personalized varied greetings, name-first options, and {opt1|opt2} spintax.
+ * 4. Automatic opt-out exclusion and emergency auto-stop on consecutive failures.
  */
 export class BroadcastService {
   private contactsMap: Map<string, BroadcastContact> = new Map();
   private sentJids: Set<string> = new Set();
+  private optedOutJids: Set<string> = new Set();
+  private sentTimestamps: number[] = [];
   private botJid: string = '';
   private pendingDrafts: Map<string, BroadcastDraft> = new Map();
   private activeBroadcast: BroadcastProgress = {
@@ -113,9 +135,15 @@ export class BroadcastService {
     isAborted: false,
   };
   private memory?: SQLiteStudentMemory;
+  private safety: BroadcastSafetyConfig;
 
-  constructor(memory?: SQLiteStudentMemory) {
+  constructor(memory?: SQLiteStudentMemory, safetyOverrides?: Partial<BroadcastSafetyConfig>) {
     this.memory = memory;
+    this.safety = { ...DEFAULT_SAFETY_CONFIG, ...safetyOverrides };
+  }
+
+  public setSafetyConfig(overrides: Partial<BroadcastSafetyConfig>): void {
+    this.safety = { ...this.safety, ...overrides };
   }
 
   public setMemory(memory: SQLiteStudentMemory): void {
@@ -175,6 +203,11 @@ export class BroadcastService {
       this.sentJids = await this.memory.getSentBroadcastJids();
       if (this.sentJids.size > 0) {
         console.log(`📢 [BroadcastService] Loaded ${this.sentJids.size} previously contacted recipients (won't re-send).`);
+      }
+
+      this.optedOutJids = this.memory.getBroadcastOptOutJids();
+      if (this.optedOutJids.size > 0) {
+        console.log(`🚫 [BroadcastService] Loaded ${this.optedOutJids.size} opted-out contacts (strictly excluded).`);
       }
     } catch (err: any) {
       console.warn('[BroadcastService] Warning loading persisted contacts:', err.message);
@@ -331,13 +364,15 @@ export class BroadcastService {
 
   /**
    * Returns eligible contacts that have NEVER been sent a broadcast yet,
-   * strictly excluding admin, bot, and previously contacted JIDs.
+   * strictly excluding admin, bot, opted-out users, and previously contacted JIDs.
+   * Prioritizes contacts with a known name (warmer relationships) first to reduce spam reports.
    */
   public getAvailableRecipients(adminChatId?: string): BroadcastContact[] {
     const cleanAdmin = adminChatId?.split(':')[0]?.split('@')[0]?.replace(/[^0-9]/g, '');
-    return Array.from(this.contactsMap.values()).filter(c => {
-      // Must not be in already-sent set
+    const eligible = Array.from(this.contactsMap.values()).filter(c => {
+      // Must not be in already-sent set or opt-out set
       if (this.sentJids.has(c.jid)) return false;
+      if (this.optedOutJids.has(c.jid)) return false;
       // Must not be admin chat
       if (adminChatId && c.jid === adminChatId) return false;
       if (cleanAdmin && c.jid.replace(/[^0-9]/g, '') === cleanAdmin) return false;
@@ -347,6 +382,29 @@ export class BroadcastService {
       if (!this.isValidIndividualJid(c.jid)) return false;
       return true;
     });
+
+    // Warmest contacts first: known firstName / name before unnamed numbers
+    return eligible.sort((a, b) => {
+      const aHasName = a.firstName ? 1 : 0;
+      const bHasName = b.firstName ? 1 : 0;
+      if (aHasName !== bHasName) return bHasName - aHasName;
+      return (b.lastSeen || 0) - (a.lastSeen || 0);
+    });
+  }
+
+  /**
+   * Permanently opts out a contact so they never receive future broadcasts.
+   */
+  public optOut(jid: string, reason?: string): void {
+    if (!jid) return;
+    this.optedOutJids.add(jid);
+    if (this.memory) {
+      this.memory.addBroadcastOptOut(jid, reason);
+    }
+  }
+
+  public isOptedOut(jid: string): boolean {
+    return this.optedOutJids.has(jid);
   }
 
   /**
@@ -354,6 +412,11 @@ export class BroadcastService {
    */
   public async markAsSent(jid: string, preview?: string): Promise<void> {
     this.sentJids.add(jid);
+    const now = Date.now();
+    this.sentTimestamps.push(now);
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+    this.sentTimestamps = this.sentTimestamps.filter(t => t >= dayAgo);
+
     if (this.memory) {
       await this.memory.markBroadcastSent(jid, preview);
     }
@@ -361,6 +424,7 @@ export class BroadcastService {
 
   /**
    * Resets broadcast history if admin wants to run a brand new campaign.
+   * Note: optedOutJids are NEVER cleared to protect against spam reports.
    */
   public async resetSentHistory(): Promise<number> {
     this.sentJids.clear();
@@ -371,15 +435,35 @@ export class BroadcastService {
   }
 
   /**
+   * Returns 24-hour sending allowance to prevent WhatsApp volume-spike bans.
+   */
+  public getDailyAllowance(): { sentToday: number; dailyLimit: number; dailyRemaining: number } {
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const inMemCount = this.sentTimestamps.filter(t => t >= dayAgo).length;
+    const dbCount = this.memory ? this.memory.getBroadcastSentCountSince(dayAgo) : 0;
+    const sentToday = Math.max(inMemCount, dbCount);
+    const dailyLimit = this.safety.dailyLimit;
+    return {
+      sentToday,
+      dailyLimit,
+      dailyRemaining: Math.max(0, dailyLimit - sentToday),
+    };
+  }
+
+  /**
    * Gets broadcast delivery statistics.
    */
-  public getStats(): { total: number; sent: number; remaining: number } {
+  public getStats(): { total: number; sent: number; remaining: number; optedOut: number; sentToday: number; dailyLimit: number } {
     const total = this.contactsMap.size;
     const sent = this.sentJids.size;
+    const { sentToday, dailyLimit } = this.getDailyAllowance();
     return {
       total,
       sent,
-      remaining: Math.max(0, total - sent),
+      remaining: Math.max(0, total - sent - this.optedOutJids.size),
+      optedOut: this.optedOutJids.size,
+      sentToday,
+      dailyLimit,
     };
   }
 
@@ -493,7 +577,17 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       };
     }
 
-    const recipients = availableRecipients.slice(0, maxLimit);
+    // Daily anti-ban send cap check
+    const { sentToday, dailyLimit, dailyRemaining } = this.getDailyAllowance();
+    if (dailyRemaining <= 0) {
+      return {
+        success: false,
+        message: `🛡️ *[CARDOSO AI — XADKA MAALINLAHA AH (ANTI-BAN)]*\n\nMaanta (24-kii saac ee u dambeeyay) waxaa la diray *${sentToday}/${dailyLimit} fariin*.\nSi lambarkaaga looga ilaaliyo Ban, bot-ku wuu joojiyay dirista ilaa berri ama saacado kadib.\n\n💡 Haddaad rabto inaad xadka beddesho, Render ku dar \`BROADCAST_DAILY_LIMIT\`.`,
+      };
+    }
+
+    const batchCap = Math.min(maxLimit, dailyRemaining);
+    const recipients = availableRecipients.slice(0, batchCap);
     const remainingAfter = availableRecipients.length - recipients.length;
 
     // Set active progress
@@ -512,7 +606,10 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       createdAt: Date.now(),
     };
 
-    const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * 5) / 60));
+    const avgDelaySec = (this.safety.minDelayMs + this.safety.maxDelayMs) / 2000;
+    const cooldownCount = this.safety.cooldownEvery > 0 ? Math.floor((recipients.length - 1) / this.safety.cooldownEvery) : 0;
+    const avgCooldownSec = cooldownCount * ((this.safety.cooldownMinMs + this.safety.cooldownMaxMs) / 2000);
+    const estimatedMinutes = Math.max(1, Math.ceil((recipients.length * avgDelaySec + avgCooldownSec) / 60));
     const sample1 = this.formatPersonalizedMessage(messageText, recipients[0]?.firstName || 'Axmed', 0);
     const sample2 = this.formatPersonalizedMessage(messageText, recipients[1]?.firstName || 'Sahra', 1);
 
@@ -523,16 +620,19 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
 
     return {
       success: true,
-      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*
+      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BADBAADO LEH]*
 
-Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Dufcaddan: ilaa 50 qof).
+Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Xadka maanta hadhay: ${dailyRemaining}/${dailyLimit}).
 📊 Xaaladda: *${recipients.length}* hadda loo dirayaa | *${remainingAfter}* ayaa dhiman.
 
 📝 *Tusaalayaal sida kala duwan ee ay ugu dhacayso:*
 1️⃣ "${sample1}"
 2️⃣ "${sample2}"
 
-🛡️ *Xeerka Badbaadada:* Qofna fariin laguma celcelin doono. Qof kasta magaciisa & salaan kala duwan ayuu ku helayaa (~${estimatedMinutes} daqiiqo).
+🛡️ *Difaaca Ban-ka ee Shaqaynaya:*
+• Kala-duwanaan salaan, spintax \`{a|b}\` & dhammaad.
+• Delay dabiici ah (*${Math.round(this.safety.minDelayMs / 1000)}-${Math.round(this.safety.maxDelayMs / 1000)}s*) + nasiino *${this.safety.cooldownEvery}*-kii qofba.
+• Waqtiga qiyaasta: ~*${estimatedMinutes} daqiiqo*.
 🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
     };
   }
@@ -639,28 +739,52 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     'Good day, ',
   ];
 
+  private static readonly SOMALI_CLOSINGS: string[] = [
+    '',
+    '\n\nMahadsanid.',
+    '',
+    '\n\nKhayr baan kuu rajaynayaa.',
+    '',
+    '\n\nNabadgelyo.',
+  ];
+
+  /**
+   * Expands {option1|option2|option3} spintax blocks to keep message bodies unique.
+   */
+  public applySpintax(text: string, seed: number = 0): string {
+    let groupIndex = 0;
+    return text.replace(/\{([^{}]+)\}/g, (full, inner: string) => {
+      if (!inner.includes('|')) return full;
+      const options = inner.split('|').map(o => o.trim()).filter(Boolean);
+      if (options.length === 0) return full;
+      const pick = options[Math.abs(seed + groupIndex++) % options.length];
+      return pick;
+    });
+  }
+
   /**
    * Formats the personalized message for a specific recipient.
-   * When variantIndex is supplied (during broadcast loops), varies greeting placement
-   * (including placing the recipient's name BEFORE "Asc") and phrasing so no two
-   * consecutive messages start identically.
+   * When variantIndex is supplied (during broadcast loops), applies spintax, varies
+   * greeting placement (including placing the recipient's name BEFORE "Asc"), and
+   * mixes light closings so WhatsApp never sees identical copy-pasted text.
    */
   public formatPersonalizedMessage(template: string, name?: string, variantIndex?: number): string {
     const cleanName = name && name.trim().length > 0 ? name.trim() : undefined;
     const recipientName = cleanName || 'walaal';
+    const workingTemplate = variantIndex !== undefined ? this.applySpintax(template, variantIndex) : template;
 
     // 1. If explicit placeholder {magac} or {name} exists, replace it
-    if (template.includes('{magac}')) {
+    if (workingTemplate.includes('{magac}')) {
       const altUnnamed = variantIndex !== undefined && !cleanName
         ? (variantIndex % 2 === 0 ? 'walaal' : 'saaxiib')
         : recipientName;
-      return template.replace(/\{magac\}/g, altUnnamed);
+      return workingTemplate.replace(/\{magac\}/g, altUnnamed);
     }
-    if (template.includes('{name}')) {
-      return template.replace(/\{name\}/g, recipientName);
+    if (workingTemplate.includes('{name}')) {
+      return workingTemplate.replace(/\{name\}/g, recipientName);
     }
 
-    const trimmed = template.trim();
+    const trimmed = workingTemplate.trim();
 
     // 2. Varied personalization mode (used when sending broadcasts)
     if (variantIndex !== undefined) {
@@ -673,20 +797,17 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
         .trim() || trimmed;
 
       if (isEnglish) {
-        if (cleanName) {
-          const fn = BroadcastService.NAMED_ENGLISH_GREETINGS[idx % BroadcastService.NAMED_ENGLISH_GREETINGS.length];
-          return `${fn(cleanName)}${body}`;
-        }
-        const prefix = BroadcastService.UNNAMED_ENGLISH_GREETINGS[idx % BroadcastService.UNNAMED_ENGLISH_GREETINGS.length];
+        const prefix = cleanName
+          ? BroadcastService.NAMED_ENGLISH_GREETINGS[idx % BroadcastService.NAMED_ENGLISH_GREETINGS.length](cleanName)
+          : BroadcastService.UNNAMED_ENGLISH_GREETINGS[idx % BroadcastService.UNNAMED_ENGLISH_GREETINGS.length];
         return `${prefix}${body}`;
       }
 
-      if (cleanName) {
-        const fn = BroadcastService.NAMED_SOMALI_GREETINGS[idx % BroadcastService.NAMED_SOMALI_GREETINGS.length];
-        return `${fn(cleanName)}${body}`;
-      }
-      const prefix = BroadcastService.UNNAMED_SOMALI_GREETINGS[idx % BroadcastService.UNNAMED_SOMALI_GREETINGS.length];
-      return `${prefix}${body}`;
+      const prefix = cleanName
+        ? BroadcastService.NAMED_SOMALI_GREETINGS[idx % BroadcastService.NAMED_SOMALI_GREETINGS.length](cleanName)
+        : BroadcastService.UNNAMED_SOMALI_GREETINGS[idx % BroadcastService.UNNAMED_SOMALI_GREETINGS.length];
+      const closing = BroadcastService.SOMALI_CLOSINGS[idx % BroadcastService.SOMALI_CLOSINGS.length];
+      return `${prefix}${body}${closing}`;
     }
 
     // 3. Deterministic default (when variantIndex is omitted)
@@ -706,12 +827,21 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     return `Asc ${recipientName}, ${trimmed}`;
   }
 
+  private async sleepAbortable(ms: number): Promise<void> {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && !this.activeBroadcast.isAborted) {
+      const step = Math.min(500, deadline - Date.now());
+      if (step > 0) await new Promise(resolve => setTimeout(resolve, step));
+    }
+  }
+
   /**
-   * Main background transmission loop with human delays.
+   * Main background transmission loop with human delays, batch cooldowns, and auto-stop on repeated failures.
    */
   private async runBroadcastLoop(draft: BroadcastDraft, transport: IMessagingTransport): Promise<void> {
     const { adminChatId, messageText, recipients } = draft;
     const batchSeed = Math.floor(Math.random() * BroadcastService.NAMED_SOMALI_GREETINGS.length);
+    let consecutiveFailures = 0;
 
     console.log(`📢 [BroadcastService] Starting safe broadcast to ${recipients.length} recipients...`);
 
@@ -729,48 +859,78 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
       const recipient = recipients[i];
       const personalized = this.formatPersonalizedMessage(messageText, recipient.firstName, batchSeed + i);
 
+      let sentOk = false;
       try {
-        await transport.sendMessage(recipient.jid, personalized);
+        const result = await transport.sendMessage(recipient.jid, personalized);
+        sentOk = result !== false;
+      } catch (err: any) {
+        console.warn(`⚠️ [Broadcast] Exception sending to ${recipient.jid}: ${err.message}`);
+        sentOk = false;
+      }
+
+      if (sentOk) {
+        consecutiveFailures = 0;
         this.activeBroadcast.sentCount++;
         await this.markAsSent(recipient.jid, messageText);
         console.log(`✅ [Broadcast] Sent to ${recipient.firstName || recipient.jid} (${i + 1}/${recipients.length})`);
-      } catch (err: any) {
+      } else {
+        consecutiveFailures++;
         this.activeBroadcast.failedCount++;
-        await this.markAsSent(recipient.jid, messageText);
-        console.warn(`⚠️ [Broadcast] Failed sending to ${recipient.jid}: ${err.message}`);
+        console.warn(`⚠️ [Broadcast] Failed sending to ${recipient.jid} (consecutive failures: ${consecutiveFailures})`);
+
+        if (consecutiveFailures >= this.safety.maxConsecutiveFailures) {
+          this.activeBroadcast.isActive = false;
+          this.activeBroadcast.isAborted = true;
+          await transport.sendMessage(
+            adminChatId,
+            `🚨 *[ANTI-BAN EMERGENCY STOP]*:\n${consecutiveFailures} fariin oo isxiga ayaa fashilmay diristoodu! Bot-ku si toos ah ayuu u joojiyay dirista si lambarkaaga looga badbaadiyo Ban.\n• La diray: *${this.activeBroadcast.sentCount} qof*`
+          );
+          return;
+        }
       }
 
       // Progress update to admin every 10 sent messages
       if ((i + 1) % 10 === 0 && (i + 1) < recipients.length) {
         await transport.sendMessage(
           adminChatId,
-          `⏳ *[Smart Broadcast Progress]*: Waxaa la diray *${i + 1}/${recipients.length} qof*... shaqadu way socotaa.`
+          `⏳ *[Smart Broadcast Progress]*: Waxaa la diray *${this.activeBroadcast.sentCount}/${recipients.length} qof*... shaqadu way socotaa.`
         );
       }
 
       // Do NOT delay after the very last message
       if (i < recipients.length - 1) {
-        // Safe natural human delay between 3.5 to 6 seconds (3,500ms - 6,000ms)
-        const delayMs = Math.floor(3500 + Math.random() * 2500);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        // Long cooldown pause every N messages to mimic natural human breaks
+        if (this.safety.cooldownEvery > 0 && (i + 1) % this.safety.cooldownEvery === 0) {
+          const cooldownMs = Math.floor(
+            this.safety.cooldownMinMs + Math.random() * Math.max(0, this.safety.cooldownMaxMs - this.safety.cooldownMinMs)
+          );
+          console.log(`☕ [BroadcastService] Taking anti-ban cooldown break (${Math.round(cooldownMs / 1000)}s)...`);
+          await this.sleepAbortable(cooldownMs);
+        } else {
+          const delayMs = Math.floor(
+            this.safety.minDelayMs + Math.random() * Math.max(0, this.safety.maxDelayMs - this.safety.minDelayMs)
+          );
+          await this.sleepAbortable(delayMs);
+        }
       }
     }
 
     this.activeBroadcast.isActive = false;
 
     const remainingNow = this.getAvailableRecipients(adminChatId).length;
+    const { sentToday, dailyLimit } = this.getDailyAllowance();
 
     // Send final celebratory completion report to Admin
     const summary = `🎉 *[CARDOSO AI SMART BROADCAST — GUUL]*
 
-Dufcaddii *${recipients.length} qof* si nabad ah ayaa loo wada gaarsiiyay!
+Dufcaddii *${recipients.length} qof* waa la soo dhammeeyay!
 • Guuleystay: *${this.activeBroadcast.sentCount} qof*
 • Cillad ku dhacday: *${this.activeBroadcast.failedCount} qof*
-• Total la diray: *${recipients.length} qof*
+• Maanta la diray: *${sentToday}/${dailyLimit} qof*
 • Qofna dib looguma celinayo dadkan (History saved).
 • Hadhay (Aan wali helin): *${remainingNow} qof*
 
-${remainingNow > 0 ? `Si aad 50-ka xiga ugu dirto, mar kale qor:\n\`!fariin ${messageText}\`` : 'Dhammaan contacts-kaagii fariinta waa wada heleen! 💯'}`;
+${remainingNow > 0 ? `Si aad dufcadda xigta ugu dirto, mar kale qor:\n\`!fariin ${messageText}\`` : 'Dhammaan contacts-kaagii fariinta waa wada heleen! 💯'}`;
 
     await transport.sendMessage(adminChatId, summary);
     console.log(`🎉 [BroadcastService] Completed broadcast. Sent: ${this.activeBroadcast.sentCount}, Remaining: ${remainingNow}`);

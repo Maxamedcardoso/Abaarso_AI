@@ -19,7 +19,8 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
     }
   }
 
-  const broadcastService = new BroadcastService();
+  const fastTestTiming = { minDelayMs: 15, maxDelayMs: 25, cooldownEvery: 50, cooldownMinMs: 20, cooldownMaxMs: 30 };
+  const broadcastService = new BroadcastService(undefined, fastTestTiming);
 
   // 1. Name extraction test
   const name1 = broadcastService.extractCleanFirstName('Mohamed Dahir');
@@ -90,12 +91,12 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   assert(sentMessages[0].text.includes('Smart Broadcast Bilaabatay'), 'Admin notified of start');
 
   // 7. Direct Broadcast Test (no confirmation step needed, up to 50 recipients)
-  const directService = new BroadcastService();
+  const directService = new BroadcastService(undefined, fastTestTiming);
   directService.recordContact('252611111111@s.whatsapp.net', 'Cali');
   directService.recordContact('252622222222@s.whatsapp.net', 'Faadumo');
   const directResult = await directService.startDirectBroadcast('admin_123', 'Asc dhamaan, ogeysiis toos ah', mockTransport, 50);
   assert(directResult.success === true, 'Direct broadcast starts immediately without confirmation');
-  assert(directResult.message.includes('FARIIN-WADAREED BILAABATAY'), 'Direct broadcast returns immediate acknowledgment');
+  assert(directResult.message.includes('FARIIN-WADAREED BADBAADO LEH'), 'Direct broadcast returns immediate acknowledgment');
 
   // 8. Exclusion & Anti-Repeat Test (recipients already sent are NEVER contacted again)
   const batchService = new BroadcastService();
@@ -136,6 +137,50 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   const unVar1 = broadcastService.formatPersonalizedMessage('Ogeysiis muhiim ah', undefined, 1);
   const unVar2 = broadcastService.formatPersonalizedMessage('Ogeysiis muhiim ah', undefined, 2);
   assert(unVar0 !== unVar1 && unVar1 !== unVar2, 'Unnamed recipients do not receive identical "Asc walaal" prefix repeatedly');
+
+  // 11. Anti-Ban Protections: Spintax, Opt-Out, Daily Cap, Warm-First Ordering, and Auto-Stop
+  const spin0 = broadcastService.formatPersonalizedMessage('{Waxaan haynaa|Waxaa soo baxday} fursad {maanta|usbuucan}', 'Axmed', 0);
+  const spin1 = broadcastService.formatPersonalizedMessage('{Waxaan haynaa|Waxaa soo baxday} fursad {maanta|usbuucan}', 'Sahra', 1);
+  assert(spin0.includes('Waxaan haynaa') && spin1.includes('Waxaa soo baxday'), 'Spintax rotates alternative body wording across recipients');
+
+  const safeService = new BroadcastService(undefined, { ...fastTestTiming, dailyLimit: 2, maxConsecutiveFailures: 2 });
+  safeService.recordContact('252610000010@s.whatsapp.net', undefined); // unnamed cold contact
+  safeService.recordContact('252610000011@s.whatsapp.net', 'Xasan');  // named warm contact
+  safeService.recordContact('252610000012@s.whatsapp.net', 'Hodan');
+  safeService.optOut('252610000012@s.whatsapp.net', 'jooji');
+
+  const orderedPool = safeService.getAvailableRecipients();
+  assert(orderedPool.length === 2, 'Excludes opted-out contact (Hodan) from available pool');
+  assert(orderedPool[0].firstName === 'Xasan', 'Prioritizes named contacts before cold unnamed numbers');
+
+  await safeService.resetSentHistory();
+  assert(safeService.isOptedOut('252610000012@s.whatsapp.net') === true, 'Opt-out survives broadcast history reset');
+
+  await safeService.markAsSent('252610000011@s.whatsapp.net');
+  await safeService.markAsSent('252610000010@s.whatsapp.net');
+  safeService.recordContact('252610000013@s.whatsapp.net', 'Farxaan');
+  const capBlocked = await safeService.startDirectBroadcast('admin_123', 'Tijaabo xadka maalinlaha', mockTransport, 50);
+  assert(capBlocked.success === false && capBlocked.message.includes('XADKA MAALINLAHA'), 'Enforces daily anti-ban send limit');
+
+  // Auto-stop after consecutive failures
+  const failService = new BroadcastService(undefined, { ...fastTestTiming, maxConsecutiveFailures: 2 });
+  failService.recordContact('252610000021@s.whatsapp.net', 'UserA');
+  failService.recordContact('252610000022@s.whatsapp.net', 'UserB');
+  failService.recordContact('252610000023@s.whatsapp.net', 'UserC');
+  const failingMessages: string[] = [];
+  const failingTransport: IMessagingTransport = {
+    ...mockTransport,
+    sendMessage: async (chatId, text) => {
+      if (chatId === 'admin_123') {
+        failingMessages.push(text);
+        return true;
+      }
+      return false;
+    },
+  };
+  await failService.startDirectBroadcast('admin_123', 'Tijaabo auto-stop', failingTransport, 10);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert(failingMessages.some(m => m.includes('ANTI-BAN EMERGENCY STOP')), 'Triggers emergency auto-stop after consecutive failures');
 
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);

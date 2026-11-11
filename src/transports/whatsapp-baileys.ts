@@ -519,9 +519,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     return this.outboundQueue.enqueue(async () => {
       try {
-        // Quick anti-ban typing presence update
+        // Human-like typing presence before sending (scales with length: ~0.9s - 2.3s)
+        const typingMs = Math.min(2300, Math.max(900, text.length * 18)) + Math.floor(Math.random() * 400);
         await this.socket!.sendPresenceUpdate('composing', chatId).catch(() => {});
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await new Promise(resolve => setTimeout(resolve, typingMs));
         await this.socket!.sendPresenceUpdate('paused', chatId).catch(() => {});
 
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
