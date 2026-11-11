@@ -784,15 +784,13 @@ Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (
     'Maalin wanaagsan walaal, ',
   ];
 
-  // 7 lead-in phrases (coprime with 12 greetings & 11 closings => 924 strictly unique combinations)
+  // 5 light greeting accents (coprime with 12 greetings & 11 closings => 660 strictly unique combinations, NO awkward "eeg"/"ogeysiis" prefixes)
   private static readonly SOMALI_LEAD_INS: string[] = [
     '',
-    'fariin yar: ',
-    'waxaan rabay inaan kuu sheego — ',
-    'halkan ka eeg: ',
-    'ogeysiis kooban: ',
-    'fadlan arag: ',
-    'adigaan kuu soo diray — ',
+    '😊 ',
+    '🌿 ',
+    '🤝 ',
+    '✨ ',
   ];
 
   private static readonly NAMED_ENGLISH_GREETINGS: Array<(name: string) => string> = [
