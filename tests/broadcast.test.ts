@@ -97,10 +97,10 @@ export async function runBroadcastTests(): Promise<{ passed: boolean; message: s
   directService.recordContact('252622222222@s.whatsapp.net', 'Faadumo');
   const directResult = await directService.startDirectBroadcast('admin_123', 'Asc dhamaan, ogeysiis toos ah', mockTransport, 50);
   assert(directResult.success === true, 'Direct broadcast starts immediately without confirmation');
-  assert(directResult.message.includes('FARIIN-WADAREED BADBAADO LEH'), 'Direct broadcast returns immediate acknowledgment');
+  assert(directResult.message.includes('FARIIN-WADAREED BILAABATAY'), 'Direct broadcast returns immediate acknowledgment');
 
   // 8. Exclusion & Anti-Repeat Test (recipients already sent are NEVER contacted again)
-  const batchService = new BroadcastService();
+  const batchService = new BroadcastService(undefined, fastTestTiming);
   batchService.recordContact('252610000001@s.whatsapp.net', 'User1');
   batchService.recordContact('252610000002@s.whatsapp.net', 'User2');
   batchService.recordContact('252610000003@s.whatsapp.net', 'User3');

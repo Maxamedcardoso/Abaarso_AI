@@ -137,12 +137,12 @@ export interface BroadcastSafetyConfig {
 }
 
 const DEFAULT_SAFETY_CONFIG: BroadcastSafetyConfig = {
-  minDelayMs: 12_000,
-  maxDelayMs: 25_000,
-  cooldownEvery: 15,
-  cooldownMinMs: 90_000,
-  cooldownMaxMs: 150_000,
-  dailyLimit: Number(process.env.BROADCAST_DAILY_LIMIT) || 120,
+  minDelayMs: 2_000,
+  maxDelayMs: 4_000,
+  cooldownEvery: 0,
+  cooldownMinMs: 0,
+  cooldownMaxMs: 0,
+  dailyLimit: Number(process.env.BROADCAST_DAILY_LIMIT) || 0,
   maxConsecutiveFailures: 3,
 };
 
@@ -492,7 +492,7 @@ export class BroadcastService {
     return {
       sentToday,
       dailyLimit,
-      dailyRemaining: Math.max(0, dailyLimit - sentToday),
+      dailyRemaining: dailyLimit > 0 ? Math.max(0, dailyLimit - sentToday) : Number.MAX_SAFE_INTEGER,
     };
   }
 
@@ -625,16 +625,16 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       };
     }
 
-    // Daily anti-ban send cap check
+    // Optional daily send cap check (only active when dailyLimit > 0)
     const { sentToday, dailyLimit, dailyRemaining } = this.getDailyAllowance();
-    if (dailyRemaining <= 0) {
+    if (dailyLimit > 0 && dailyRemaining <= 0) {
       return {
         success: false,
         message: `🛡️ *[CARDOSO AI — XADKA MAALINLAHA AH (ANTI-BAN)]*\n\nMaanta (24-kii saac ee u dambeeyay) waxaa la diray *${sentToday}/${dailyLimit} fariin*.\nSi lambarkaaga looga ilaaliyo Ban, bot-ku wuu joojiyay dirista ilaa berri ama saacado kadib.\n\n💡 Haddaad rabto inaad xadka beddesho, Render ku dar \`BROADCAST_DAILY_LIMIT\`.`,
       };
     }
 
-    const batchCap = Math.min(maxLimit, dailyRemaining);
+    const batchCap = dailyLimit > 0 ? Math.min(maxLimit, dailyRemaining) : maxLimit;
     const recipients = availableRecipients.slice(0, batchCap);
     const remainingAfter = availableRecipients.length - recipients.length;
 
@@ -671,21 +671,21 @@ Waxaad doonaysaa inaad fariin u dirto *${recipients.length} qof* oo WhatsApp-kaa
       ? `\n⚠️ *Ogeysiis:* Dadkan hadda la dirayo weli magacooda lagama hayo WhatsApp (waxaa loo dirayaa *"walaal/saaxiib"*). Si magacyadoodu u soo baxaan, u soo dir bot-ka faylka **contacts.vcf** ee taleefankaaga!`
       : '';
 
+    const limitLabel = dailyLimit > 0 ? `${dailyRemaining}/${dailyLimit} hadhay` : 'Xad la\'aan (Unlimited)';
     return {
       success: true,
-      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BADBAADO LEH]*
+      message: `🚀 *[CARDOSO AI — FARIIN-WADAREED BILAABATAY]*
 
-Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (Xadka maanta hadhay: ${dailyRemaining}/${dailyLimit}).
+Fariinta waxaa toos loogu bilaabay dufcad ka kooban *${recipients.length} qof* (${limitLabel}).
 📊 Xaaladda: *${recipients.length}* hadda | *${namedInBatch}/${recipients.length}* magac leh | *${remainingAfter}* hadhay.${unnamedNote}
 
 📝 *Tusaalayaal dhab ah sida ay ugu dhacayso:*
 1️⃣ "${sample1}"
 2️⃣ "${sample2}"
 
-🛡️ *Difaaca Ban-ka ee Shaqaynaya:*
+⚡ *Habka Dirista:*
 • Kala-duwanaan salaan, spintax \`{a|b}\` & dhammaad.
-• Delay dabiici ah (*${Math.round(this.safety.minDelayMs / 1000)}-${Math.round(this.safety.maxDelayMs / 1000)}s*) + nasiino *${this.safety.cooldownEvery}*-kii qofba.
-• Waqtiga qiyaasta: ~*${estimatedMinutes} daqiiqo*.
+• Diris degdeg ah (*${Math.round(this.safety.minDelayMs / 1000)}-${Math.round(this.safety.maxDelayMs / 1000)}s* fariin kasta), qiyaas ahaan ~*${estimatedMinutes} daqiiqo*.
 🛑 Haddii aad rabto inaad joojiso qor: \`!jooji\``,
     };
   }

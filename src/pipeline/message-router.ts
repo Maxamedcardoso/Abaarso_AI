@@ -177,9 +177,10 @@ export class MessageRouter {
     // 2c. Broadcast Query Contacts Command (!contacts / !liis)
     if (/^!(?:contacts|liis|xiriir)$/i.test(lowerText.trim()) && isAdminUser) {
       const stats = broadcastService.getStats();
+      const limitStr = stats.dailyLimit > 0 ? `${stats.sentToday}/${stats.dailyLimit}` : `${stats.sentToday} (Xad la'aan)`;
       await transport.sendMessage(
         message.chatId,
-        `📋 *[CARDOSO AI Contacts & Broadcast]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Magac leh: *${stats.withNames} qof* | Magac la'aan: *${stats.total - stats.withNames} qof*\n• Fariinta Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*\n• Maanta (24h): *${stats.sentToday}/${stats.dailyLimit}*\n• Ka baxay (Opt-out): *${stats.optedOut} qof*\n\nSi aad ilaa 50 qof oo cusub ugu dirto, qor:\n\`!fariin <fariintaada>\`\n\nHaddii aad doonayso inaad dib uga bilowdo dhamaan, qor:\n\`!fariin reset\``
+        `📋 *[CARDOSO AI Contacts & Broadcast]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Magac leh: *${stats.withNames} qof* | Magac la'aan: *${stats.total - stats.withNames} qof*\n• Fariinta Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*\n• Maanta (24h): *${limitStr}*\n• Ka baxay (Opt-out): *${stats.optedOut} qof*\n\nSi aad ilaa 50 qof oo cusub ugu dirto, qor:\n\`!fariin <fariintaada>\`\n\nHaddii aad doonayso inaad dib uga bilowdo dhamaan, qor:\n\`!fariin reset\``
       );
       return { handled: true, reason: 'Contacts query' };
     }
