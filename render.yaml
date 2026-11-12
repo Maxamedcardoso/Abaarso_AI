@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: abarso-ai-bot
+    name: cardoso-ai-bot
     runtime: node
     plan: free
     region: frankfurt
@@ -12,15 +12,28 @@ services:
       - key: MESSAGING_MODE
         value: baileys
       - key: GEMINI_MODEL
-        value: gemini-3.5-flash
+        value: gemini-2.5-flash
       - key: BOT_PREFIX
-        value: "!abaarso"
+        value: "!cardoso"
+      - key: GROUP_RESPONSE_MODE
+        value: mention_only
+      - key: DAILY_REQUEST_LIMIT
+        value: "1400"
+      - key: REQUESTS_PER_MINUTE_LIMIT
+        value: "14"
+      - key: BROADCAST_DAILY_LIMIT
+        value: "0"
+      - key: DATABASE_PATH
+        value: ./data/abarso.db
       - key: ALLOWED_GROUPS
         value: ""
       - key: GEMINI_API_KEY
         sync: false
       - key: SESSION_CREDS_BASE64
         sync: false
+      - key: STUDIO_PASSWORD
+        sync: false
+      - key: ADMIN_PHONE_NUMBERS
+        sync: false
       - key: RENDER_EXTERNAL_URL
         sync: false
-

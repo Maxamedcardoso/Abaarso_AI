@@ -16,6 +16,8 @@ auth_info_baileys/
 # Local SQLite databases
 data/*.db
 data/*.db-journal
+data/*.db-shm
+data/*.db-wal
 data/*.sqlite
 data/*.sqlite3
 

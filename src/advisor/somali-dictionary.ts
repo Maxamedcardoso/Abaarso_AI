@@ -80,22 +80,101 @@ export const SOMALI_SLANG_MAP: Record<string, string> = {
   'asc': 'Assalaamu Calaykum',
   'wcs': 'Wa Calaykum Salaam',
   'sxb': 'saaxiib',
+  'sxp': 'saaxiib',
   'sxbo': 'saaxiibayaal',
   'wll': 'walaal',
   'wlla': 'walaal',
   'wlo': 'walaalo',
   'i caawi': 'fadlan wax i bar ama i caawi',
+  'iga caawi': 'fadlan i caawi',
   'ii sharax': 'ii faahfaahi',
+  'ii sheeg': 'ii sheeg',
   'ma garanayo': 'ma fahmin',
   'ma fahmin': 'wax faham ah kama haysto',
   'see tahay': 'sidee tahay',
   'see tahy': 'sidee tahay',
+  'sideed tahay': 'sidee tahay',
   'khayr': 'khayr Allaha ku siiyo',
   'waxan': 'waxaan',
   'waxaan raba': 'waxaan rabaa',
+  'waxan raba': 'waxaan rabaa',
   'manta': 'maanta',
+  'maxa': 'maxaa',
+  'maxaad': 'maxaad',
+  'waayahay': 'waayahay',
+  'haye': 'haye',
+  'ii waran': 'ii waran',
+  'iwaran': 'ii waran',
+  'iska warran': 'iska warran',
+  'maxaa cusub': 'maxaa cusub',
+  'maanta maxaa': 'maanta maxaa',
   'xalay': 'xalay',
+  'shalay': 'shalay',
+  'berri': 'berri',
+  'sacado': 'saacado',
+  'daqiiqad': 'daqiiqo',
+  'pls': 'fadlan',
+  'plz': 'fadlan',
+  'tnx': 'mahadsanid',
+  'thx': 'mahadsanid',
 };
+
+/**
+ * Light spelling / informal Somali normalization for better AI understanding.
+ * Does not rewrite the user's message for display — used as AI context aid.
+ */
+export function normalizeSomaliSpelling(text: string): string {
+  let out = text;
+  const fixes: Array<[RegExp, string]> = [
+    [/\bwaxan\b/gi, 'waxaan'],
+    [/\braba\b(?!\w)/gi, 'rabaa'],
+    [/\btahy\b/gi, 'tahay'],
+    [/\bsee\s+tahy\b/gi, 'sidee tahay'],
+    [/\bhadii\b/gi, 'haddii'],
+    [/\blaakin\b/gi, 'laakiin'],
+    [/\bmaxa\b/gi, 'maxaa'],
+    [/\biwaran\b/gi, 'ii waran'],
+    [/\biskawarran\b/gi, 'iska warran'],
+    [/\bsuaal\b/gi, 'su\'aal'],
+    [/\bfaahfaah\b/gi, 'faahfaahi'],
+    [/\biga\s+caawi\b/gi, 'i caawi'],
+  ];
+  for (const [re, rep] of fixes) {
+    out = out.replace(re, rep);
+  }
+  return out;
+}
+
+/**
+ * Post-process AI Somali replies: strip robotic / poorly translated English-Somali.
+ */
+export function polishSomaliReply(text: string): string {
+  if (!text || text.trim().length < 2) return text;
+
+  let out = text;
+
+  // Remove common robotic openers / canned AI Somali
+  const roboticPatterns: Array<[RegExp, string]> = [
+    [/^Waxaan ahay CARDOSO AI[^.!?\n]*[.!?]?\s*/i, ''],
+    [/^Waxaan ahay caqli macmal ah[^.!?\n]*[.!?]?\s*/i, ''],
+    [/^Sida ku cad xogtayda[^.!?\n]*[.!?]?\s*/i, ''],
+    [/^Maxaan kugu caawin karaa maanta\??\s*/i, ''],
+    [/^Waan diyaar u ahay inaan ku caawiyo[^.!?\n]*[.!?]?\s*/i, ''],
+    [/\bAdigichi\b/gi, 'Adiguna'],
+    [/\bWaan ahay diyaar inaan ku caawiyo\b/gi, 'Haye walaal'],
+    [/\bBased on (my|the) (knowledge|information)\b/gi, ''],
+    [/\bAs an AI\b/gi, ''],
+    [/\bI am an AI assistant\b/gi, ''],
+  ];
+
+  for (const [re, rep] of roboticPatterns) {
+    out = out.replace(re, rep);
+  }
+
+  // Collapse excessive blank lines
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  return out;
+}
 
 /**
  * Looks up technical terms mentioned in user input to provide instant Somali clarifications.

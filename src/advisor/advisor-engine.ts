@@ -13,7 +13,7 @@ import { ImageGeneratorService } from '../services/image-generator.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { ResponseCacheService } from '../services/response-cache.service.js';
 import { EmotionDetector } from './emotion-detector.js';
-import { detectInstantGreetingReply } from './somali-dictionary.js';
+import { detectInstantGreetingReply, polishSomaliReply } from './somali-dictionary.js';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 import { broadcastService } from '../services/broadcast.service.js';
 
@@ -467,7 +467,12 @@ export class StudentAdvisorEngine {
     });
 
     // 10. Enrich prompt with glossary hints, audio comprehension directive, and optional web search context
-    let enrichedPrompt = PromptBuilder.enrichUserPrompt(content, lang);
+    // For Somali/mixed: prefer spelling-normalized text so the model understands informal chat better
+    const promptSource =
+      (lang === 'so' || lang === 'mixed') && langResult.normalizedText
+        ? langResult.normalizedText
+        : content;
+    let enrichedPrompt = PromptBuilder.enrichUserPrompt(promptSource, lang);
 
     // Spoken Voice Note Natural & Proportional Guidance:
     if (wantsVoice) {
@@ -540,6 +545,11 @@ You are listening directly to an authentic human voice message (spoken audio).
         userTurnSavedContent = `🎙️ "${cleanTranscript}"`;
       }
       aiResult.text = aiResult.text.replace(/<!--\s*transcript:\s*[\s\S]*?-->/gi, '').trim();
+    }
+
+    // Polish Somali / mixed replies: strip robotic openers and awkward translated phrasing
+    if (lang === 'so' || lang === 'mixed') {
+      aiResult.text = polishSomaliReply(aiResult.text);
     }
 
     // Store successful generic responses in cache for subsequent users

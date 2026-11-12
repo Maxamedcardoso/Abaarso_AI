@@ -1,4 +1,4 @@
-import { SOMALI_SLANG_MAP } from './somali-dictionary.js';
+import { SOMALI_SLANG_MAP, normalizeSomaliSpelling } from './somali-dictionary.js';
 
 // Supported language codes.
 // 'so'    = Somali        'en' = English     'mixed' = Somali+English code-switch
@@ -70,12 +70,13 @@ export class LanguageDetector {
    * Normalizes informal Somali contractions and slang in the student message.
    */
   public normalizeSlang(text: string): { normalized: string; detectedSlang: string[] } {
-    let normalized = text;
+    let normalized = normalizeSomaliSpelling(text);
     const detectedSlang: string[] = [];
 
-    // Check multi-word slang first
-    for (const [slang, full] of Object.entries(SOMALI_SLANG_MAP)) {
-      const regex = new RegExp(`\\b${slang}\\b`, 'gi');
+    // Multi-word slang first (longer keys before short ones)
+    const entries = Object.entries(SOMALI_SLANG_MAP).sort((a, b) => b[0].length - a[0].length);
+    for (const [slang, full] of entries) {
+      const regex = new RegExp(`\\b${slang.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
       if (regex.test(normalized)) {
         detectedSlang.push(slang);
         normalized = normalized.replace(regex, full);

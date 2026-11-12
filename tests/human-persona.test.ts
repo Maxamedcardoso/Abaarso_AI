@@ -77,6 +77,22 @@ export async function runHumanPersonaTests(): Promise<{ passed: boolean; message
   assert(systemInstruction.includes('SALIGA NABIGA (SCW)'), 'System instruction includes SCW vs WCS rule');
   assert(systemInstruction.includes('Qof nin ah marnaba \'abaayo\' ha ku dhihin'), 'System instruction strictly forbids calling men abaayo');
 
+  // 5. Somali "qiime ku hadal" directive
+  const somaliInstruction = PromptBuilder.buildSystemInstruction({
+    detectedLanguage: 'so',
+  });
+  assert(somaliInstruction.includes('QIIME KU HADAL'), 'Somali directive requires value-first (qiime ku hadal) speech');
+  assert(somaliInstruction.includes('MA TURJUMAAN'), 'Somali directive forbids awkward English-translated Somali');
+  assert(somaliInstruction.includes('Ha ku jawaabin Ingiriis'), 'Somali mode must reply in Somali, not English');
+  assert(somaliInstruction.includes('FEW-SHOT TUSAALOOYIN'), 'Somali directive includes few-shot natural examples');
+
+  // 6. Spelling normalize + polish filter
+  const { normalizeSomaliSpelling, polishSomaliReply } = await import('../src/advisor/somali-dictionary.ts');
+  assert(normalizeSomaliSpelling('waxan raba inaan barto').includes('waxaan'), 'Normalizes waxan → waxaan');
+  assert(normalizeSomaliSpelling('see tahy').toLowerCase().includes('tahay'), 'Normalizes tahy → tahay');
+  assert(polishSomaliReply('Adigichi sidee tahay?').includes('Adiguna'), 'Polish fixes Adigichi → Adiguna');
+  assert(!polishSomaliReply('Maxaan kugu caawin karaa maanta? Haye walaal.').startsWith('Maxaan kugu'), 'Polish strips robotic opener');
+
   console.log('----------------------------------------');
   console.log(`Suite Summary: ${passed} Passed, ${failed} Failed`);
   console.log('----------------------------------------\n');
