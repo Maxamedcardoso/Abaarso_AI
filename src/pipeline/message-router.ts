@@ -4,6 +4,7 @@ import { MessageDeduplicator } from './deduplicator.js';
 import { RateLimiter } from './rate-limiter.js';
 import { AppConfig } from '../config/env.js';
 import { broadcastService } from '../services/broadcast.service.js';
+import { AbaarsoAdService } from '../services/abaarso-ad.service.js';
 
 export class MessageRouter {
   private engine: StudentAdvisorEngine;
@@ -120,6 +121,17 @@ export class MessageRouter {
         'Waa hagaag walaal, fariimaha dambe laguu soo diri maayo. Raalli ahow haddii ay ku dhibtay. Nabadgelyo. 🙏'
       );
       return { handled: true, reason: 'Recipient opted out of broadcasts' };
+    }
+
+    // 1c-abaarso. Section 1: Official Abaarso University Voice Advertisement Trigger (!abaarso or @abaarso)
+    const isAbaarsoAdTrigger =
+      /^(?:!abaarso|@abaarso)(?:\s+.*)?$/i.test(lowerText.trim()) ||
+      /(?:^|\s)(?:!abaarso|@abaarso)(?:\s|$)/i.test(lowerText);
+
+    if (isAbaarsoAdTrigger) {
+      console.log(`📢 [Router] Abaarso official voice ad triggered by ${message.senderId} in ${message.chatId}`);
+      const delivered = await AbaarsoAdService.deliverAdvertisement(message.chatId, transport);
+      return { handled: true, reason: `Abaarso voice advertisement completed (delivered=${delivered})` };
     }
 
     // 1d. Handle incoming contacts document (.vcf, .csv, .txt) sent by admin
@@ -338,27 +350,28 @@ export class MessageRouter {
     const hasCardosoText = lowerText.includes('@cardoso');
     const hasVoiceCommand = !hasCardosoText && (lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText));
     const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
-    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!cod') || lowerText.startsWith('!sawir') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
-    const hasMention = message.isMentioned || hasCardosoText || hasVoiceCommand || hasImageCommand;
+    const hasAbaarsoCommand = lowerText.includes('@abaarso') || lowerText.startsWith('!abaarso') || /\b@abaarso\b/i.test(lowerText);
+    const hasPrefix = lowerText.startsWith('!cardoso') || lowerText.startsWith('!abaarso') || lowerText.startsWith('!cod') || lowerText.startsWith('!sawir') || lowerText.startsWith(this.config.messaging.prefix.toLowerCase());
+    const hasMention = message.isMentioned || hasCardosoText || hasVoiceCommand || hasImageCommand || hasAbaarsoCommand;
     const isMediaWithNoText = !text && !!(message as any).media;
 
     if (message.isGroup && this.config.messaging.groupResponseMode === 'mention_only') {
       // Always pass through if isMentioned or has special command (covers voice note replies, @cod, and @sawir trigger)
       if (!hasMention && !hasPrefix && !isMediaWithNoText) {
-        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso', '@cod', '@sawir' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
+        console.log(`ℹ️ [Router Ignored] Group message la iska indhatiray sababtoo ah kuma jirto '@cardoso', '@abaarso', '@cod', '@sawir' ama '${this.config.messaging.prefix}'. Qoraal: "${text}"`);
         return { handled: false, reason: 'Group message without mention or prefix' };
       }
     }
 
     // Clean prefix and mention from query
     let queryText = text;
-    for (const p of ['!cardoso', '@cardoso', '!cod', '@cod', '!sawir', '@sawir', '!image', '@image', this.config.messaging.prefix]) {
+    for (const p of ['!cardoso', '@cardoso', '!abaarso', '@abaarso', '!cod', '@cod', '!sawir', '@sawir', '!image', '@image', this.config.messaging.prefix]) {
       if (queryText.toLowerCase().startsWith(p.toLowerCase())) {
         queryText = queryText.slice(p.length).trim();
       }
     }
-    // Also strip inline mentions like "@cardoso", "@cod", "@sawir"
-    queryText = queryText.replace(/@cardoso\b/gi, '').replace(/@cod\b/gi, '').replace(/@sawir\b/gi, '').replace(/@image\b/gi, '').trim();
+    // Also strip inline mentions like "@cardoso", "@abaarso", "@cod", "@sawir"
+    queryText = queryText.replace(/@cardoso\b/gi, '').replace(/@abaarso\b/gi, '').replace(/@cod\b/gi, '').replace(/@sawir\b/gi, '').replace(/@image\b/gi, '').trim();
 
     // If user initiated with @sawir or !sawir, preserve image command context
     if (hasImageCommand) {
@@ -414,6 +427,13 @@ export class MessageRouter {
       rawContent: text,
       senderName: message.senderName,
     });
+
+    // Section 9: Strict Abaarso Silence Rule — Remain completely silent on unrelated questions
+    const trimmedReply = (advisorResult.replyText || '').trim();
+    if (!trimmedReply || trimmedReply === '[SILENCE]' || trimmedReply.includes('[SILENCE]')) {
+      console.log(`🤫 [Router] Strict Abaarso Mode: Unrelated question received, remaining completely silent.`);
+      return { handled: true, reason: 'Silent on unrelated question' };
+    }
 
     console.log(`\n📤 [Router] Jawaabta waxaa loo dirayaa WhatsApp: "${advisorResult.replyText.substring(0, 80)}..."`);
 

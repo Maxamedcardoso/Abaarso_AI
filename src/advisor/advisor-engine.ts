@@ -220,6 +220,30 @@ export class StudentAdvisorEngine {
       };
     }
 
+    // 5.58. Section 7: Course Recommendation Screening Trigger
+    // When a student asks "ila tali", "course kee baan qaataa", "course kee igu habboon", "maxaan ka barta abaarso"
+    // Never recommend immediately: ask the mandatory screening question first.
+    const isCourseAdviceQuery =
+      /^(?:ila\s+tali(?:[\s,]*(?:course|koors|maad|kulliyad|jaamacad|waxbarasho))?|course\s+kee(?:\s+baan\s+qaataa|\s+igu\s+habboon|\s+aan\s+bartaa)?|maxaan\s+ka\s+barta[a]?\s+abaarso|which\s+course\s+should\s+i\s+study|what\s+do\s+you\s+recommend\s+for\s+me)[?!.\s]*$/i.test(content.trim()) ||
+      /(?:course\s+kee\s+igu\s+habboon|maxaan\s+ka\s+barta[a]?\s+abaarso)/i.test(content);
+
+    if (isCourseAdviceQuery) {
+      const screeningText = lang === 'en'
+        ? 'In order to recommend the most suitable course for you, what are your strengths and what do you find interesting? Do you prefer technology, health sciences, business, law, or serving the community?'
+        : 'Si aan kuugu doorto course kugu habboon, maxaad ku fiican tahay, maxaadse xiisaysaa? Ma jeceshahay technology, caafimaadka, ganacsiga, sharciga mise inaad bulshada caawiso?';
+
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'user', content, languageDetected: lang, timestamp });
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'model', content: screeningText, languageDetected: lang, timestamp: Date.now() });
+
+      return {
+        replyText: screeningText,
+        studentId: student.studentId,
+        intent: 'academic',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
     // 5.6. Handle Image Generation request ("@sawir...", "!sawir...", "ii samee sawir...")
     if (ImageGeneratorService.isImageRequest(content)) {
       const prompt = ImageGeneratorService.extractPrompt(content);
@@ -429,11 +453,13 @@ export class StudentAdvisorEngine {
       /@cardoso\b/i.test(content) ||
       /@cardoso\b/i.test(input.rawContent || '');
 
-    const wantsVoice = !isCardosoMentioned && (
+    // Section 8: Ordinary university conversations must remain text-only
+    // Only synthesize voice if explicitly requested with @cod, !cod, or forceVoiceReply
+    const isExplicitVoiceCmd =
       Boolean(input.forceVoiceReply) ||
-      media?.type === 'audio' ||
-      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab|cod\s+ka\s+hadal|codka\s+|voice\s+note|voice\s+message|reply\s+in\s+voice|send\s+(?:a\s+)?voice)/i.test(content)
-    );
+      /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab)/i.test(content);
+
+    const wantsVoice = !isCardosoMentioned && (isExplicitVoiceCmd || media?.type === 'audio');
 
     // 9. Build system instruction (includes language directive + emotion guidance + extended voice mode)
     // Inject learned vocabulary and anti-repetition phrases for human-like responses
@@ -547,13 +573,16 @@ You are listening directly to an authentic human voice message (spoken audio).
       aiResult.text = aiResult.text.replace(/<!--\s*transcript:\s*[\s\S]*?-->/gi, '').trim();
     }
 
-    // Polish Somali / mixed replies: strip robotic openers and awkward translated phrasing
-    if (lang === 'so' || lang === 'mixed') {
+    // Section 9: Strict Silence Rule for unrelated questions
+    if (aiResult.text.includes('[SILENCE]') || aiResult.text.trim() === '[SILENCE]') {
+      aiResult.text = '[SILENCE]';
+    } else if (lang === 'so' || lang === 'mixed') {
+      // Polish Somali / mixed replies: strip robotic openers and awkward translated phrasing
       aiResult.text = polishSomaliReply(aiResult.text);
     }
 
     // Store successful generic responses in cache for subsequent users
-    if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error')) {
+    if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error') && aiResult.text !== '[SILENCE]') {
       ResponseCacheService.set(content, lang, aiResult.text);
     }
 

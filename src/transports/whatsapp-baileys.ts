@@ -392,9 +392,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           continue;
         }
 
-        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', or broadcast commands
+        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', broadcast commands, or Abaarso triggers
         const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
         const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
+        const hasAbaarsoCommand =
+          lowerText.includes('@abaarso') ||
+          lowerText.startsWith('!abaarso') ||
+          /\b@abaarso\b/i.test(lowerText) ||
+          /\b!abaarso\b/i.test(lowerText);
         const hasBroadcastCommand =
           lowerText.startsWith('!fariin') ||
           lowerText.startsWith('!barasho') ||
@@ -422,6 +427,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           hasVoiceCommand ||
           hasImageCommand ||
           hasBroadcastCommand ||
+          hasAbaarsoCommand ||
           isContactsDoc;
 
         // 4. Strict fromMe Handling:
