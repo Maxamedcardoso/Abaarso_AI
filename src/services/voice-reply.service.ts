@@ -71,6 +71,25 @@ export class VoiceReplyService {
         .replace(/\bpdf\b/gi, 'Bii-Dii-Ef')
         .replace(/\bmp3\b/gi, 'Em-Bii-Tharii');
 
+      // 3b. Phonetic pronunciation for English degree program names so Somali Neural TTS pronounces them clearly
+      clean = clean
+        .replace(/\bsoftware\s+engineering\b/gi, 'Softweer Injineering')
+        .replace(/\bclinical\s+nursing\b/gi, 'Klinikal Narsing')
+        .replace(/\bmidwifery\b/gi, 'Mid-wifari')
+        .replace(/\bmedical\s+laboratory\s+sciences\b/gi, 'Medikal Laboratori Saayansis')
+        .replace(/\bmedical\s+laboratory\b/gi, 'Medikal Laboratori')
+        .replace(/\bnutrition\s+and\s+food\s+sciences\b/gi, 'Nuutrishan and Fuud Saayansis')
+        .replace(/\baccounting\s+and\s+finance\b/gi, 'Akaawnting and Faynaans')
+        .replace(/\bbusiness\s+administration\b/gi, 'Biznis Administreeshan')
+        .replace(/\bhuman\s+resource\s+management\b/gi, 'Hyuuman Risoors Maneejment')
+        .replace(/\bislamic\s+banking\s+and\s+finance\b/gi, 'Islaamik Baanking and Faynaans')
+        .replace(/\binformation\s+and\s+communications\s+technologies\b/gi, 'Infarmeeshan and Komyunikeeshans Teknolojis')
+        .replace(/\blogistics\s+and\s+procurement\b/gi, 'Lojistiks and Prokyuurment')
+        .replace(/\bbusiness\s+management\s+and\s+economics\b/gi, 'Biznis Maneejment and Ikonoomiks')
+        .replace(/\bdevelopment\s+studies\b/gi, 'Divalobment Stadiis')
+        .replace(/\bsocial\s+work\b/gi, 'Sooshal Wark')
+        .replace(/\blaw\b/gi, 'Loo');
+
       // 4. Symbols to words
       clean = clean
         .replace(/&/g, ' iyo ')
