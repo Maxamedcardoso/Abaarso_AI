@@ -16,7 +16,7 @@ Abaarso Tech University – Berbera Campus ayaa kuu furaysa albaabka aqoonta, ha
 
 Haddii aad ku hammiyaysay inaad noqoto injineer software oo tiknoolajiyadda wax ku soo kordhiya, xirfadle caafimaad oo bulshada u adeega, ganacsade, khabiir maaliyadeed ama sharci yaqaan, Abaarso waxay kuu haysaa barnaamijyo waxbarasho oo kala duwan oo aad ka dhex dooran karto.
 
-Waxaa ka mid ah Software Engineering, Clinical Nursing, Midwifery, Medical Laboratory Sciences, Nutrition and Food Sciences, Accounting and Finance, Business Administration, Human Resource Management, Islamic Banking and Finance, Law, Information and Communications Technologies, Logistics and Procurement iyo barnaamijyo kale oo badan!
+Waxaa ka mid ah: Injineernimada Software-ka, Kalkaalisada Caafimaadka, Umulisanimada iyo Dhalmada, Sayniska Shaybaadhka Caafimaadka, Cilmiga Nafaqada iyo Cuntada, Xisaabaadka iyo Maaliyadda, Maamulka Ganacsiga, Maaraynta Shaqaalaha, Bangiyada iyo Maaliyadda Islaamka, Sharciga iyo Qaanuunka, Tiknoolajiyada Warfaafinta ee ICT, Saadka iyo Keenista ee Logistics, iyo barnaamijyo kale oo badan!
 
 Jaamacaddu waxay xoogga saartaa kobcinta aqoonta iyo xirfadaha ardayda, si ay u noqdaan dad awood u leh inay horumariyaan naftooda iyo bulshadooda.
 
@@ -51,7 +51,7 @@ Abaarso Tek Yuunifarsiti – Berbera Kambas ayaa kuu furaysa albaabka aqoonta, h
 
 Haddii aad ku hammiyaysay inaad noqoto injineer software oo tiknoolajiyadda wax ku soo kordhiya, xirfadle caafimaad oo bulshada u adeega, ganacsade, khabiir maaliyadeed ama sharci yaqaan, Abaarso waxay kuu haysaa barnaamijyo waxbarasho oo kala duwan oo aad ka dhex dooran karto.
 
-Waxaa ka mid ah Software Engineering, Clinical Nursing, Midwifery, Medical Laboratory Sciences, Nutrition and Food Sciences, Accounting and Finance, Business Administration, Human Resource Management, Islamic Banking and Finance, Law, Information and Communications Technologies, Logistics and Procurement iyo barnaamijyo kale oo badan!
+Waxaa ka mid ah: Injineernimada Software-ka, Kalkaalisada Caafimaadka, Umulisanimada iyo Dhalmada, Sayniska Shaybaadhka Caafimaadka, Cilmiga Nafaqada iyo Cuntada, Xisaabaadka iyo Maaliyadda, Maamulka Ganacsiga, Maaraynta Shaqaalaha, Bangiyada iyo Maaliyadda Islaamka, Sharciga iyo Qaanuunka, Tiknoolajiyada Warfaafinta ee ICT, Saadka iyo Keenista ee Logistics, iyo barnaamijyo kale oo badan!
 
 Jaamacaddu waxay xoogga saartaa kobcinta aqoonta iyo xirfadaha ardayda, si ay u noqdaan dad awood u leh inay horumariyaan naftooda iyo bulshadooda.
 
