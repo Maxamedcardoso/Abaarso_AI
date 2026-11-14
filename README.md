@@ -134,6 +134,48 @@ c:\Users\mohamed\Desktop\BOT\
 
 ---
 
+## 📱 WhatsApp 100% Management & Status Intelligence (Awoodda Buuxda)
+
+Bot-ka waxaa lagu qalabeeyay awood buuxda oo 100% ah oo uu ku maamuli karo WhatsApp-ka, Stories/Status-ka, fariimaha tooska ah, iyo kooxaha (Groups-ka):
+
+### 1. WhatsApp Status (Stories) Management
+- **`!status <fariin>`** — Daabac WhatsApp Status qoraal ah oo leh midabbo soo jiidasho leh.
+- **`!status` (Sawir/Cod/Video la socdo)** — Daabac sawir, cod (Voice status), ama muuqaal toos ugu baxa WhatsApp Status.
+- **`!status-ai [mawduuc]`** — AI ayaa curinaya xigmad ama dhiirigelin Soomaali ah oo toos ugu daabacaya WhatsApp Status.
+- **`!autoview on/off`** — Daaro ama dami in bot-ku si toos ah u daawado status kasta oo ay dadka contacts-ka ahi soo dhigaan (Auto Seen 24/7).
+
+### 2. Reply & Direct Messaging ("Reply u gali karo qofka")
+- **`!reply <lambar> <fariin>` / `!send <lambar> <fariin>`** — U dir fariin toos ah qof kasta (waxaa kale oo la socon kara sawir ama cod).
+- **`!reply <fariin>`** (adigoo qof fariintiisa quote ku haya) — Toos ugu celi jawaabta qofkaas.
+- **`!cod <lambar> <fariin>`** — Fariin cod Soomaali ah (Voice Note) oo dabiici ah toos ugu dir lambarkaas.
+- **`!autoreply add <erey> | <jawaab>`** — Sameyso jawaabo degdeg ah oo toos ah adoon AI isticmaalin.
+- **`!autoreply list`** — Eeg liiska dhammaan jawaabaha tooska ah ee kaydsan.
+- **`!autoreply delete <erey>`** — Tirtir jawaab toos ah.
+
+### 3. Group Management (100% Control)
+- **`!tagall [fariin]` / `!dhammaan`** — Hal mar wada tag-garee dhammaan xubnaha kooxda.
+- **`!kick @user` / `!ka-saar`** — Qofka ka saar kooxda.
+- **`!add <lambar>` / `!soo-geli`** — Qofka ku dar kooxda.
+- **`!promote @user` / `!dalacsii`** — Qofka ka dhig Admin kooxda.
+- **`!demote @user` / `!hoos-u-dhig`** — Qofka maamulnimada ka qaad.
+- **`!mute` / `!xidh`** — Xidh kooxda (Admins oo kaliya ayaa qori kara).
+- **`!unmute` / `!fur`** — Fur kooxda (Dhammaan xubnuhu way qori karaan).
+- **`!link` / `!grouplink`** — Soo qaad link-ga kooxda lagu soo galo.
+- **`!groupinfo`** — Soo bandhig faahfaahinta kooxda.
+
+### 4. Profile & Message Tools
+- **`!setname <magac>`** — Beddel magaca WhatsApp-ka ee bot-ka.
+- **`!setbio <qoraal>`** — Beddel WhatsApp Bio / About.
+- **`!setpp`** (sawir la socdo) — Beddel sawirka profile-ka bot-ka.
+- **`!block <lambar>`** — Block garee qof.
+- **`!unblock <lambar>`** — Unblock ka qaad qof.
+- **`!delete` / `!tirtir`** (quote fariin) — Delete for everyone ku samee fariintaas.
+- **`!react <emoji>`** (quote fariin) — Emoji ku dhufo fariintaas.
+- **`!pin`** (quote fariin) — Pin garee fariintaas.
+- **`!maamul`** — Soo bandhig dhammaan amarrada maamulka WhatsApp-ka.
+
+---
+
 ## 🛠️ Admin CLI
 
 View live database statistics, active student counts, token usage, and system health:

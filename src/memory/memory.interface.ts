@@ -97,6 +97,26 @@ export interface IStudentMemory {
   getBotConfig?(): Promise<{ botName: string; businessName: string; systemRole: string; knowledgeBase: string }>;
 
   /**
+   * Saves custom instant auto-reply keyword & response
+   */
+  saveAutoReply?(keyword: string, replyText: string, matchType?: 'contains' | 'exact'): Promise<void>;
+
+  /**
+   * Deletes custom auto-reply by keyword
+   */
+  deleteAutoReply?(keyword: string): Promise<boolean>;
+
+  /**
+   * Retrieves all custom auto-replies
+   */
+  getAutoReplies?(): Promise<Array<{ keyword: string; replyText: string; matchType: string }>>;
+
+  /**
+   * Checks if a message text matches any configured auto-reply
+   */
+  findMatchingAutoReply?(text: string): Promise<string | null>;
+
+  /**
    * Closes database connections cleanly
    */
   close(): Promise<void>;

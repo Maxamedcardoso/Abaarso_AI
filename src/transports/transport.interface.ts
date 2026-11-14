@@ -20,6 +20,8 @@ export interface IncomingMessage {
   isMentioned: boolean;          // True if the bot was explicitly @mentioned
   isFromMe?: boolean;            // True if sent directly from the connected host WhatsApp account
   replyToMessageId?: string;     // If message is a quoted reply
+  quotedMessageId?: string;      // ID of the message quoted by this message (if any)
+  quotedParticipant?: string;    // Sender of the message quoted by this message (if any)
   media?: MessageMedia;          // Attached image, audio voice note, or PDF document
 }
 
@@ -67,6 +69,26 @@ export interface IMessagingTransport {
    * Sends a media message (image, voice note audio) to a specific chat
    */
   sendMedia?(chatId: string, media: OutgoingMedia, options?: OutgoingMessageOptions): Promise<boolean>;
+
+  /**
+   * Posts a status/story update to WhatsApp (status@broadcast)
+   */
+  postStatus?(content: { text?: string; media?: OutgoingMedia; backgroundColor?: string; font?: number }): Promise<boolean>;
+
+  /**
+   * Deletes a message for everyone (revoke)
+   */
+  deleteMessage?(chatId: string, messageId: string, participant?: string): Promise<boolean>;
+
+  /**
+   * Reacts to a message with an emoji
+   */
+  reactToMessage?(chatId: string, messageId: string, emoji: string, participant?: string): Promise<boolean>;
+
+  /**
+   * Returns underlying socket or client instance if supported
+   */
+  getSocket?(): any;
 
   /**
    * Registers a callback for incoming messages

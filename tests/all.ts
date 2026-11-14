@@ -10,6 +10,7 @@ const testFiles = [
   'tests/user-custom-rules.test.ts',
   'tests/human-persona.test.ts',
   'tests/broadcast.test.ts',
+  'tests/whatsapp-manager.test.ts',
   'tests/e2e-master.test.ts',
 ];
 

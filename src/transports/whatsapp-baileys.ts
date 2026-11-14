@@ -17,6 +17,7 @@ import { MediaProcessorService } from '../services/media-processor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
 import { broadcastService } from '../services/broadcast.service.js';
+import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
@@ -48,6 +49,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   public getBotNumber(): string | null {
     if (!this.socket?.user?.id) return null;
     return this.socket.user.id.split(':')[0].split('@')[0];
+  }
+
+  public getSocket(): WASocket | null {
+    return this.socket;
+  }
+
+  public getRawMessage(id: string): any {
+    return this.rawMessages.get(id);
   }
 
   public async unlinkSession(): Promise<void> {
@@ -125,6 +134,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       },
     });
 
+    whatsappManagerService.setSocket(this.socket);
+
     this.socket.ev.on('creds.update', saveCreds);
 
     this.socket.ev.on('connection.update', (update) => {
@@ -141,6 +152,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       if (connection === 'close') {
         this.connected = false;
+        whatsappManagerService.setSocket(null);
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         console.log(`[WhatsAppBaileys] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
@@ -163,7 +175,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const botLid = (this.socket?.user as any)?.lid || '';
         if (botId || botLid) {
           broadcastService.setBotJid(botId, botLid);
+          whatsappManagerService.setBotJid(botId || botLid);
         }
+        whatsappManagerService.setSocket(this.socket);
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
       }
     });
@@ -447,6 +461,28 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     const chatId = msg.key.remoteJid || '';
     const isGroup = chatId.endsWith('@g.us');
     const senderId = msg.key.participant || msg.participant || msg.key.remoteJid || '';
+
+    // ─── WhatsApp Status (Story) Handling & Auto-View Status ─────────────────
+    if (chatId === 'status@broadcast') {
+      const statusSender = msg.key.participant || msg.participant || '';
+      // 1. Auto View Status: automatically mark contacts' status seen in real-time
+      if (whatsappManagerService.isAutoViewStatusEnabled() && this.socket) {
+        try {
+          await this.socket.readMessages([msg.key]);
+          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${statusSender || 'Contact'}`);
+        } catch (e: any) {
+          console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
+        }
+      }
+
+      // 2. Record contact pushName if present
+      if (msg.pushName && statusSender && broadcastService.isValidIndividualJid(statusSender)) {
+        broadcastService.recordContact(statusSender, msg.pushName, false, true);
+      }
+
+      // WhatsApp status updates are stories, do not route them as incoming private chat messages
+      return;
+    }
 
     // Always record sender WhatsApp profile pushName (both in DMs and group participant profiles)
     if (!msg.key.fromMe && msg.pushName) {
@@ -756,6 +792,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       isMentioned,
       isFromMe: Boolean(msg.key.fromMe),
       replyToMessageId: msg.key.id || undefined,
+      quotedMessageId: quotedStanzaId || undefined,
+      quotedParticipant: quotedSender || undefined,
       media: mediaAttachment,
     };
 
@@ -806,17 +844,21 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         await this.socket!.sendPresenceUpdate('paused', chatId).catch(() => {});
 
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
+        const isStatus = chatId === 'status@broadcast';
+        const statusJidList = isStatus ? whatsappManagerService.getStatusRecipients() : [];
+        const sendOptions: any = {};
+        if (isStatus && statusJidList.length > 0) {
+          sendOptions.statusJidList = statusJidList;
+        } else if (rawQuoted) {
+          sendOptions.quoted = rawQuoted;
+        }
 
         let sentMsg: any = undefined;
         try {
-          if (rawQuoted) {
-            sentMsg = await this.socket!.sendMessage(chatId, { text }, { quoted: rawQuoted });
-          } else {
-            sentMsg = await this.socket!.sendMessage(chatId, { text });
-          }
+          sentMsg = await this.socket!.sendMessage(chatId, { text }, sendOptions);
         } catch (sendErr) {
-          // Fallback: if sending with quoted fails, send as plain text without quote
-          console.warn('[WhatsAppBaileys] Quoted send failed, falling back to direct send:', sendErr);
+          // Fallback: if sending with options fails, send directly
+          console.warn('[WhatsAppBaileys] Send with options failed, falling back to direct send:', sendErr);
           sentMsg = await this.socket!.sendMessage(chatId, { text });
         }
 
@@ -846,6 +888,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     return this.outboundQueue.enqueue(async () => {
       try {
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
+        const isStatus = chatId === 'status@broadcast';
+        const statusJidList = isStatus ? whatsappManagerService.getStatusRecipients() : [];
+        const sendOptions: any = {};
+        if (isStatus && statusJidList.length > 0) {
+          sendOptions.statusJidList = statusJidList;
+        } else if (rawQuoted) {
+          sendOptions.quoted = rawQuoted;
+        }
 
         let sentMediaMsg: any = undefined;
 
@@ -854,7 +904,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
               { image: media.dataBuffer, caption: media.caption },
-              rawQuoted ? { quoted: rawQuoted } : undefined
+              sendOptions
             );
           } catch (quotedErr) {
             console.warn('[WhatsAppBaileys] Quoted image send failed, falling back to direct send:', quotedErr);
@@ -880,7 +930,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
               audioPayload,
-              rawQuoted ? { quoted: rawQuoted } : undefined
+              sendOptions
             );
           } catch (quotedErr) {
             console.warn('[WhatsAppBaileys] Quoted audio send failed, falling back to direct send:', quotedErr);
@@ -907,6 +957,61 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         return false;
       }
     });
+  }
+
+  public async postStatus(content: { text?: string; media?: OutgoingMedia; backgroundColor?: string; font?: number }): Promise<boolean> {
+    if (content.media) {
+      const res = await whatsappManagerService.postMediaStatus({
+        buffer: content.media.dataBuffer,
+        mimeType: content.media.mimeType,
+        caption: content.media.caption,
+        type: content.media.type === 'document' ? 'image' : content.media.type,
+      }, {
+        backgroundColor: content.backgroundColor,
+      });
+      return res.success;
+    } else if (content.text) {
+      const res = await whatsappManagerService.postTextStatus(content.text, {
+        backgroundColor: content.backgroundColor,
+        font: content.font,
+      });
+      return res.success;
+    }
+    return false;
+  }
+
+  public async deleteMessage(chatId: string, messageId: string, participant?: string): Promise<boolean> {
+    if (!this.socket || !this.connected) return false;
+    try {
+      const raw = this.rawMessages.get(messageId);
+      const key = raw?.key || {
+        remoteJid: chatId,
+        fromMe: true,
+        id: messageId,
+        participant,
+      };
+      const res = await whatsappManagerService.deleteMessage(chatId, key);
+      return res.success;
+    } catch {
+      return false;
+    }
+  }
+
+  public async reactToMessage(chatId: string, messageId: string, emoji: string, participant?: string): Promise<boolean> {
+    if (!this.socket || !this.connected) return false;
+    try {
+      const raw = this.rawMessages.get(messageId);
+      const key = raw?.key || {
+        remoteJid: chatId,
+        fromMe: false,
+        id: messageId,
+        participant,
+      };
+      const res = await whatsappManagerService.reactToMessage(chatId, key, emoji);
+      return res.success;
+    } catch {
+      return false;
+    }
   }
 
   public onMessage(handler: (message: IncomingMessage) => Promise<void>): void {

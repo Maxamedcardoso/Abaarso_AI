@@ -103,6 +103,14 @@ export class SQLiteStudentMemory implements IStudentMemory {
         reason TEXT,
         opted_out_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS auto_replies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        keyword TEXT UNIQUE NOT NULL,
+        reply_text TEXT NOT NULL,
+        match_type TEXT DEFAULT 'contains',
+        created_at INTEGER NOT NULL
+      );
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -514,6 +522,80 @@ export class SQLiteStudentMemory implements IStudentMemory {
       };
     } catch {
       return { botName: 'CARDOSO AI', businessName: '', systemRole: '', knowledgeBase: '' };
+    }
+  }
+
+  /**
+   * Saves custom instant auto-reply keyword & response
+   */
+  public async saveAutoReply(
+    keyword: string,
+    replyText: string,
+    matchType: 'contains' | 'exact' = 'contains'
+  ): Promise<void> {
+    if (!this.db) return;
+    const cleanKey = keyword.trim().toLowerCase();
+    const cleanReply = replyText.trim();
+    if (!cleanKey || !cleanReply) return;
+
+    try {
+      this.db.prepare(
+        `INSERT INTO auto_replies (keyword, reply_text, match_type, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(keyword) DO UPDATE SET reply_text = excluded.reply_text, match_type = excluded.match_type, created_at = excluded.created_at`
+      ).run(cleanKey, cleanReply, matchType, Date.now());
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed saving auto-reply:', err.message);
+    }
+  }
+
+  /**
+   * Deletes custom auto-reply by keyword
+   */
+  public async deleteAutoReply(keyword: string): Promise<boolean> {
+    if (!this.db) return false;
+    try {
+      const res = this.db.prepare('DELETE FROM auto_replies WHERE keyword = ?').run(keyword.trim().toLowerCase());
+      return Boolean(res && (res as any).changes > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Retrieves all custom auto-replies
+   */
+  public async getAutoReplies(): Promise<Array<{ keyword: string; replyText: string; matchType: string }>> {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare('SELECT keyword, reply_text as replyText, match_type as matchType FROM auto_replies ORDER BY created_at DESC').all() as any[];
+      return rows || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Checks if a message text matches any configured auto-reply
+   */
+  public async findMatchingAutoReply(text: string): Promise<string | null> {
+    if (!this.db) return null;
+    const clean = text.trim().toLowerCase();
+    if (!clean) return null;
+
+    try {
+      const all = await this.getAutoReplies();
+      for (const item of all) {
+        if (item.matchType === 'exact') {
+          if (clean === item.keyword) return item.replyText;
+        } else {
+          // 'contains' match
+          if (clean.includes(item.keyword)) return item.replyText;
+        }
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 

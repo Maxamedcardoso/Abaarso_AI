@@ -29,6 +29,8 @@ services:
         value: ""
       - key: GEMINI_API_KEY
         sync: false
+      - key: SESSION_BUNDLE_BASE64
+        sync: false
       - key: SESSION_CREDS_BASE64
         sync: false
       - key: STUDIO_PASSWORD

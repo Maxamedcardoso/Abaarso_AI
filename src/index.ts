@@ -10,6 +10,7 @@ import { WhatsAppBaileysTransport } from './transports/whatsapp-baileys.js';
 import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
 import { reminderService } from './services/reminder.service.js';
 import { broadcastService } from './services/broadcast.service.js';
+import { whatsappManagerService } from './services/whatsapp-manager.service.js';
 import { createStudioServer } from './web/studio-server.js';
 
 async function bootstrap() {
@@ -40,11 +41,12 @@ async function bootstrap() {
   // 3. Initialize AI Orchestrator
   const ai = new AIOrchestrator(config);
   await ai.initialize();
+  whatsappManagerService.setAIOrchestrator(ai);
   console.log(`✅ [AI Engine] Primary Model: ${config.gemini.model} (Daily free limit: ${config.gemini.dailyLimit})`);
 
   // 4. Initialize Advisor Engine & Message Router
   const engine = new StudentAdvisorEngine(memory, ai);
-  const router = new MessageRouter(engine, config);
+  const router = new MessageRouter(engine, config, undefined, undefined, memory);
 
   // 5. Select and initialize active transport
   let transport: IMessagingTransport;

@@ -5,6 +5,7 @@ import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { IMessagingTransport } from '../transports/transport.interface.js';
 import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { broadcastService } from '../services/broadcast.service.js';
+import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
 import { AppConfig } from '../config/env.js';
 
 export interface StudioServerOptions {
@@ -161,7 +162,105 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // 9. Main No-Code Studio Dashboard UI
+  // ─── 9. WhatsApp Status & Stories Endpoints ────────────────────────────────
+  app.post('/api/status/post', async (req: Request, res: Response) => {
+    try {
+      const { text, color, font } = req.body;
+      if (!text || !text.trim()) {
+        res.status(400).json({ status: 'error', message: 'Fadlan qor qoraalka status-ka' });
+        return;
+      }
+      const result = await whatsappManagerService.postTextStatus(text, {
+        backgroundColor: color,
+        font: font ? parseInt(font, 10) : undefined,
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/status/post-ai', async (req: Request, res: Response) => {
+    try {
+      const { topic } = req.body;
+      const result = await whatsappManagerService.generateAndPostAIStatus(topic);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.get('/api/status/autoview', (req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      enabled: whatsappManagerService.isAutoViewStatusEnabled(),
+    });
+  });
+
+  app.post('/api/status/autoview', (req: Request, res: Response) => {
+    const { enabled } = req.body;
+    whatsappManagerService.setAutoViewStatus(Boolean(enabled));
+    res.json({
+      status: 'ok',
+      enabled: whatsappManagerService.isAutoViewStatusEnabled(),
+      message: `Auto-View Status is now ${whatsappManagerService.isAutoViewStatusEnabled() ? 'ENABLED' : 'DISABLED'}`,
+    });
+  });
+
+  // ─── 10. Direct Reply & Messaging Endpoint ─────────────────────────────────
+  app.post('/api/direct-reply', async (req: Request, res: Response) => {
+    try {
+      const { phone, message: replyText } = req.body;
+      if (!phone || !replyText) {
+        res.status(400).json({ status: 'error', message: 'Fadlan geli lambarka iyo fariinta' });
+        return;
+      }
+      const result = await whatsappManagerService.sendDirectReply(phone, replyText, transport);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  // ─── 11. Custom Auto-Replies Endpoints ─────────────────────────────────────
+  app.get('/api/auto-replies', async (req: Request, res: Response) => {
+    try {
+      const replies = memory.getAutoReplies ? await memory.getAutoReplies() : [];
+      res.json({ status: 'ok', autoReplies: replies });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/auto-replies', async (req: Request, res: Response) => {
+    try {
+      const { keyword, replyText } = req.body;
+      if (!keyword || !replyText) {
+        res.status(400).json({ status: 'error', message: 'Ereyga iyo jawaabta waa waajib' });
+        return;
+      }
+      if (memory.saveAutoReply) {
+        await memory.saveAutoReply(keyword, replyText);
+      }
+      res.json({ status: 'ok', message: 'Auto-reply si guul leh ayaa loo keydiyay' });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.delete('/api/auto-replies/:keyword', async (req: Request, res: Response) => {
+    try {
+      const keyword = (Array.isArray(req.params.keyword) ? req.params.keyword[0] : req.params.keyword) || '';
+      if (memory.deleteAutoReply && keyword) {
+        await memory.deleteAutoReply(keyword);
+      }
+      res.json({ status: 'ok', message: `Auto-reply '${keyword}' waa la tirtiray` });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  // ─── 12. Main No-Code Studio Dashboard UI ──────────────────────────────────
   app.get('/', (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderStudioHTML());
@@ -732,6 +831,78 @@ function renderStudioHTML(): string {
           <button class="btn btn-primary" onclick="sendBroadcast()">🚀 Dir Fariinta (50 qof oo cusub)</button>
           <button class="btn btn-danger" onclick="abortBroadcast()" style="margin-top:0.5rem;">🛑 Jooji Fariinta</button>
         </div>
+
+        <!-- WhatsApp Status (Stories) Card -->
+        <div class="card" style="margin-top: 1.75rem;">
+          <div class="card-title">📱 WhatsApp Status (Stories) Manager</div>
+          <div class="card-desc">Toos WhatsApp Status ugu daabac fariimo qoraal ah ama adeegso AI dhiirigelin ah.</div>
+
+          <div class="form-group">
+            <label>Qoraalka Status-ka</label>
+            <textarea id="statusText" style="min-height:75px;" placeholder="Qor fariinta aad rabto inaad status soo dhigto..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Dooro Midabka Status-ka</label>
+            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
+              <input type="color" id="statusColor" value="#1e3c72" style="width:40px; height:40px; border-radius:8px; border:none; cursor:pointer;" />
+              <span style="font-size:0.8rem; color:var(--text-muted);">Riix midabka si aad mid custom ah u doorato</span>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" onclick="postStatusNow()">📢 Daabac Status WhatsApp</button>
+          <button class="btn btn-primary" onclick="postAIStatusNow()" style="margin-top:0.5rem; background:linear-gradient(135deg, #10b981, #06b6d4);">✨ Ku Daabac AI Status (Automatic Quote)</button>
+
+          <hr style="border-color:var(--card-border); margin:1.25rem 0;" />
+
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-weight:700; font-size:0.9rem;">Auto-View Status (Auto Seen)</div>
+              <div style="font-size:0.75rem; color:var(--text-muted);">Bot-ku si toos ah ma u daawadaa status-yada dadka?</div>
+            </div>
+            <button id="autoViewBtn" class="btn btn-primary" style="width:auto; padding:0.4rem 0.9rem; font-size:0.8rem;" onclick="toggleAutoView()">ON (Furan)</button>
+          </div>
+        </div>
+
+        <!-- Direct Reply Card -->
+        <div class="card" style="margin-top: 1.75rem;">
+          <div class="card-title">💬 Qof Fariin u Dir (Direct Reply)</div>
+          <div class="card-desc">Lambar kasta oo WhatsApp ah si toos ah fariin ugu dir magaca bot-ka.</div>
+
+          <div class="form-group">
+            <label>Lambarka Telefoonka</label>
+            <input type="text" id="directPhone" placeholder="Tusaale: 252615000000 ama 0634000000" />
+          </div>
+
+          <div class="form-group">
+            <label>Fariinta</label>
+            <textarea id="directMsg" style="min-height:75px;" placeholder="Qor fariinta aad rabto in loo diro qofkaas..."></textarea>
+          </div>
+
+          <button class="btn btn-primary" onclick="sendDirectMessage()">📤 U Dir Qofka Hadda</button>
+        </div>
+
+        <!-- Custom Auto-Replies Card -->
+        <div class="card" style="margin-top: 1.75rem;">
+          <div class="card-title">⚡ Jawaabaha Tooska ah (Auto-Replies)</div>
+          <div class="card-desc">Sameyso ereyo gaar ah oo bot-ku isla markiiba ugu jawaabo macaamiisha adoon AI isticmaalin.</div>
+
+          <div class="form-group">
+            <label>Ereyga (Keyword / Trigger)</label>
+            <input type="text" id="arKeyword" placeholder="Tusaale: qiimaha, fiidkii, location" />
+          </div>
+
+          <div class="form-group">
+            <label>Jawaabta Tooska ah</label>
+            <textarea id="arReply" style="min-height:65px;" placeholder="Qor jawaabta degdegga ah..."></textarea>
+          </div>
+
+          <button class="btn btn-primary" onclick="addAutoReply()">➕ Ku Dar Auto-Reply</button>
+
+          <div id="arList" style="margin-top:1rem; display:flex; flex-direction:column; gap:0.5rem; max-height:180px; overflow-y:auto;">
+            <!-- Loaded dynamically -->
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -935,6 +1106,149 @@ function renderStudioHTML(): string {
       }
     }
 
+    // Post Status
+    async function postStatusNow() {
+      const text = document.getElementById('statusText').value.trim();
+      const color = document.getElementById('statusColor').value;
+      if (!text) {
+        alert('Fadlan qor qoraalka status-ka!');
+        return;
+      }
+      try {
+        const res = await fetch('/api/status/post', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, color })
+        });
+        const data = await res.json();
+        alert(data.message || 'Status-ka waa la daabacay!');
+        if (data.success) document.getElementById('statusText').value = '';
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    // Post AI Status
+    async function postAIStatusNow() {
+      try {
+        showToast('⏳ AI ayaa curinaya status-ka dhiirigelinta ah...');
+        const res = await fetch('/api/status/post-ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        alert(data.message || 'AI Status waa la daabacay!');
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    // Toggle Auto-View Status
+    let autoViewCurrent = true;
+    async function toggleAutoView() {
+      try {
+        const nextState = !autoViewCurrent;
+        const res = await fetch('/api/status/autoview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: nextState })
+        });
+        const data = await res.json();
+        autoViewCurrent = Boolean(data.enabled);
+        updateAutoViewUI();
+        showToast(autoViewCurrent ? '👁️ Auto-View Status waa FURAN TAHAY' : '🛑 Auto-View Status waa LA DAMIYAY');
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    function updateAutoViewUI() {
+      const btn = document.getElementById('autoViewBtn');
+      if (btn) {
+        btn.innerText = autoViewCurrent ? 'ON (Furan)' : 'OFF (Xidhan)';
+        btn.style.background = autoViewCurrent ? '#10b981' : '#64748b';
+      }
+    }
+
+    // Direct Reply
+    async function sendDirectMessage() {
+      const phone = document.getElementById('directPhone').value.trim();
+      const message = document.getElementById('directMsg').value.trim();
+      if (!phone || !message) {
+        alert('Fadlan gali lambarka iyo fariinta!');
+        return;
+      }
+      try {
+        const res = await fetch('/api/direct-reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, message })
+        });
+        const data = await res.json();
+        alert(data.message || 'Fariinta waa la diray!');
+        if (data.success) document.getElementById('directMsg').value = '';
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    // Auto-Replies Management
+    async function loadAutoReplies() {
+      try {
+        const res = await fetch('/api/auto-replies');
+        const data = await res.json();
+        const list = document.getElementById('arList');
+        if (!list) return;
+        list.innerHTML = '';
+        if (data.autoReplies && data.autoReplies.length > 0) {
+          for (const ar of data.autoReplies) {
+            const item = document.createElement('div');
+            item.style.cssText = 'background:#090e1a; padding:0.5rem 0.75rem; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #1f293d; font-size:0.8rem;';
+            item.innerHTML = '<div><strong>"' + escapeHtml(ar.keyword) + '"</strong> ➔ <span style="color:#94a3b8;">' + escapeHtml(ar.replyText) + '</span></div><button onclick="deleteAutoReply(\'' + encodeURIComponent(ar.keyword) + '\')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; margin-left:0.5rem;">✕</button>';
+            list.appendChild(item);
+          }
+        } else {
+          list.innerHTML = '<div style="color:#64748b; font-size:0.75rem;">Wali ma jiraan auto-replies.</div>';
+        }
+      } catch (err) {}
+    }
+
+    async function addAutoReply() {
+      const keyword = document.getElementById('arKeyword').value.trim();
+      const replyText = document.getElementById('arReply').value.trim();
+      if (!keyword || !replyText) {
+        alert('Fadlan gali ereyga iyo jawaabta!');
+        return;
+      }
+      try {
+        const res = await fetch('/api/auto-replies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword, replyText })
+        });
+        const data = await res.json();
+        showToast(data.message || 'Auto-reply waa la keydiyay!');
+        document.getElementById('arKeyword').value = '';
+        document.getElementById('arReply').value = '';
+        loadAutoReplies();
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    async function deleteAutoReply(encodedKeyword) {
+      const keyword = decodeURIComponent(encodedKeyword);
+      if (!confirm('Ma hubtaa inaad tirtirto auto-reply-ga "' + keyword + '"?')) return;
+      try {
+        await fetch('/api/auto-replies/' + encodeURIComponent(keyword), { method: 'DELETE' });
+        showToast('Auto-reply waa la tirtiray');
+        loadAutoReplies();
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.innerText = text;
@@ -943,6 +1257,7 @@ function renderStudioHTML(): string {
 
     // Init
     loadConfig();
+    loadAutoReplies();
     pollStatus();
     setInterval(pollStatus, 3500); // Poll status every 3.5s
   </script>

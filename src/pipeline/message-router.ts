@@ -1,10 +1,13 @@
-import { IncomingMessage, IMessagingTransport } from '../transports/transport.interface.js';
+import { IncomingMessage, IMessagingTransport, OutgoingMedia } from '../transports/transport.interface.js';
 import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { MessageDeduplicator } from './deduplicator.js';
 import { RateLimiter } from './rate-limiter.js';
 import { AppConfig } from '../config/env.js';
 import { broadcastService } from '../services/broadcast.service.js';
 import { AbaarsoAdService } from '../services/abaarso-ad.service.js';
+import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
+import { VoiceReplyService } from '../services/voice-reply.service.js';
+import { IStudentMemory } from '../memory/memory.interface.js';
 
 export class MessageRouter {
   private engine: StudentAdvisorEngine;
@@ -13,24 +16,27 @@ export class MessageRouter {
   private config: AppConfig;
   private isBotActiveGlobally: boolean = true;
   private inactiveGroups: Set<string> = new Set();
+  private memory?: IStudentMemory;
 
   constructor(
     engine: StudentAdvisorEngine,
     config: AppConfig,
     deduplicator?: MessageDeduplicator,
-    rateLimiter?: RateLimiter
+    rateLimiter?: RateLimiter,
+    memory?: IStudentMemory
   ) {
     this.engine = engine;
     this.config = config;
     this.deduplicator = deduplicator || new MessageDeduplicator();
     this.rateLimiter = rateLimiter || new RateLimiter();
+    this.memory = memory;
   }
 
   public isAdmin(senderNumber: string, isGroup: boolean = false): boolean {
     const clean = senderNumber.replace(/[^0-9]/g, '');
     if (this.config.security.adminPhoneNumbers.length === 0) {
-      // In 1-on-1 private chat, allow if no specific admin whitelist is set
-      return !isGroup;
+      // If no admin whitelist is configured, strictly only host phone (isFromMe) has admin privileges
+      return false;
     }
     return this.config.security.adminPhoneNumbers.some(admin => clean.endsWith(admin) || admin.endsWith(clean));
   }
@@ -132,6 +138,368 @@ export class MessageRouter {
       console.log(`📢 [Router] Abaarso official voice ad triggered by ${message.senderId} in ${message.chatId}`);
       const delivered = await AbaarsoAdService.deliverAdvertisement(message.chatId, transport);
       return { handled: true, reason: `Abaarso voice advertisement completed (delivered=${delivered})` };
+    }
+
+    // ─── 1e. Comprehensive WhatsApp Management Help Command (!maamul / !whatsapp) ──
+    if (/^!(?:maamul|whatsapp|status-help|bot-help)\b/i.test(lowerText) && isAdminUser) {
+      const helpText =
+        `🌟 *[CARDOSO AI — AWOODDA MAAMULKA WHATSAPP 100%]* 🌟\n\n` +
+        `📱 *WHATSAPP STATUS (STORIES):*\n` +
+        `• \`!status <fariin>\` — Post garee status qoraal ah (midabbo qurxoon leh)\n` +
+        `• \`!status\` (Sawir/Cod/Video la socdo) — Post garee sawir, muuqaal ama cod status ah\n` +
+        `• \`!status-ai [mawduuc]\` — AI ayaa soo saaraya status dhiirigelin ah oo toos u dhigaya\n` +
+        `• \`!autoview on/off\` — Daaro ama dami in bot-ku si toos ah u daawado status-yada dadka (Auto Seen)\n\n` +
+        `💬 *REPLY & FARIIMO TOOS AH:*\n` +
+        `• \`!reply <lambar> <fariin>\` — U dir fariin toos ah lambarkaas\n` +
+        `• \`!reply <fariin>\` (adigoo qofka fariintiisa quote ku haya) — Toos ugu reply dheh qofkaas\n` +
+        `• \`!cod <lambar> <fariin>\` — U dir cod Soomaali ah oo toos loo akhriyay lambarkaas\n` +
+        `• \`!autoreply add <erey> | <jawaab>\` — Sameyso jawaab toos ah oo degdeg ah\n` +
+        `• \`!autoreply list\` — Soo bandhig jawaabaha tooska ah ee kuu kaydsan\n` +
+        `• \`!autoreply delete <erey>\` — Tirtir jawaab toos ah\n\n` +
+        `👥 *MAAMULKA GROUPS-KA (100% CONTROL):*\n` +
+        `• \`!tagall [fariin]\` — Dhammaan xubnaha kooxda hal mar tag garee\n` +
+        `• \`!kick @user\` — Qofka ka saar kooxda\n` +
+        `• \`!add <lambar>\` — Qofka ku dar kooxda\n` +
+        `• \`!promote @user\` — Qofka ka dhig Admin kooxda\n` +
+        `• \`!demote @user\` — Qofka maamulnimada ka qaad\n` +
+        `• \`!mute\` — Xidh kooxda (Admins oo kaliya ayaa qori kara)\n` +
+        `• \`!unmute\` — Fur kooxda (Dhammaan xubnuhu way qori karaan)\n` +
+        `• \`!link\` — Soo qaad link-ga kooxda lagu soo galo\n` +
+        `• \`!groupinfo\` — Xogta kooxda (tirada, admins-ka, abuuritaanka)\n\n` +
+        `⚙️ *PROFILE-KA & FARIIMAHA:*\n` +
+        `• \`!setname <magac>\` — Beddel magaca WhatsApp-ka ee bot-ka\n` +
+        `• \`!setbio <qoraal>\` — Beddel WhatsApp Bio-ga / About-ka\n` +
+        `• \`!setpp\` (sawir la socdo) — Beddel sawirka profile-ka bot-ka\n` +
+        `• \`!block <lambar>\` — Block garee qof\n` +
+        `• \`!unblock <lambar>\` — Unblock ka qaad qof\n` +
+        `• \`!delete\` (quote fariin) — Delete for everyone fariintaas\n` +
+        `• \`!react <emoji>\` (quote fariin) — Emoji ku dhufo fariintaas\n` +
+        `• \`!pin\` (quote fariin) — Pin garee fariintaas\n\n` +
+        `📢 *SMART BROADCAST:*\n` +
+        `• \`!fariin <qoraal>\` — U dir 50 qof oo cusub fariin shakhsiyeed\n` +
+        `• \`!contacts\` — Hubi tirada guud ee contacts-ka kaydsan`;
+      await transport.sendMessage(message.chatId, helpText);
+      return { handled: true, reason: 'WhatsApp management help menu' };
+    }
+
+    // ─── 1f. WhatsApp Status Posting & Management ─────────────────────────────
+    if (/^!status-ai(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^!status-ai(?:\s+(.+))?$/i);
+      const topic = match?.[1]?.trim();
+      await transport.sendMessage(message.chatId, '⏳ *[CARDOSO AI Status]*: AI ayaa diyaarinaya status dhiirigelin ah...');
+      const res = await whatsappManagerService.generateAndPostAIStatus(topic);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'AI Status generated and posted' };
+    }
+
+    if (/^!autoview(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^!autoview(?:\s+(on|off))?$/i);
+      const mode = match?.[1]?.toLowerCase();
+      if (mode === 'on') {
+        whatsappManagerService.setAutoViewStatus(true);
+        await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *SHIDAY (ON)*! Hadda bot-ku wuxuu si toos ah u daawan doonaa dhammaan status-yada cusub ee ay dadku soo dhigaan. ✅');
+      } else if (mode === 'off') {
+        whatsappManagerService.setAutoViewStatus(false);
+        await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *DAMIDAY (OFF)*! Bot-ku ma daawan doono status-yada. 🛑');
+      } else {
+        const current = whatsappManagerService.isAutoViewStatusEnabled();
+        await transport.sendMessage(
+          message.chatId,
+          `👁️ *[Auto-View Status]*: Xaaladda hadda waa: *${current ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!autoview on\` ama \`!autoview off\``
+        );
+      }
+      return { handled: true, reason: 'Auto-view status toggled' };
+    }
+
+    if (/^!(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^!(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i);
+      const statusContent = (match?.[1] || '').trim();
+
+      // If media is attached (image, video, voice note)
+      if (message.media?.dataBase64) {
+        const buffer = Buffer.from(message.media.dataBase64, 'base64');
+        const res = await whatsappManagerService.postMediaStatus({
+          buffer,
+          mimeType: message.media.mimeType,
+          caption: statusContent,
+          type: message.media.type === 'document' ? 'image' : message.media.type,
+        });
+        await transport.sendMessage(message.chatId, res.message);
+        return { handled: true, reason: 'Media status posted' };
+      }
+
+      if (!statusContent) {
+        await transport.sendMessage(
+          message.chatId,
+          'ℹ️ *[CARDOSO AI Status]*: Fadlan soo qor fariinta aad rabto inaad status-ka soo dhigto, tusaale:\n`!status Barasho wacan dhammaan ardayda Soomaaliyeed!`\n\nAma sawir / cod soo dir adigoo ku qoraya qoraalka `!status`.'
+        );
+        return { handled: true, reason: 'Status content missing' };
+      }
+
+      const res = await whatsappManagerService.postTextStatus(statusContent);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'Text status posted' };
+    }
+
+    // ─── 1g. Direct Reply & Person Messaging ("reply u gali karo qofka") ──────
+    if (/^!(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i);
+      const targetNumber = match![1].trim();
+      const replyText = match![2].trim();
+
+      let mediaToSend: OutgoingMedia | undefined;
+      if (message.media?.dataBase64) {
+        mediaToSend = {
+          type: message.media.type === 'document' ? 'image' : (message.media.type as any),
+          dataBuffer: Buffer.from(message.media.dataBase64, 'base64'),
+          mimeType: message.media.mimeType,
+          caption: replyText,
+        };
+      }
+
+      const res = await whatsappManagerService.sendDirectReply(targetNumber, replyText, transport, { media: mediaToSend });
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'Direct reply sent to number' };
+    }
+
+    // Quoted reply in chat: !reply <fariin>
+    if (/^!reply\s+([\s\S]+)$/i.test(text) && isAdminUser && message.quotedParticipant) {
+      const match = text.match(/^!reply\s+([\s\S]+)$/i);
+      const replyText = match![1].trim();
+      const targetParticipant = message.quotedParticipant;
+      const res = await whatsappManagerService.sendDirectReply(targetParticipant, replyText, transport, { replyToMessageId: message.quotedMessageId });
+      await transport.sendMessage(message.chatId, `✅ Jawaabtaada si toos ah ayaa loogu celiyay @${targetParticipant.split('@')[0]}!`, {
+        replyToMessageId: message.id,
+      });
+      return { handled: true, reason: 'Quoted participant reply sent' };
+    }
+
+    // Send Somali voice note directly to a number: !cod <number> <fariin>
+    if (/^!cod\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!cod\s+([0-9+]+)\s+([\s\S]+)$/i);
+      const targetNumber = match![1].trim();
+      const voiceText = match![2].trim();
+      const targetJid = whatsappManagerService.normalizeToJid(targetNumber);
+
+      try {
+        const synthesized = await VoiceReplyService.synthesizeVoice(voiceText, 'so');
+        if (synthesized && transport.sendMedia) {
+          await transport.sendMedia(targetJid, {
+            type: 'audio',
+            dataBuffer: synthesized.buffer,
+            mimeType: synthesized.mimeType || 'audio/mpeg',
+            ptt: true,
+          });
+          await transport.sendMessage(message.chatId, `🎙️ Cod Soomaali ah si guul leh ayaa loogu diray: *${targetJid}*`);
+        } else {
+          await transport.sendMessage(targetJid, voiceText);
+          await transport.sendMessage(message.chatId, `⚠️ Codka lama samayn karin, qoraal ahaan ayaa loogu diray ${targetJid}`);
+        }
+      } catch (err: any) {
+        await transport.sendMessage(message.chatId, `❌ Cilad dirista codka: ${err.message}`);
+      }
+      return { handled: true, reason: 'Voice reply sent to number' };
+    }
+
+    // ─── 1h. Custom Auto-Replies Management ───────────────────────────────────
+    if (/^!autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i);
+      const keyword = match![1].trim();
+      const replyContent = match![2].trim();
+      if (this.memory?.saveAutoReply) {
+        await this.memory.saveAutoReply(keyword, replyContent, 'contains');
+        await transport.sendMessage(message.chatId, `✅ *[Auto-Reply Added]*:\n• Ereyga (Keyword): *"${keyword}"*\n• Jawaabta: "${replyContent}"`);
+      } else {
+        await transport.sendMessage(message.chatId, '⚠️ Database-ka ma taageerayo auto-reply hadda.');
+      }
+      return { handled: true, reason: 'Auto-reply added' };
+    }
+
+    if (/^!autoreply\s+(?:list|liis)$/i.test(lowerText.trim()) && isAdminUser) {
+      if (this.memory?.getAutoReplies) {
+        const list = await this.memory.getAutoReplies();
+        if (list.length === 0) {
+          await transport.sendMessage(message.chatId, 'ℹ️ Hadda ma jiraan auto-replies kuu kaydsan.\nKu dar adigoo qoraya:\n`!autoreply add salaan | Wcs walaal, ku soo dhawow!`');
+        } else {
+          let replyMsg = `📋 *[LIISKA AUTO-REPLIES (${list.length})]*\n\n`;
+          for (const item of list) {
+            replyMsg += `• *"${item.keyword}"* ➔ "${item.replyText}"\n`;
+          }
+          await transport.sendMessage(message.chatId, replyMsg);
+        }
+      }
+      return { handled: true, reason: 'Auto-replies list displayed' };
+    }
+
+    if (/^!autoreply\s+(?:delete|tirtir)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!autoreply\s+(?:delete|tirtir)\s+(.+)$/i);
+      const keyword = match![1].trim();
+      if (this.memory?.deleteAutoReply) {
+        const deleted = await this.memory.deleteAutoReply(keyword);
+        await transport.sendMessage(message.chatId, deleted ? `✅ Auto-reply-gii ku xidhnaa *"${keyword}"* waa la tirtiray.` : `⚠️ Lama helin auto-reply ku xidhan *"${keyword}"*.`);
+      }
+      return { handled: true, reason: 'Auto-reply deleted' };
+    }
+
+    // ─── 1i. Group Management Commands (100% Full Control) ────────────────────
+    if (/^!(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      if (!message.isGroup) {
+        await transport.sendMessage(message.chatId, '⚠️ Amarkan waxaa loogu talagalay Groups-ka oo kaliya.');
+        return { handled: true, reason: 'tagall not in group' };
+      }
+      const match = text.match(/^!(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i);
+      const customMsg = match?.[1]?.trim();
+      const res = await whatsappManagerService.tagAll(message.chatId, customMsg);
+      if (!res.success) {
+        await transport.sendMessage(message.chatId, res.message);
+      }
+      return { handled: true, reason: 'tagall executed' };
+    }
+
+    if (/^!(?:kick|ka-saar)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^!(?:kick|ka-saar)(?:\s+(.+))?$/i);
+      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      if (!target) {
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka fariintiisa ama lambar ku qor ka dib: `!kick @user`');
+        return { handled: true, reason: 'kick target missing' };
+      }
+      const res = await whatsappManagerService.kickMember(message.chatId, target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'kick executed' };
+    }
+
+    if (/^!(?:add|soo-geli)\s+([0-9+]+)$/i.test(text) && isAdminUser && message.isGroup) {
+      const match = text.match(/^!(?:add|soo-geli)\s+([0-9+]+)$/i);
+      const target = match![1].trim();
+      const res = await whatsappManagerService.addMember(message.chatId, target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'add member executed' };
+    }
+
+    if (/^!(?:promote|dalacsii)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^!(?:promote|dalacsii)(?:\s+(.+))?$/i);
+      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      if (!target) {
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!promote @user`');
+        return { handled: true, reason: 'promote target missing' };
+      }
+      const res = await whatsappManagerService.promoteMember(message.chatId, target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'promote executed' };
+    }
+
+    if (/^!(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^!(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i);
+      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      if (!target) {
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!demote @user`');
+        return { handled: true, reason: 'demote target missing' };
+      }
+      const res = await whatsappManagerService.demoteMember(message.chatId, target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'demote executed' };
+    }
+
+    if (/^!(?:mute|xidh)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+      const res = await whatsappManagerService.setGroupMute(message.chatId, true);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'group mute executed' };
+    }
+
+    if (/^!(?:unmute|fur)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+      const res = await whatsappManagerService.setGroupMute(message.chatId, false);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'group unmute executed' };
+    }
+
+    if (/^!(?:grouplink|link)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+      const res = await whatsappManagerService.getGroupInviteLink(message.chatId);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'grouplink executed' };
+    }
+
+    if (/^!groupinfo$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+      const res = await whatsappManagerService.getGroupInfo(message.chatId);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'groupinfo executed' };
+    }
+
+    // ─── 1j. Profile & Account Management Commands ────────────────────────────
+    if (/^!setname\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!setname\s+(.+)$/i);
+      const newName = match![1].trim();
+      const res = await whatsappManagerService.updateProfileName(newName);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'setname executed' };
+    }
+
+    if (/^!(?:setbio|setstatus)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!(?:setbio|setstatus)\s+(.+)$/i);
+      const newBio = match![1].trim();
+      const res = await whatsappManagerService.updateProfileBio(newBio);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'setbio executed' };
+    }
+
+    if (/^!(?:setpp|setpfp)$/i.test(lowerText.trim()) && isAdminUser) {
+      if (message.media?.type === 'image' && message.media.dataBase64) {
+        const buffer = Buffer.from(message.media.dataBase64, 'base64');
+        const res = await whatsappManagerService.updateProfilePicture(buffer);
+        await transport.sendMessage(message.chatId, res.message);
+      } else {
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sawir soo dir adigoo qoraal ahaan ku soo raacinaya `!setpp`');
+      }
+      return { handled: true, reason: 'setpp executed' };
+    }
+
+    if (/^!block\s+([0-9+]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!block\s+([0-9+]+)$/i);
+      const target = match![1].trim();
+      const res = await whatsappManagerService.blockUser(target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'block executed' };
+    }
+
+    if (/^!unblock\s+([0-9+]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^!unblock\s+([0-9+]+)$/i);
+      const target = match![1].trim();
+      const res = await whatsappManagerService.unblockUser(target);
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'unblock executed' };
+    }
+
+    if (/^!(?:delete|tirtir)$/i.test(lowerText.trim()) && isAdminUser && message.quotedMessageId) {
+      if (transport.deleteMessage) {
+        await transport.deleteMessage(message.chatId, message.quotedMessageId, message.quotedParticipant);
+        await transport.sendMessage(message.chatId, '🗑️ Fariintii waa la tirtiray.');
+      } else {
+        await transport.sendMessage(message.chatId, '⚠️ Transport-ku ma taageerayo tirtiridda fariimaha.');
+      }
+      return { handled: true, reason: 'delete executed' };
+    }
+
+    if (/^!react\s+(.+)$/i.test(text) && isAdminUser && message.quotedMessageId) {
+      const match = text.match(/^!react\s+(.+)$/i);
+      const emoji = match![1].trim();
+      if (transport.reactToMessage) {
+        await transport.reactToMessage(message.chatId, message.quotedMessageId, emoji, message.quotedParticipant);
+      }
+      return { handled: true, reason: 'react executed' };
+    }
+
+    // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
+    if (
+      /^\!(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      !isAdminUser
+    ) {
+      console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);
+      if (!message.isGroup) {
+        await transport.sendMessage(
+          message.chatId,
+          '⛔ *[CARDOSO AI — AMNI]*: Amarkan waxaa isticmaali kara oo kaliya Mulkiilaha WhatsApp-ka (Admin-ka). Fadlan adigu su\'aalahaaga caadiga ah i weydii! 😊'
+        );
+      }
+      return { handled: true, reason: 'Unauthorized admin command blocked' };
     }
 
     // 1d. Handle incoming contacts document (.vcf, .csv, .txt) sent by admin
@@ -413,6 +781,16 @@ export class MessageRouter {
         { replyToMessageId: message.id }
       );
       return { handled: false, reason: 'Rate limited' };
+    }
+
+    // 6b. Check custom auto-reply keywords before invoking AI
+    if (this.memory?.findMatchingAutoReply) {
+      const autoReply = await this.memory.findMatchingAutoReply(queryText || text);
+      if (autoReply) {
+        console.log(`⚡ [Router Auto-Reply] Jawaab toos ah oo kaydsan ayaa loo helay "${text}": "${autoReply.substring(0, 45)}..."`);
+        await transport.sendMessage(message.chatId, autoReply, { replyToMessageId: message.id });
+        return { handled: true, reason: 'Matched custom auto-reply' };
+      }
     }
 
     // 7. Process message through Advisor Engine (pass media attachment if present)
