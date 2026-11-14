@@ -165,6 +165,7 @@ export class MessageRouter {
       const helpText =
         `🌟 *[CARDOSO AI — AWOODDA MAAMULKA WHATSAPP 100%]* 🌟\n\n` +
         `📱 *WHATSAPP STATUS (STORIES):*\n` +
+        `• \`!view on/off\` (ama \`view on/off\`) — ⭐ *HAL AMAR OO WADA JIRA*: Daawashada (Seen) + Falcelinta Emoji + Faallada AI\n` +
         `• \`!status <fariin>\` — Post garee status qoraal ah (midabbo qurxoon leh)\n` +
         `• \`!status\` (Sawir/Cod/Video la socdo) — Post garee sawir, muuqaal ama cod status ah\n` +
         `• \`!status-ai [mawduuc]\` — AI ayaa soo saaraya status dhiirigelin ah oo toos u dhigaya\n` +
@@ -217,23 +218,56 @@ export class MessageRouter {
       return { handled: true, reason: 'AI Status generated and posted' };
     }
 
-    if (/^[!./#]?(?:autoview)(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^[!./#]?(?:autoview)(?:\s+(on|off))?$/i);
+    // ─── 1f. All-in-One Master Status View Command (view on/off / !view on/off) ──
+    if (/^[!./#]?(?:view|autoview)(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:view|autoview)(?:\s+(on|off))?$/i);
+      const isExplicitAutoviewOnly = /^autoview/i.test(text.replace(/^[!./#]/, ''));
       const mode = match?.[1]?.toLowerCase();
+
       if (mode === 'on') {
         whatsappManagerService.setAutoViewStatus(true);
-        await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *SHIDAY (ON)*! Hadda bot-ku wuxuu si toos ah u daawan doonaa dhammaan status-yada cusub ee ay dadku soo dhigaan. ✅');
+        // If user used "view on" (or !view on), activate ALL 3: Seen + Reaction + AI Comment!
+        if (!isExplicitAutoviewOnly) {
+          statusReactorService.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both' });
+          await transport.sendMessage(
+            message.chatId,
+            '👁️✨ *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *SHIDAY (ON)*!\n\n' +
+            'Hadda bot-ku hal mar ayuu dhammaan si toos ah u wada qabanayaa:\n' +
+            '✅ *Auto-View (Seen)*: Wuxuu daawanayaa dhammaan status-yada (views ayaad ka mid noqonaysaa).\n' +
+            '✅ *Auto-React (Emoji)*: Wuxuu status-ka ku dhufanayaa emoji dabiici ah (❤️, 😂, 👏, 🔥, 🤲).\n' +
+            '✅ *Auto-Comment (AI)*: Wuxuu si dabiici ah ugu reply-garaynayaa faallo Soomaali ah oo diirran!\n\n' +
+            '_Bot-ku wuxuu u dhaqmayaa sida qof caadi ah oo kale!_ 😊'
+          );
+        } else {
+          await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *SHIDAY (ON)*! Hadda bot-ku wuxuu si toos ah u daawan doonaa dhammaan status-yada cusub ee ay dadku soo dhigaan. ✅');
+        }
       } else if (mode === 'off') {
         whatsappManagerService.setAutoViewStatus(false);
-        await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *DAMIDAY (OFF)*! Bot-ku ma daawan doono status-yada. 🛑');
+        if (!isExplicitAutoviewOnly) {
+          statusReactorService.setConfig({ enabled: false, autoReact: false, autoComment: false });
+          await transport.sendMessage(
+            message.chatId,
+            '🛑 *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *DAMIDAY (OFF)*!\n\n' +
+            'Bot-ku ma daawan doono status-yada, mana bixin doono wax falcelin (React) ama faallo (Comment) ah.'
+          );
+        } else {
+          await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *DAMIDAY (OFF)*! Bot-ku ma daawan doono status-yada. 🛑');
+        }
       } else {
-        const current = whatsappManagerService.isAutoViewStatusEnabled();
+        const viewOn = whatsappManagerService.isAutoViewStatusEnabled();
+        const sr = statusReactorService.getConfig();
         await transport.sendMessage(
           message.chatId,
-          `👁️ *[Auto-View Status]*: Xaaladda hadda waa: *${current ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!autoview on\` ama \`!autoview off\``
+          `👁️ *[CARDOSO AI — ALL-IN-ONE VIEW STATUS]*:\n\n` +
+          `• *Auto-View (Seen)*: ${viewOn ? '✅ ON' : '🛑 OFF'}\n` +
+          `• *Auto-React (Emoji)*: ${sr.autoReact ? '✅ ON' : '🛑 OFF'}\n` +
+          `• *Auto-Comment (AI)*: ${sr.autoComment ? '✅ ON' : '🛑 OFF'}\n\n` +
+          `Si aad hal mar u wada shido ama u wada damiso dhammaantood, qor:\n` +
+          `👉 \`!view on\` (ama \`view on\`)\n` +
+          `👉 \`!view off\` (ama \`view off\`)`
         );
       }
-      return { handled: true, reason: 'Auto-view status toggled' };
+      return { handled: true, reason: 'All-in-one view command toggled' };
     }
 
     // ─── Status AI Reactor: Auto Reaction Toggling ─────────────────────────
@@ -641,7 +675,7 @@ export class MessageRouter {
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

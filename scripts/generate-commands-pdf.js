@@ -394,6 +394,14 @@ export function generateCommandsPDF() {
   );
 
   doc.addCommandCard(
+    '!view on / off   (ama view on / off)',
+    '[ADMIN KALIYA — ALL-IN-ONE]',
+    '⭐ HAL AMAR OO WADA JIRA: Daawashada (Seen) + Falcelinta (React) + Faallada AI (Comment) hal mar wada shid ama wada dami!',
+    'view on   ama   view off',
+    'Marka aad qorto "view on", bot-ku wuxuu qof kasta u daawanayaa status-ka, wuxuuna kaga bixinayaa emoji iyo faallo Soomaali ah!'
+  );
+
+  doc.addCommandCard(
     '!autoview on / off',
     '[ADMIN KALIYA]',
     'Shid ama dami in bot-ku si toos ah u daawado dhammaan status-yada cusub ee ay dadku soo dhigaan (Auto Seen).',
@@ -689,6 +697,7 @@ export function generateCommandsPDF() {
     ['!status <fariin>', 'Admin Only', 'WhatsApp Status qoraal ah soo dhig', '!status Maalin wacan'],
     ['!status (Media)', 'Admin Only', 'Sawir/Cod/Video Status ka dhig', 'Sawir + caption !status'],
     ['!status-ai', 'Admin Only', 'AI Status dhiirigelin ah curi', '!status-ai waxbarasho'],
+    ['!view on/off', 'Admin Only', 'All-in-One: Seen + React + Comment', 'view on / view off'],
     ['!autoview on/off', 'Admin Only', 'Daawashada tooska ah ee status-ka', '!autoview on'],
     ['!statusreact on/off', 'Admin Only', 'Falcelinta emoji-ga ee status-ka', '!statusreact on'],
     ['!statuscomment on/off', 'Admin Only', 'Faallada tooska ah ee status-ka', '!statuscomment on'],

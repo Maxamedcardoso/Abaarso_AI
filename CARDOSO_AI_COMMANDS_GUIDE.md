@@ -42,6 +42,8 @@ Bot-kan waxaa lagu dhisay nidaam ammaan oo heer sare ah (**Strict Role-Based Acc
 
 | Amarka | Sida Loo Isticmaalo | Waxa Uu Qabanayo | Cidda Isticmaalaysa |
 | :--- | :--- | :--- | :--- |
+| `!view on` (ama `view on`) | `view on` | ⭐ **HAL AMAR OO WADA JIRA**: Daawashada (Auto-Seen) + Falcelinta Emoji (React) + Faallada AI (Comment) hal mar wada shid! | **Admin Only** |
+| `!view off` (ama `view off`) | `view off` | ⭐ **ALL OFF**: Hal mar wada dami daawashada, falcelinta emoji-ga iyo faallada status-yada. | **Admin Only** |
 | `!status <qoraal>` | `!status Soo dhawaada asxaabtayda!` | Waxay WhatsApp Status u soo dhigaysaa qoraalkaaga oo midab qurux badan leh. | **Admin Only** |
 | `!status #color <qoraal>` | `!status #10b981 Jimce Mubaarak!` | Status leh midab aad adigu dooratay (HEX Color). | **Admin Only** |
 | `!status-ai <dulucda>` | `!status-ai dhiirrigelin ganacsi` | Gemini AI ayaa soo saaraysa xikmad/oraah heer sare ah oo Soomaali ah kuna dhigaysa status-kaaga. | **Admin Only** |

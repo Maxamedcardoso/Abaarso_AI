@@ -232,6 +232,24 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     });
   });
 
+  app.post('/api/status/master-view', (req: Request, res: Response) => {
+    const { enabled } = req.body;
+    const isEn = Boolean(enabled);
+    whatsappManagerService.setAutoViewStatus(isEn);
+    const updated = statusReactorService.setConfig({
+      enabled: isEn,
+      autoReact: isEn,
+      autoComment: isEn,
+      mode: 'both',
+    });
+    res.json({
+      status: 'ok',
+      autoView: whatsappManagerService.isAutoViewStatusEnabled(),
+      config: updated,
+      message: `All-in-One Status Suite is now ${isEn ? 'ENABLED (ALL ON)' : 'DISABLED (ALL OFF)'}`,
+    });
+  });
+
   // ─── 10. Direct Reply & Messaging Endpoint ─────────────────────────────────
   app.post('/api/direct-reply', async (req: Request, res: Response) => {
     try {
@@ -883,6 +901,14 @@ function renderStudioHTML(): string {
 
           <hr style="border-color:var(--card-border); margin:1.25rem 0;" />
 
+          <div style="background:linear-gradient(135deg, rgba(6,182,212,0.18), rgba(16,185,129,0.18)); border:1px solid rgba(6,182,212,0.35); border-radius:12px; padding:0.9rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-weight:700; font-size:0.95rem; color:#38bdf8;">⭐ Hal Amar: All-in-One View (view on / off)</div>
+              <div style="font-size:0.75rem; color:#cbd5e1; margin-top:0.25rem;">Hal mar wada shid ama wada dami Daawashada (Seen) + Falcelinta (React) + Faallada (Comment)</div>
+            </div>
+            <button id="masterViewBtn" class="btn btn-primary" style="width:auto; padding:0.45rem 1rem; font-size:0.8rem; font-weight:700; background:linear-gradient(135deg, #10b981, #06b6d4);" onclick="toggleMasterView()">WADA SHID (ALL ON)</button>
+          </div>
+
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <div>
               <div style="font-weight:700; font-size:0.9rem;">Auto-View Status (Auto Seen)</div>
@@ -1270,6 +1296,7 @@ function renderStudioHTML(): string {
       const commentBtn = document.getElementById('srCommentBtn');
       const modeSelect = document.getElementById('srMode');
       const cdSelect = document.getElementById('srCooldown');
+      const masterBtn = document.getElementById('masterViewBtn');
 
       if (reactBtn) {
         reactBtn.innerText = srConfig.autoReact ? 'ON (Furan)' : 'OFF (Xidhan)';
@@ -1281,6 +1308,34 @@ function renderStudioHTML(): string {
       }
       if (modeSelect) modeSelect.value = srConfig.mode || 'both';
       if (cdSelect) cdSelect.value = String(srConfig.cooldownHours || 4);
+
+      if (masterBtn) {
+        const isAllOn = autoViewCurrent && srConfig.autoReact && srConfig.autoComment;
+        masterBtn.innerText = isAllOn ? 'WADA DAMI (ALL OFF)' : 'WADA SHID (ALL ON)';
+        masterBtn.style.background = isAllOn ? '#ef4444' : 'linear-gradient(135deg, #10b981, #06b6d4)';
+      }
+    }
+
+    async function toggleMasterView() {
+      const isAllActive = autoViewCurrent && srConfig.autoReact && srConfig.autoComment;
+      const targetState = !isAllActive;
+      try {
+        const res = await fetch('/api/status/master-view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: targetState })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          autoViewCurrent = Boolean(data.autoView);
+          srConfig = data.config;
+          updateAutoViewUI();
+          updateStatusReactorUI();
+          showToast(targetState ? '👁️✨ All-in-One View: WAA LA WADA SHIDAY (ALL ON)!' : '🛑 All-in-One View: WAA LA WADA DAMIYAY (ALL OFF)!');
+        }
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
     }
 
     async function toggleStatusReactor(field) {

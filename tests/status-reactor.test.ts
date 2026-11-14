@@ -1,5 +1,6 @@
 import { TestSuite, assertEqual, assertTrue, assertFalse } from './runner.js';
 import { StatusReactorService, statusReactorService } from '../src/services/status-reactor.service.js';
+import { whatsappManagerService } from '../src/services/whatsapp-manager.service.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
@@ -305,6 +306,112 @@ suite.test('MessageRouter administrative commands control Status Reactor setting
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
     if (fs.existsSync('./data/test_sr_config.json')) fs.unlinkSync('./data/test_sr_config.json');
+  } catch {}
+});
+
+suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen, React, and Comment', async () => {
+  try {
+    if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+  } catch {}
+
+  const memory = new SQLiteStudentMemory(testDb);
+  await memory.initialize();
+  const ai = new AIOrchestrator(config);
+  const engine = new StudentAdvisorEngine(memory, ai);
+
+  const testConfig = {
+    ...config,
+    security: {
+      ...config.security,
+      adminPhoneNumbers: ['252610000099'],
+    },
+  };
+
+  const router = new MessageRouter(engine, testConfig as any);
+  const transport = new ConsoleSimulatorTransport();
+  await transport.start();
+
+  let lastOutboundMessage = '';
+  transport.sendMessage = async (chatId: string, text: string) => {
+    lastOutboundMessage = text;
+    return true;
+  };
+
+  // 1. Admin turns everything OFF using "view off" (no exclamation)
+  const resOff = await router.handleIncomingMessage(
+    {
+      id: 'msg_adm_view_off',
+      senderId: '252610000099',
+      chatId: 'direct_admin',
+      isGroup: false,
+      content: 'view off',
+      rawTimestamp: Date.now(),
+      isMentioned: true,
+    },
+    transport
+  );
+  assertTrue(resOff.handled, 'view off should be handled');
+  assertFalse(whatsappManagerService.isAutoViewStatusEnabled(), 'Auto view must be false');
+  assertFalse(statusReactorService.getConfig().autoReact, 'Auto react must be false');
+  assertFalse(statusReactorService.getConfig().autoComment, 'Auto comment must be false');
+  assertTrue(lastOutboundMessage.includes('DAMIDAY'), 'Confirmation should state all are disabled');
+
+  // 2. Admin turns everything ON using "!view on" (with exclamation)
+  const resOn = await router.handleIncomingMessage(
+    {
+      id: 'msg_adm_view_on',
+      senderId: '252610000099',
+      chatId: 'direct_admin',
+      isGroup: false,
+      content: '!view on',
+      rawTimestamp: Date.now(),
+      isMentioned: true,
+    },
+    transport
+  );
+  assertTrue(resOn.handled, '!view on should be handled');
+  assertTrue(whatsappManagerService.isAutoViewStatusEnabled(), 'Auto view must be true');
+  assertTrue(statusReactorService.getConfig().autoReact, 'Auto react must be true');
+  assertTrue(statusReactorService.getConfig().autoComment, 'Auto comment must be true');
+  assertEqual(statusReactorService.getConfig().mode, 'both', 'Mode must be set to both');
+  assertTrue(lastOutboundMessage.includes('SHIDAY'), 'Confirmation should state all are enabled');
+
+  // 3. Admin asks for "view" status summary
+  const resSummary = await router.handleIncomingMessage(
+    {
+      id: 'msg_adm_view_status',
+      senderId: '252610000099',
+      chatId: 'direct_admin',
+      isGroup: false,
+      content: 'view',
+      rawTimestamp: Date.now(),
+      isMentioned: true,
+    },
+    transport
+  );
+  assertTrue(resSummary.handled, 'view status summary should be handled');
+  assertTrue(lastOutboundMessage.includes('ALL-IN-ONE VIEW STATUS'), 'Should show view summary');
+
+  // 4. Non-admin attempting "view on" is blocked by security guard
+  const resBlocked = await router.handleIncomingMessage(
+    {
+      id: 'msg_unauth_view_on',
+      senderId: '252619999000',
+      chatId: 'direct_unauth',
+      isGroup: false,
+      content: 'view on',
+      rawTimestamp: Date.now(),
+      isMentioned: true,
+    },
+    transport
+  );
+  assertTrue(resBlocked.handled, 'Unauthorized view command must be handled');
+  assertEqual(resBlocked.reason, 'Unauthorized admin command blocked', 'Must be blocked by security');
+
+  await transport.stop();
+  await memory.close();
+  try {
+    if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
   } catch {}
 });
 
