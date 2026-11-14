@@ -388,11 +388,63 @@ suite.test('Unauthorized users are strictly blocked from executing admin/managem
   assertTrue(strangerKick.handled, 'Stranger kick must be blocked');
   assertEqual(strangerKick.reason, 'Unauthorized admin command blocked');
 
+  // Test !statusviews admin command
+  let sentViewsMsg = '';
+  const viewsTransport: any = {
+    sendMessage: async (chatId: string, text: string) => {
+      sentViewsMsg = text;
+      return true;
+    },
+  };
+
+  const viewsRes = await router.handleIncomingMessage({
+    id: 'msg_statusviews_1',
+    senderId: '252634949642@s.whatsapp.net',
+    senderName: 'Maxamed Daahir',
+    chatId: '252634949642@s.whatsapp.net',
+    isGroup: false,
+    content: '!statusviews',
+    rawTimestamp: Date.now(),
+    isMentioned: false,
+    isFromMe: false,
+  }, viewsTransport);
+
+  assertTrue(viewsRes.handled, '!statusviews command should be handled');
+  assertEqual(viewsRes.reason, 'Status views displayed');
+  assertTrue(sentViewsMsg.includes('DAAWADEYAASHA STATUS-KA'), 'Should show status views header');
+
   await mockTransport.stop();
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
   } catch {}
+});
+
+suite.test('Status View Tracking & Viewer Reports', () => {
+  // 1. Post a new status
+  whatsappManagerService.recordPostedStatus('test_status_viewer_id', 'text', 'Xigmad maanta', '#1e3c72', 15);
+
+  // 2. Record 2 status views
+  const view1 = whatsappManagerService.recordStatusView('test_status_viewer_id', '252634111222@s.whatsapp.net', Date.now());
+  assertTrue(view1.recorded, 'View 1 should be recorded');
+  assertEqual(view1.count, 1, 'View count should be 1');
+
+  const view2 = whatsappManagerService.recordStatusView('test_status_viewer_id', '252634333444@s.whatsapp.net', Date.now());
+  assertTrue(view2.recorded, 'View 2 should be recorded');
+  assertEqual(view2.count, 2, 'View count should be 2');
+
+  // 3. Duplicate view from same person should not increase total count
+  const viewDuplicate = whatsappManagerService.recordStatusView('test_status_viewer_id', '252634111222@s.whatsapp.net', Date.now());
+  assertTrue(viewDuplicate.recorded, 'Duplicate view should update');
+  assertEqual(viewDuplicate.count, 2, 'View count should still be 2');
+
+  // 4. Retrieve status views report
+  const report = whatsappManagerService.getStatusViews('test_status_viewer_id');
+  assertTrue(report.found, 'Status must be found');
+  assertEqual(report.totalViews, 2, 'Total views must be 2');
+  assertTrue(report.formattedReport.includes('252634111222'), 'Report must list viewer 1');
+  assertTrue(report.formattedReport.includes('252634333444'), 'Report must list viewer 2');
+  assertTrue(report.formattedReport.includes('Xigmad maanta'), 'Report must show status text');
 });
 
 suite.run().then(summary => {

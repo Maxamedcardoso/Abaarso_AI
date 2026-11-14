@@ -346,6 +346,7 @@ SHURUUCDA DUGSIIYA:
         `• \`!view on/off\` (ama \`view on/off\`) — ⭐ *HAL AMAR OO WADA JIRA*: Daawashada (Seen) + Falcelinta Emoji + Faallada AI\n` +
         `• \`!status <fariin>\` — Post garee status qoraal ah (midabbo qurxoon leh)\n` +
         `• \`!status\` (Sawir/Cod/Video la socdo) — Post garee sawir, muuqaal ama cod status ah\n` +
+        `• \`!statusviews\` (ama \`!daawadeyaasha\`) — Eeg liiska dadka daawatay status-kaaga (Magaca, Lambarka, Waqtiga)\n` +
         `• \`!status-ai [mawduuc]\` — AI ayaa soo saaraya status dhiirigelin ah oo toos u dhigaya\n` +
         `• \`!deletestatus [id]\` (ama \`!tirtirstatus\`) — Tirtir status-kaaga ugu dambeeyay ama mid gaar ah (Delete for everyone)\n` +
         `• \`!autoview on/off\` — Daaro ama dami in bot-ku si toos ah u daawado status-yada dadka (Auto Seen)\n` +
@@ -523,6 +524,15 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Status cooldown updated' };
     }
 
+    // ─── Status Views & Live Viewers Tracking ("cid daawatay") ──────────────
+    if (/^[!./#]?(?:statusviews|statusviewers|daawadeyaasha|daawadayaasha|status-views)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:statusviews|statusviewers|daawadeyaasha|daawadayaasha|status-views)(?:\s+(.+))?$/i);
+      const targetId = match?.[1]?.trim();
+      const res = whatsappManagerService.getStatusViews(targetId);
+      await transport.sendMessage(message.chatId, res.formattedReport);
+      return { handled: true, reason: 'Status views displayed' };
+    }
+
     // ─── Status AI Reactor: Status Info & Overview ──────────────────────────
     if (/^[!./#]?(?:statusinfo|statusreactor)\b/i.test(lowerText) && isAdminUser) {
       const cfg = statusReactorService.getConfig();
@@ -531,8 +541,14 @@ SHURUUCDA DUGSIIYA:
         ? recent.slice(0, 5).map(r => `• ${r.type === 'reaction' ? '❤️ React' : '💬 Comment'}: "${r.content}" ➔ ${r.senderName || r.senderJid} (${r.category})`).join('\n')
         : '_Wali ma jiraan falcelino la diiwaangeliyay._';
 
+      const viewsSummary = whatsappManagerService.getStatusViews();
+      const lastStatusLine = viewsSummary.found && viewsSummary.status
+        ? `• *Status-kaaga u dambeeyay*: ${viewsSummary.status.content ? `"${viewsSummary.status.content.slice(0, 32)}..."` : `[${viewsSummary.status.type}]`} (*${viewsSummary.totalViews} qof ayaa daawatay*)\n`
+        : `• *Status-kaaga u dambeeyay*: _Wali ma jiro status cusub oo diiwaangashan_\n`;
+
       const infoText =
-        `🌟 *[CARDOSO AI — STATUS AI REACTOR]* 🌟\n\n` +
+        `🌟 *[CARDOSO AI — STATUS AI REACTOR & VIEWS]* 🌟\n\n` +
+        lastStatusLine +
         `• *Auto-View (Seen)*: ${whatsappManagerService.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-React (Emoji)*: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-Comment (AI)*: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'}\n` +
@@ -540,7 +556,8 @@ SHURUUCDA DUGSIIYA:
         `• *Cooldown*: *${cfg.cooldownHours} Saacadood* qofkiiba\n` +
         `• *Delay Dabiici ah*: ${cfg.minDelaySeconds}s - ${cfg.maxDelaySeconds}s\n\n` +
         `📋 *FALCELINNADII UGU DAMBEEYAY:*\n${recentSummary}\n\n` +
-        `_Amarrada maamulka:_ \`!statusreact on/off\`, \`!statuscomment on/off\`, \`!statusmode both/reaction/comment\`, \`!statuscooldown <hours>\``;
+        `👁️ *Eeg cidda daawatay status-kaaga:* Qor \`!statusviews\`\n` +
+        `_Amarrada maamulka:_ \`!statusviews\`, \`!statusreact on/off\`, \`!statuscomment on/off\`, \`!statusmode both/reaction/comment\`, \`!statuscooldown <hours>\``;
 
       await transport.sendMessage(message.chatId, infoText);
       return { handled: true, reason: 'Status info displayed' };
@@ -882,7 +899,7 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletestatus|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletestatus|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

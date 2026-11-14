@@ -289,6 +289,22 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
+    // ─── Status View Receipts & Live Viewer Tracking ("cid daawatay") ────────
+    this.socket.ev.on('message-receipt.update', (receipts) => {
+      for (const item of receipts) {
+        if (item.key?.remoteJid === 'status@broadcast' && item.receipt?.userJid) {
+          const statusId = item.key.id || '';
+          const viewerJid = item.receipt.userJid;
+          const readTimestamp = item.receipt.readTimestamp || (item.receipt as any).receiptTimestamp;
+
+          const result = whatsappManagerService.recordStatusView(statusId, viewerJid, readTimestamp);
+          if (result.recorded) {
+            console.log(`👁️ [Status View] Qof ayaa daawatay status-kaaga: ${result.viewerName || viewerJid} (Wadarta: ${result.count})`);
+          }
+        }
+      }
+    });
+
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
       const nowSec = Math.floor(Date.now() / 1000);
 

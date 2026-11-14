@@ -1,4 +1,6 @@
 import { WASocket, proto } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import path from 'path';
 import { broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
@@ -7,6 +9,22 @@ export interface PostStatusOptions {
   backgroundColor?: string;
   font?: number;
   statusJidList?: string[];
+}
+
+export interface StatusViewerRecord {
+  jid: string;
+  name?: string;
+  timestamp: number;
+}
+
+export interface PostedStatusRecord {
+  id: string;
+  timestamp: number;
+  type: 'text' | 'image' | 'video' | 'audio';
+  content?: string;
+  backgroundColor?: string;
+  recipientsCount: number;
+  viewers: StatusViewerRecord[];
 }
 
 export interface GroupInfo {
@@ -25,12 +43,217 @@ export class WhatsAppManagerService {
   private botJid: string = '';
   private aiOrchestrator: AIOrchestrator | null = null;
   private lastPostedStatusKeys: Array<{ id: string; timestamp: number }> = [];
+  private readonly statusStoragePath: string = path.join(process.cwd(), 'data', 'posted-statuses.json');
+  private postedStatuses: Map<string, PostedStatusRecord> = new Map();
 
-  public recordPostedStatus(id: string): void {
-    this.lastPostedStatusKeys.push({ id, timestamp: Date.now() });
+  constructor() {
+    this.loadPersistedStatuses();
+  }
+
+  private loadPersistedStatuses(): void {
+    try {
+      if (fs.existsSync(this.statusStoragePath)) {
+        const raw = fs.readFileSync(this.statusStoragePath, 'utf8');
+        const list: PostedStatusRecord[] = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (item?.id) {
+              this.postedStatuses.set(item.id, {
+                ...item,
+                viewers: Array.isArray(item.viewers) ? item.viewers : [],
+              });
+              this.lastPostedStatusKeys.push({ id: item.id, timestamp: item.timestamp || Date.now() });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to load persisted statuses: ${e?.message}`);
+    }
+  }
+
+  private savePersistedStatuses(): void {
+    try {
+      const dir = path.dirname(this.statusStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const list = Array.from(this.postedStatuses.values());
+      fs.writeFileSync(this.statusStoragePath, JSON.stringify(list, null, 2), 'utf8');
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to save persisted statuses: ${e?.message}`);
+    }
+  }
+
+  public recordPostedStatus(
+    id: string,
+    type: 'text' | 'image' | 'video' | 'audio' = 'text',
+    content?: string,
+    backgroundColor?: string,
+    recipientsCount: number = 0
+  ): void {
+    const timestamp = Date.now();
+    this.lastPostedStatusKeys.push({ id, timestamp });
     if (this.lastPostedStatusKeys.length > 50) {
       this.lastPostedStatusKeys.shift();
     }
+
+    const record: PostedStatusRecord = {
+      id,
+      timestamp,
+      type,
+      content,
+      backgroundColor,
+      recipientsCount,
+      viewers: [],
+    };
+    this.postedStatuses.set(id, record);
+
+    if (this.postedStatuses.size > 50) {
+      const oldestKey = this.postedStatuses.keys().next().value;
+      if (oldestKey) this.postedStatuses.delete(oldestKey);
+    }
+
+    this.savePersistedStatuses();
+  }
+
+  public recordStatusView(
+    statusId: string,
+    viewerJid: string,
+    viewTimestamp?: number
+  ): { recorded: boolean; count: number; viewerName?: string; statusId?: string } {
+    const cleanViewerJid = this.toCleanUserJid(viewerJid) || viewerJid;
+    const ts = viewTimestamp
+      ? (viewTimestamp > 1e11 ? viewTimestamp : viewTimestamp * 1000)
+      : Date.now();
+
+    let targetRecord: PostedStatusRecord | undefined = this.postedStatuses.get(statusId);
+
+    if (!targetRecord && this.postedStatuses.size > 0) {
+      for (const [id, record] of this.postedStatuses.entries()) {
+        if (id === statusId || statusId.includes(id) || id.includes(statusId)) {
+          targetRecord = record;
+          break;
+        }
+      }
+      if (!targetRecord) {
+        const sorted = Array.from(this.postedStatuses.values()).sort((a, b) => b.timestamp - a.timestamp);
+        if (sorted.length > 0 && Date.now() - sorted[0].timestamp < 24 * 3600 * 1000) {
+          targetRecord = sorted[0];
+        }
+      }
+    }
+
+    if (targetRecord) {
+      const viewerName = broadcastService.getContactName(cleanViewerJid) || undefined;
+      const existingIdx = targetRecord.viewers.findIndex(v => v.jid === cleanViewerJid);
+      if (existingIdx >= 0) {
+        targetRecord.viewers[existingIdx].timestamp = ts;
+        if (viewerName) targetRecord.viewers[existingIdx].name = viewerName;
+      } else {
+        targetRecord.viewers.push({
+          jid: cleanViewerJid,
+          name: viewerName,
+          timestamp: ts,
+        });
+      }
+
+      this.savePersistedStatuses();
+      return {
+        recorded: true,
+        count: targetRecord.viewers.length,
+        viewerName,
+        statusId: targetRecord.id,
+      };
+    }
+
+    return { recorded: false, count: 0 };
+  }
+
+  public getStatusViews(statusId?: string): {
+    found: boolean;
+    status?: PostedStatusRecord;
+    formattedReport: string;
+    totalViews: number;
+    recentStatuses: Array<{ id: string; content?: string; timestamp: number; totalViews: number }>;
+  } {
+    let record: PostedStatusRecord | undefined;
+    if (statusId) {
+      record = this.postedStatuses.get(statusId);
+      if (!record) {
+        for (const [id, r] of this.postedStatuses.entries()) {
+          if (id === statusId || statusId.includes(id) || id.includes(statusId)) {
+            record = r;
+            break;
+          }
+        }
+      }
+    } else {
+      const sorted = Array.from(this.postedStatuses.values()).sort((a, b) => b.timestamp - a.timestamp);
+      record = sorted[0];
+    }
+
+    const allRecent = Array.from(this.postedStatuses.values())
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 5)
+      .map(s => ({
+        id: s.id,
+        content: s.content,
+        timestamp: s.timestamp,
+        totalViews: s.viewers.length,
+      }));
+
+    if (!record) {
+      return {
+        found: false,
+        formattedReport:
+          `ℹ️ *[CARDOSO AI — DAAWADEYAASHA STATUS-KA]* 👁️\n\n` +
+          `Ma jiro status aad dhowaan soo dhigtay oo diiwaangashan.\n` +
+          `Si aad status cusub u soo dhigto, qor:\n` +
+          `• \`!status <fariin>\` (Qoraal)\n` +
+          `• Ama sawir/muuqaal/cod soo dir adigoo qoraal uga dhigaya \`!status\`.`,
+        totalViews: 0,
+        recentStatuses: allRecent,
+      };
+    }
+
+    const formatTime = (ts: number) => {
+      const d = new Date(ts);
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    };
+
+    const statusTypeLabel = record.type === 'text' ? 'Qoraal' : record.type === 'image' ? 'Sawir' : record.type === 'video' ? 'Muuqaal' : 'Cod';
+    const statusPreview = record.content ? `"${record.content}"` : `[${statusTypeLabel}]`;
+    const totalViews = record.viewers.length;
+
+    let viewersListStr = '';
+    if (totalViews === 0) {
+      viewersListStr = `⏳ _Wali cidna ma daawan status-kan. Marka ay dadku daawadaan, liiskooda tooska ah ayaa halkan ku soo bixi doona._`;
+    } else {
+      const sortedViewers = [...record.viewers].sort((a, b) => b.timestamp - a.timestamp);
+      const lines = sortedViewers.map((v, i) => {
+        const phone = v.jid.split('@')[0];
+        const displayName = v.name ? `${v.name} (+${phone})` : `+${phone}`;
+        return `${i + 1}. 👤 *${displayName}* — 🕒 _${formatTime(v.timestamp)}_`;
+      });
+      viewersListStr = lines.join('\n');
+    }
+
+    const report =
+      `📊 *[CARDOSO AI — DAAWADEYAASHA STATUS-KA]* 👁️\n\n` +
+      `📝 *Status:* ${statusPreview}\n` +
+      `📌 *Nooca:* ${statusTypeLabel}${record.backgroundColor ? ` (${record.backgroundColor})` : ''}\n` +
+      `⏰ *Waqtiga la dhigay:* ${formatTime(record.timestamp)}\n` +
+      `👥 *Wadarta Daawatay:* *${totalViews} Qof*\n\n` +
+      `👁️ *LIISKA DADKA DAAWATAY:*\n` +
+      `${viewersListStr}\n\n` +
+      `💡 _Talo: Bot-ku wuxuu si toos ah u duubaa ilbiriqsi kasta oo qof daawado, xitaa haddii aysan kaaga soo muuqan tab-ka taleefanka._`;
+
+    return {
+      found: true,
+      status: record,
+      formattedReport: report,
+      totalViews,
+      recentStatuses: allRecent,
+    };
   }
 
   public async deleteStatusById(statusId: string): Promise<{ success: boolean; message: string }> {
@@ -53,6 +276,9 @@ export class WhatsAppManagerService {
         sendOpts.statusJidList = recipients;
       }
       await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
+      this.postedStatuses.delete(cleanId);
+      this.lastPostedStatusKeys = this.lastPostedStatusKeys.filter(k => k.id !== cleanId);
+      this.savePersistedStatuses();
       console.log(`🗑️ [WhatsApp Status] Status-kii (${cleanId}) waa la tirtiray dhammaan (Delete for everyone)!`);
       return {
         success: true,
@@ -68,14 +294,22 @@ export class WhatsAppManagerService {
     if (!this.socket) {
       return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).' };
     }
-    const last = this.lastPostedStatusKeys.pop();
-    if (!last) {
+    let lastId = '';
+    const sorted = Array.from(this.postedStatuses.values()).sort((a, b) => b.timestamp - a.timestamp);
+    if (sorted.length > 0) {
+      lastId = sorted[0].id;
+    } else if (this.lastPostedStatusKeys.length > 0) {
+      const item = this.lastPostedStatusKeys.pop();
+      lastId = item?.id || '';
+    }
+
+    if (!lastId) {
       return {
         success: false,
         message: '⚠️ Ma jiro status dhowaan la soo dhigay oo la kaydiyay.\nHaddii aad haysato ID-ga status-ka, isticmaal: `!deletestatus <message_id>` ama fariinta status-ka reply ku dheh `!delete`.',
       };
     }
-    return await this.deleteStatusById(last.id);
+    return await this.deleteStatusById(lastId);
   }
 
   public setSocket(socket: WASocket | null): void {
@@ -235,7 +469,7 @@ export class WhatsAppManagerService {
       );
 
       if (sent?.key?.id) {
-        this.recordPostedStatus(sent.key.id);
+        this.recordPostedStatus(sent.key.id, 'text', cleanText, chosenColor, targetRecipients.length);
       }
 
       const visibilityNote = targetRecipients.length > 0
@@ -245,7 +479,7 @@ export class WhatsAppManagerService {
       console.log(`📢 [WhatsApp Status] Status text posted successfully to ${targetRecipients.length} recipients! (${cleanText.slice(0, 45)}...)`);
       return {
         success: true,
-        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• U muuqashada: ${visibilityNote}`,
+        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• U muuqashada: ${visibilityNote}\n• 👁️ Eeg cidda daawatay: Qor \`!statusviews\``,
         messageId: sent?.key?.id || undefined,
       };
     } catch (err: any) {
@@ -313,7 +547,7 @@ export class WhatsAppManagerService {
       }
 
       if (sent?.key?.id) {
-        this.recordPostedStatus(sent.key.id);
+        this.recordPostedStatus(sent.key.id, media.type, media.caption, options?.backgroundColor, targetRecipients.length);
       }
 
       const visibilityNote = targetRecipients.length > 0
@@ -323,7 +557,7 @@ export class WhatsAppManagerService {
       console.log(`📢 [WhatsApp Status] Media status (${media.type}) posted successfully to ${targetRecipients.length} recipients!`);
       return {
         success: true,
-        message: `✅ Sawirka/Codka/Muuqaalka si guul leh ayaa loogu soo dhigay WhatsApp Status!\n• U muuqashada: ${visibilityNote}`,
+        message: `✅ Sawirka/Codka/Muuqaalka si guul leh ayaa loogu soo dhigay WhatsApp Status!\n• U muuqashada: ${visibilityNote}\n• 👁️ Eeg cidda daawatay: Qor \`!statusviews\``,
         messageId: sent?.key?.id || undefined,
       };
     } catch (err: any) {

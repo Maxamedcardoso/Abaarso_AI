@@ -13,13 +13,14 @@ baileys_auth_info/
 auth_info_baileys/
 *.session
 
-# Local SQLite databases
+# Local SQLite databases & runtime data
 data/*.db
 data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 data/*.sqlite
 data/*.sqlite3
+data/*.json
 
 # Build output
 dist/
