@@ -712,7 +712,7 @@ function renderStudioHTML(): string {
     </div>
     <div id="statusBadge" class="status-badge status-waiting">
       <div class="status-dot"></div>
-      <span id="statusText">Checking WhatsApp...</span>
+      <span id="connStatusText">Checking WhatsApp...</span>
     </div>
   </header>
 
@@ -784,7 +784,10 @@ function renderStudioHTML(): string {
           <div class="card-desc">Scan garee QR-ka hoose taleefankaaga WhatsApp-kiisa si bot-ku toos ugu bilaabo shaqada.</div>
 
           <div id="qrArea" class="qr-container">
-            <div class="qr-image-wrapper">
+            <div id="qrLoading" style="color:#94a3b8; font-size:0.85rem; padding:1.5rem; text-align:center;">
+              ⏳ Fadlan sug... QR Code-ka WhatsApp ayaa la diyaarinayaa...
+            </div>
+            <div class="qr-image-wrapper" id="qrWrapper" style="display:none;">
               <img id="qrImage" src="" alt="WhatsApp QR Code" />
             </div>
             <div class="qr-instructions">
@@ -994,24 +997,31 @@ function renderStudioHTML(): string {
         const data = await res.json();
 
         const badge = document.getElementById('statusBadge');
-        const statusText = document.getElementById('statusText');
+        const statusText = document.getElementById('connStatusText');
         const qrArea = document.getElementById('qrArea');
         const connectedArea = document.getElementById('connectedArea');
+        const qrWrapper = document.getElementById('qrWrapper');
+        const qrLoading = document.getElementById('qrLoading');
 
         if (data.isConnected) {
           badge.className = 'status-badge status-connected';
-          statusText.innerText = 'Connected: +' + (data.botNumber || 'Active');
+          if (statusText) statusText.innerText = 'Connected: +' + (data.botNumber || 'Active');
           qrArea.style.display = 'none';
           connectedArea.style.display = 'block';
           document.getElementById('connectedPhone').innerText = '+' + (data.botNumber || 'WhatsApp');
         } else {
           badge.className = 'status-badge status-waiting';
-          statusText.innerText = 'Sugaya Scan-ka...';
+          if (statusText) statusText.innerText = 'Sugaya Scan-ka...';
           qrArea.style.display = 'flex';
           connectedArea.style.display = 'none';
 
           if (data.currentQR) {
             document.getElementById('qrImage').src = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(data.currentQR);
+            if (qrWrapper) qrWrapper.style.display = 'inline-block';
+            if (qrLoading) qrLoading.style.display = 'none';
+          } else {
+            if (qrWrapper) qrWrapper.style.display = 'none';
+            if (qrLoading) qrLoading.style.display = 'block';
           }
         }
 
@@ -1205,7 +1215,16 @@ function renderStudioHTML(): string {
           for (const ar of data.autoReplies) {
             const item = document.createElement('div');
             item.style.cssText = 'background:#090e1a; padding:0.5rem 0.75rem; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #1f293d; font-size:0.8rem;';
-            item.innerHTML = '<div><strong>"' + escapeHtml(ar.keyword) + '"</strong> ➔ <span style="color:#94a3b8;">' + escapeHtml(ar.replyText) + '</span></div><button onclick="deleteAutoReply(\'' + encodeURIComponent(ar.keyword) + '\')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; margin-left:0.5rem;">✕</button>';
+            const contentDiv = document.createElement('div');
+            contentDiv.innerHTML = '<strong>"' + escapeHtml(ar.keyword) + '"</strong> ➔ <span style="color:#94a3b8;">' + escapeHtml(ar.replyText) + '</span>';
+            const delBtn = document.createElement('button');
+            delBtn.style.cssText = 'background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; margin-left:0.5rem; font-size:1rem;';
+            delBtn.innerText = '✕';
+            delBtn.onclick = function() {
+              deleteAutoReply(encodeURIComponent(ar.keyword));
+            };
+            item.appendChild(contentDiv);
+            item.appendChild(delBtn);
             list.appendChild(item);
           }
         } else {
