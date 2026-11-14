@@ -66,6 +66,22 @@ export class MediaProcessorService {
         current = current.protocolMessage.editedMessage;
         continue;
       }
+      if (current.deviceSentMessage?.message) {
+        current = current.deviceSentMessage.message;
+        continue;
+      }
+      if (current.associatedChildMessage?.message) {
+        current = current.associatedChildMessage.message;
+        continue;
+      }
+      if (current.groupMentionedMessage?.message) {
+        current = current.groupMentionedMessage.message;
+        continue;
+      }
+      if (current.botInvokeMessage?.message) {
+        current = current.botInvokeMessage.message;
+        continue;
+      }
       break;
     }
 

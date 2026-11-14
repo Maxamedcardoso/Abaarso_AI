@@ -5,6 +5,7 @@ import makeWASocket, {
   WASocket,
   downloadContentFromMessage,
   downloadMediaMessage,
+  getBinaryNodeChild,
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -30,6 +31,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private recentSentTexts: Set<string> = new Set();
   private outboundQueue: OutboundQueue = new OutboundQueue(200, 400);
   private sessionExpired: boolean = false;
+  /** Message IDs whose real content has already been dispatched (dedupes PDO resend vs. re-emit). */
+  private processedMessageIds: Set<string> = new Set();
+  /** View-Once stubs waiting for the retry / phone resend to deliver real content. */
+  private pendingViewOnce: Map<string, NodeJS.Timeout> = new Map();
+  private viewOnceFallbackSent: Set<string> = new Set();
 
   constructor(authDir: string = './baileys_auth_info') {
     this.authDir = authDir;
@@ -180,7 +186,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     };
 
     // Baileys multi-device emits 'messaging-history.set' with full initial sync of chats & contacts
-    this.socket.ev.on('messaging-history.set', ({ chats, contacts }: any) => {
+    this.socket.ev.on('messaging-history.set', ({ chats, contacts, messages }: any) => {
+      // On-demand history may carry a View-Once message we are still waiting for
+      if (Array.isArray(messages)) {
+        for (const m of messages) {
+          if (m?.message && m?.key?.id && this.pendingViewOnce.has(m.key.id)) {
+            this.processIncomingBaileysMessage(m, 'history').catch(err =>
+              console.error('[WhatsAppBaileys] Error processing history View-Once message:', err)
+            );
+          }
+        }
+      }
       if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
       if (Array.isArray(chats)) chats.forEach(syncContactEntry);
       console.log(`📋 [Contacts Sync] Synchronized ${broadcastService.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
@@ -235,332 +251,518 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
+    // ─── View-Once (1️⃣) raw stanza hook ─────────────────────────────────────
+    // WhatsApp delivers View-Once media to linked devices as <unavailable type="view_once"/>
+    // WITHOUT an <enc> payload. Baileys skips the retry receipt for these, so we send one
+    // ourselves (with pre-keys) asking the sender's device to re-encrypt it for this device.
+    const rawWs: any = (this.socket as any).ws;
+    rawWs?.on?.('CB:message', (node: any) => {
+      try {
+        const unavailable = getBinaryNodeChild(node, 'unavailable');
+        const enc = getBinaryNodeChild(node, 'enc');
+        if (unavailable && !enc) {
+          console.log(`👁️‍🗨️ [View-Once Stanza] type=${unavailable.attrs?.type || '?'} id=${node.attrs?.id} from=${node.attrs?.from} — codsanaya retry + resend...`);
+          const sock: any = this.socket;
+          if (sock?.sendRetryRequest) {
+            Promise.resolve(sock.sendRetryRequest(node, true)).catch((e: any) =>
+              console.warn(`[WhatsAppBaileys] View-Once retry request failed: ${e?.message}`)
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] CB:message hook error: ${err?.message}`);
+      }
+    });
+
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
+      const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
-        if (!msg.message) continue;
-
-        // Cache raw message so we can safely quote it in replies AND recover View Once media when quoted
-        if (msg.key?.id) {
-          this.rawMessages.set(msg.key.id, msg);
-          if (this.rawMessages.size > 1000) {
-            const oldest = this.rawMessages.keys().next().value;
-            if (oldest) this.rawMessages.delete(oldest);
-          }
-        }
-
-        const chatId = msg.key.remoteJid || '';
-        const isGroup = chatId.endsWith('@g.us');
-        const senderId = msg.key.participant || msg.key.remoteJid || '';
-
-        // Always record sender WhatsApp profile pushName (both in DMs and group participant profiles)
-        if (!msg.key.fromMe && msg.pushName) {
-          const targetProfileJid = isGroup ? (msg.key.participant || '') : chatId;
-          if (broadcastService.isValidIndividualJid(targetProfileJid)) {
-            broadcastService.recordContact(targetProfileJid, msg.pushName, false, true);
-          }
-        }
-
-        // ─── Unwrap View Once ("one-click" 1️⃣), Ephemeral & Detect Message Type ──
-        const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
-        const innerMsg = unwrapped.message;
-        const msgType = unwrapped.msgType;
-        const isViewOnce = unwrapped.isViewOnce;
-        const isAudio = unwrapped.mediaKind === 'audio';
-        const isImage = unwrapped.mediaKind === 'image';
-        const isVideo = unwrapped.mediaKind === 'video';
-        const isDocument = unwrapped.mediaKind === 'document';
-        const isMedia = Boolean(unwrapped.mediaKind);
-
-        // Extract clean text from text, extended text, or media caption
-        const text =
-          innerMsg.conversation ||
-          innerMsg.extendedTextMessage?.text ||
-          innerMsg.imageMessage?.caption ||
-          innerMsg.videoMessage?.caption ||
-          innerMsg.documentMessage?.caption ||
-          (isAudio ? (isViewOnce ? '🎙️ [View Once Voice Note]' : '🎙️ [Voice Note]') : '') ||
-          '';
-
-        // Ingest native WhatsApp shared contact cards (Share Contacts via WhatsApp)
-        if (innerMsg.contactMessage?.vcard) {
-          const res = broadcastService.importFromText(innerMsg.contactMessage.vcard);
-          console.log(`👤 [WhatsApp Contact Shared]: Processed vCard (${res.added} new added).`);
-        }
-        if (innerMsg.contactsArrayMessage?.contacts) {
-          let totalAdded = 0;
-          for (const c of innerMsg.contactsArrayMessage.contacts) {
-            if (c.vcard) {
-              const res = broadcastService.importFromText(c.vcard);
-              totalAdded += res.added;
-            }
-          }
-          console.log(`👥 [WhatsApp Contacts Shared]: Processed contacts batch (${totalAdded} new added).`);
-        }
-
-        // Skip completely empty non-media messages
-        if (!text.trim() && !isMedia && !innerMsg.contactMessage && !innerMsg.contactsArrayMessage) continue;
-
-        // ─── Log incoming message ─────────────────────────────────────────────────
-        const mediaTag = isViewOnce ? '(VIEW-ONCE 1️⃣ MEDIA) ' : isMedia ? '(MEDIA) ' : '';
-        if (isGroup) {
-          console.log(`\n📩 [Group ${mediaTag}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
-        } else {
-          console.log(`\n📩 [Private ${mediaTag}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
-        }
-
-        // ─── Download & encode media (including View Once 1️⃣) to base64 for Gemini ─
-        let mediaAttachment: { type: 'image' | 'audio' | 'document' | 'video'; mimeType: string; dataBase64: string; fileName?: string; isViewOnce?: boolean } | undefined;
-        if (isMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && unwrapped.mediaKind) {
+        // 1. Primary phone answered our placeholder-resend (PDO) request → decode the real message(s)
+        const resent = this.extractPdoResendMessages(msg);
+        for (const recovered of resent) {
+          console.log(`📥 [PDO Resend] Taleefanka ayaa dib u soo diray fariin (id=${recovered?.key?.id}).`);
           try {
-            const stream = await downloadContentFromMessage(unwrapped.mediaContent as any, unwrapped.baileysMediaType as any);
-            const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
-            const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
-            const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
-            mediaAttachment = {
-              type: unwrapped.mediaKind,
-              mimeType,
-              dataBase64,
-              fileName: (unwrapped.mediaContent as any)?.fileName,
-              isViewOnce,
-            };
-            if (isViewOnce) {
-              console.log(`👁️‍🗨️ [View-Once / One-Click 1️⃣] Si guul leh ayaa loo furay oo loo akhriyay ${unwrapped.mediaKind} (${mimeType})!`);
-            }
-          } catch (mediaErr: any) {
-            console.warn(`[WhatsAppBaileys] Media download failed (${mediaErr?.message}), trying downloadMediaMessage fallback...`);
-            try {
-              const buffer = await downloadMediaMessage(
-                { key: msg.key, message: innerMsg } as any,
-                'buffer',
-                {},
-                {
-                  logger: pino({ level: 'silent' }) as any,
-                  reuploadRequest: this.socket ? this.socket.updateMediaMessage : (async (m: any) => m),
-                }
-              );
-              if (buffer && Buffer.isBuffer(buffer) && buffer.length > 0) {
-                const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
-                const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
-                mediaAttachment = {
-                  type: unwrapped.mediaKind,
-                  mimeType,
-                  dataBase64: buffer.toString('base64'),
-                  fileName: (unwrapped.mediaContent as any)?.fileName,
-                  isViewOnce,
-                };
-                console.log(`✅ [WhatsAppBaileys] Fallback downloadMediaMessage succeeded for ${unwrapped.mediaKind}!`);
-              }
-            } catch (fallbackErr: any) {
-              console.warn(`[WhatsAppBaileys] Fallback media download also failed: ${fallbackErr?.message}`);
-            }
-          }
-        }
-
-        // ─── Extract contextInfo from ALL possible message types (including unwrapped View Once) ──
-        // CRITICAL: For voice notes (audioMessage), contextInfo is on audioMessage, NOT extendedTextMessage!
-        // We must check every container type to correctly detect "reply to bot" in groups.
-        const contextInfoRaw =
-          innerMsg.audioMessage?.contextInfo ||
-          innerMsg.ptvMessage?.contextInfo ||
-          innerMsg.extendedTextMessage?.contextInfo ||
-          innerMsg.imageMessage?.contextInfo ||
-          innerMsg.documentMessage?.contextInfo ||
-          innerMsg.videoMessage?.contextInfo ||
-          innerMsg.stickerMessage?.contextInfo ||
-          msg.message.audioMessage?.contextInfo ||
-          msg.message.ptvMessage?.contextInfo ||
-          msg.message.extendedTextMessage?.contextInfo ||
-          msg.message.imageMessage?.contextInfo ||
-          msg.message.documentMessage?.contextInfo ||
-          msg.message.videoMessage?.contextInfo ||
-          undefined;
-
-        // Support Quoted Media (including when user quotes a View Once 1️⃣ voice note, photo, or video!)
-        const quotedStanzaIdForMedia = contextInfoRaw?.stanzaId || '';
-        const cachedOriginalMsg = quotedStanzaIdForMedia ? this.rawMessages.get(quotedStanzaIdForMedia) : undefined;
-        const quotedUnwrapped = contextInfoRaw?.quotedMessage
-          ? MediaProcessorService.unwrapMessage(contextInfoRaw.quotedMessage)
-          : null;
-        const cachedUnwrapped = cachedOriginalMsg?.message
-          ? MediaProcessorService.unwrapMessage(cachedOriginalMsg.message)
-          : null;
-
-        // Prefer quotedUnwrapped if it has valid mediaKey + (url or directPath); otherwise recover from cachedOriginalMsg!
-        const quotedHasKeys = Boolean(
-          quotedUnwrapped?.mediaContent?.mediaKey &&
-          (quotedUnwrapped?.mediaContent?.url || quotedUnwrapped?.mediaContent?.directPath)
-        );
-        const effectiveQuoted = quotedHasKeys
-          ? quotedUnwrapped
-          : (cachedUnwrapped?.mediaContent ? cachedUnwrapped : quotedUnwrapped);
-
-        const hasQuotedMedia = !mediaAttachment && Boolean(effectiveQuoted?.mediaContent && effectiveQuoted?.baileysMediaType && effectiveQuoted?.mediaKind);
-
-        if (hasQuotedMedia && effectiveQuoted) {
-          try {
-            const stream = await downloadContentFromMessage(
-              effectiveQuoted.mediaContent as any,
-              effectiveQuoted.baileysMediaType as any
-            );
-            const rawMime = (effectiveQuoted.mediaContent as any)?.mimetype || '';
-            const mimeType = MediaProcessorService.getMimeType(effectiveQuoted.msgType, rawMime);
-            const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
-            mediaAttachment = {
-              type: effectiveQuoted.mediaKind!,
-              mimeType,
-              dataBase64,
-              fileName: (effectiveQuoted.mediaContent as any)?.fileName,
-              isViewOnce: effectiveQuoted.isViewOnce,
-            };
-            console.log(`📎 [Quoted ${effectiveQuoted.isViewOnce ? 'View-Once 1️⃣ ' : ''}Media] Si guul leh ayaa loo soo dejiyay ${effectiveQuoted.mediaKind} laga soo xigtay chat-ka!`);
-          } catch (quotedErr: any) {
-            console.warn(`[WhatsAppBaileys] Quoted media download failed: ${quotedErr?.message}`);
-          }
-        }
-
-        // ─── ANTI-LOOP & ECHO GUARDS ─────────────────────────────────────────────
-        // 1. Skip if message ID is known to be sent by this bot
-        if (msg.key?.id && this.botSentMessageIds.has(msg.key.id)) {
-          continue;
-        }
-
-        const lowerText = text.toLowerCase().trim();
-
-        // 2. Echo Protection: Ignore exact text recently sent by this bot
-        if (lowerText && this.recentSentTexts.has(lowerText)) {
-          continue;
-        }
-
-        // 3. Signature Protection: Drop any message containing bot tags/error banners
-        if (
-          lowerText.includes('[cardoso ai]') ||
-          lowerText.includes('[cardoso ai cooldown]') ||
-          lowerText.includes('xadkii daqiiqada') ||
-          lowerText.includes('server-ku wuxuu gaadhay xadkii') ||
-          lowerText.includes('gemini api request failed')
-        ) {
-          continue;
-        }
-
-        // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', broadcast commands, or Abaarso triggers
-        const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
-        const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
-        const hasAbaarsoCommand =
-          lowerText.includes('@abaarso') ||
-          lowerText.startsWith('!abaarso') ||
-          /\b@abaarso\b/i.test(lowerText) ||
-          /\b!abaarso\b/i.test(lowerText);
-        const hasBroadcastCommand =
-          lowerText.startsWith('!fariin') ||
-          lowerText.startsWith('!barasho') ||
-          lowerText.startsWith('!broadcast') ||
-          lowerText.startsWith('!contacts') ||
-          lowerText.startsWith('!liis') ||
-          lowerText.startsWith('!xiriir') ||
-          lowerText.startsWith('!jooji') ||
-          lowerText.startsWith('!dar') ||
-          lowerText.startsWith('!add') ||
-          lowerText.startsWith('!kudar') ||
-          lowerText.startsWith('!shub') ||
-          lowerText.startsWith('!import') ||
-          lowerText.startsWith('!load-contacts') ||
-          lowerText.startsWith('!admin');
-
-        const isContactsDoc = Boolean(
-          mediaAttachment?.type === 'document' &&
-          /\.(vcf|csv|txt)$/i.test(mediaAttachment.fileName || '')
-        );
-
-        const hasCardosoMention =
-          lowerText.includes('@cardoso') ||
-          lowerText.startsWith('!cardoso') ||
-          hasVoiceCommand ||
-          hasImageCommand ||
-          hasBroadcastCommand ||
-          hasAbaarsoCommand ||
-          isContactsDoc;
-
-        // 4. Strict fromMe Handling:
-        // Any message sent by the bot or from the host phone (fromMe):
-        // Allow if the host explicitly typed '!cardoso', '@cardoso', '@cod', '@sawir', or broadcast commands '!fariin', '!broadcast', '!contacts', '!jooji'
-        if (msg.key.fromMe) {
-          if (!hasCardosoMention) {
-            continue;
-          }
-        }
-
-        // ─── Bot JID & LID extraction ─────────────────────────────────────────────
-        // In WhatsApp groups (multi-device), participants are identified by their LID
-        // (Linked Device Identifier, e.g. 277923424645192@lid), NOT by phone JID!
-        // So we must check BOTH botJid (phone) AND botLid (lid) against quotedSender.
-        const botJidRaw = this.socket?.user?.id || '';
-        const botLidRaw = (this.socket?.user as any)?.lid || '';
-        // Extract numeric/alphanum portion before "@"
-        const botJid = botJidRaw.split(':')[0].split('@')[0];
-        const botLid = botLidRaw.split(':')[0].split('@')[0];
-
-        // contextInfoRaw was already extracted above from the correct message container
-        const quotedSender = contextInfoRaw?.participant || '';
-        const quotedStanzaId = contextInfoRaw?.stanzaId || '';
-
-        // isReplyingToBot: true when user swipes-to-reply on ANY bot message in group
-        // — matches by phone JID, LID, or stanzaId tracked in botSentMessageIds Set.
-        const isReplyingToBot = Boolean(
-          !msg.key.fromMe &&
-          (
-            (quotedSender && botJid && quotedSender.includes(botJid)) ||
-            (quotedSender && botLid && quotedSender.includes(botLid)) ||
-            (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId))
-          )
-        );
-
-        if (isReplyingToBot) {
-          console.log(`💬 [Reply Detected] Ardaygu wuxuu reply ugu sameeyay bot-ka! quotedSender=${quotedSender} botJid=${botJid} botLid=${botLid} stanzaId=${quotedStanzaId}`);
-        }
-
-        // In 1-on-1 private DM: ALWAYS respond (no need to type @cardoso).
-        // In group chats: respond if @mentioned, !cardoso prefix, or replied-to-bot.
-        // For voice/media in groups specifically: also allow if isReplyingToBot (swipe-reply voice note).
-        const mentionedJids: string[] = contextInfoRaw?.mentionedJid || [];
-        const isMentioned =
-          !isGroup ||
-          isReplyingToBot ||
-          mentionedJids.some((j: string) => (botJid && j.includes(botJid)) || (botLid && j.includes(botLid))) ||
-          hasCardosoMention;
-
-        // For media in groups, skip if not mentioned/replied-to (avoid processing every group photo/video)
-        if (isMedia && isGroup && !isMentioned) continue;
-
-        const incoming: IncomingMessage = {
-          id: msg.key.id || `baileys_${Date.now()}`,
-          senderId,
-          senderName: msg.pushName || undefined,
-          chatId,
-          isGroup,
-          content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]' : isVideo || mediaAttachment?.type === 'video' ? '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
-          rawTimestamp: (msg.messageTimestamp as number) * 1000 || Date.now(),
-          isMentioned,
-          isFromMe: Boolean(msg.key.fromMe),
-          replyToMessageId: msg.key.id || undefined,
-          media: mediaAttachment,
-        };
-
-        if (this.messageHandler) {
-          // Immediately show typing presence to user so they know bot is actively formulating response
-          if (this.socket) {
-            this.socket.sendPresenceUpdate('composing', chatId).catch(() => {});
-          }
-
-          try {
-            await this.messageHandler(incoming);
+            await this.processIncomingBaileysMessage(recovered, 'pdo');
           } catch (err) {
-            console.error('[WhatsAppBaileys] Error processing message:', err);
+            console.error('[WhatsAppBaileys] Error processing PDO resend message:', err);
           }
+        }
+
+        // 2. 'append' batches (offline / buffered events) are only accepted when they are
+        //    recent incoming messages or a View-Once message we are actively waiting for.
+        if (type !== 'notify') {
+          const id = msg.key?.id || '';
+          const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
+          const isRecent = ts > 0 && nowSec - ts <= 120;
+          const isPending = Boolean(id && this.pendingViewOnce.has(id));
+          if (msg.key?.fromMe || !(isRecent || isPending)) continue;
+        }
+
+        try {
+          await this.processIncomingBaileysMessage(msg, type);
+        } catch (err) {
+          console.error('[WhatsAppBaileys] Error processing message:', err);
         }
       }
     });
+  }
+
+  /** Converts number / Long / string timestamps to a plain number (seconds). */
+  private static toNumber(value: any): number {
+    if (value == null) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value?.toNumber === 'function') return value.toNumber();
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /** Decodes PEER_DATA_OPERATION placeholder-resend responses into full WebMessageInfo objects. */
+  private extractPdoResendMessages(msg: any): any[] {
+    const results =
+      msg?.message?.protocolMessage?.peerDataOperationRequestResponseMessage?.peerDataOperationResult || [];
+    const out: any[] = [];
+    for (const r of results) {
+      const bytes = r?.placeholderMessageResendResponse?.webMessageInfoBytes;
+      if (!bytes) continue;
+      try {
+        out.push(proto.WebMessageInfo.decode(bytes));
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] Failed decoding PDO webMessageInfoBytes: ${err?.message}`);
+      }
+    }
+    return out;
+  }
+
+  private isSelfChat(chatId: string): boolean {
+    const num = chatId.split('@')[0].split(':')[0];
+    const botNum = this.getBotNumber();
+    const botLid = ((this.socket?.user as any)?.lid || '').split(':')[0].split('@')[0];
+    return Boolean(num && ((botNum && num === botNum) || (botLid && num === botLid)));
+  }
+
+  /**
+   * A View-Once stub (<unavailable type="view_once"/>) arrived without content.
+   * Wait for the retry / phone resend to deliver the real message; if WhatsApp never
+   * releases it to this linked device, reply helpfully instead of staying silent.
+   */
+  private handleViewOnceStub(msg: any): void {
+    const id: string = msg.key?.id || '';
+    if (!id || this.processedMessageIds.has(id) || this.pendingViewOnce.has(id)) return;
+
+    const chatId: string = msg.key.remoteJid || '';
+    const isGroup = chatId.endsWith('@g.us');
+    const fromMe = Boolean(msg.key.fromMe);
+    console.log(`\n👁️‍🗨️ [View-Once 1️⃣ Stub] Fariin hal-mar-la-arko ayaa timid (id=${id}, chat=${chatId}). Waxaa la sugayaa in dib loo soo diro...`);
+
+    // Ask the primary phone again (no-op if Baileys already requested it)
+    const sock: any = this.socket;
+    if (sock?.requestPlaceholderResend) {
+      Promise.resolve(
+        sock.requestPlaceholderResend({ remoteJid: chatId, fromMe, id, participant: msg.key.participant || undefined })
+      ).catch(() => {});
+    }
+
+    const timer = setTimeout(() => {
+      this.pendingViewOnce.delete(id);
+      if (this.processedMessageIds.has(id)) return;
+      console.warn(`⚠️ [View-Once 1️⃣] WhatsApp ma u oggolaan linked device-ka inuu furo fariinta (id=${id}).`);
+      // Groups: stay quiet (we cannot know whether the bot was addressed). Host's own outgoing
+      // View-Once to other people must never trigger a reply in that person's chat.
+      if (isGroup) return;
+      if (fromMe && !this.isSelfChat(chatId)) return;
+      this.sendViewOnceFallback(chatId, id).catch(err =>
+        console.error('[WhatsAppBaileys] View-Once fallback reply failed:', err)
+      );
+    }, 12000);
+
+    this.pendingViewOnce.set(id, timer);
+  }
+
+  /** Natural Somali voice (or text) reply asking the user to resend View-Once media normally. */
+  private async sendViewOnceFallback(chatId: string, messageId?: string): Promise<void> {
+    if (messageId) {
+      if (this.viewOnceFallbackSent.has(messageId)) return;
+      this.viewOnceFallbackSent.add(messageId);
+      if (this.viewOnceFallbackSent.size > 300) {
+        const oldest = this.viewOnceFallbackSent.values().next().value;
+        if (oldest) this.viewOnceFallbackSent.delete(oldest);
+      }
+    }
+
+    const notice =
+      'Walaal, fariinta aad ii soo dirtay waxay ahayd *View Once (1️⃣)*, WhatsApp-kuna ma oggola in aaladaha ku xiran (linked devices) ay furaan fariimaha hal-mar-la-arko, sidaas darteed ma maqlin oo ma arkin. 🔒\n\n' +
+      'Fadlan mar kale ii soo dir adigoo *aan dooran 1️⃣* (cod ama sawir caadi ah), isla markiiba waan dhagaysanayaa/eegayaa oo kuugu jawaabayaa! 🎙️✅';
+
+    let voiceSent = false;
+    try {
+      const voice = await VoiceReplyService.synthesizeVoice(notice, 'so');
+      if (voice) {
+        voiceSent = await this.sendMedia(chatId, {
+          type: 'audio',
+          dataBuffer: voice.buffer,
+          mimeType: voice.mimeType || 'audio/mpeg',
+          ptt: true,
+        }, messageId ? { replyToMessageId: messageId } : undefined);
+      }
+    } catch (vErr: any) {
+      console.warn(`[WhatsAppBaileys] View-Once fallback voice synthesis failed: ${vErr?.message}`);
+    }
+    if (!voiceSent) {
+      await this.sendMessage(chatId, notice, messageId ? { replyToMessageId: messageId } : undefined);
+    }
+    console.log(`📨 [View-Once 1️⃣] Qofka waxaa loo diray jawaab ku saabsan fariinta hal-mar-la-arko.`);
+  }
+
+  private async processIncomingBaileysMessage(msg: any, source: string): Promise<void> {
+    if (!msg?.key) return;
+
+    // View-Once stub without content → wait for retry/resend, never stay silent
+    if (!msg.message) {
+      if ((msg.key as any)?.isViewOnce) {
+        this.handleViewOnceStub(msg);
+      }
+      return;
+    }
+
+    if (msg.key.id && this.processedMessageIds.has(msg.key.id)) return;
+
+    // Cache raw message so we can safely quote it in replies AND recover View Once media when quoted
+    if (msg.key?.id) {
+      this.rawMessages.set(msg.key.id, msg);
+      if (this.rawMessages.size > 1000) {
+        const oldest = this.rawMessages.keys().next().value;
+        if (oldest) this.rawMessages.delete(oldest);
+      }
+    }
+
+    const chatId = msg.key.remoteJid || '';
+    const isGroup = chatId.endsWith('@g.us');
+    const senderId = msg.key.participant || msg.participant || msg.key.remoteJid || '';
+
+    // Always record sender WhatsApp profile pushName (both in DMs and group participant profiles)
+    if (!msg.key.fromMe && msg.pushName) {
+      const targetProfileJid = isGroup ? (msg.key.participant || '') : chatId;
+      if (broadcastService.isValidIndividualJid(targetProfileJid)) {
+        broadcastService.recordContact(targetProfileJid, msg.pushName, false, true);
+      }
+    }
+
+    // ─── Unwrap View Once ("one-click" 1️⃣), Ephemeral & Detect Message Type ──
+    const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
+    const innerMsg = unwrapped.message;
+    const msgType = unwrapped.msgType;
+    const isViewOnce = unwrapped.isViewOnce || Boolean((msg.key as any)?.isViewOnce);
+    const isAudio = unwrapped.mediaKind === 'audio';
+    const isImage = unwrapped.mediaKind === 'image';
+    const isVideo = unwrapped.mediaKind === 'video';
+    const isDocument = unwrapped.mediaKind === 'document';
+    const isMedia = Boolean(unwrapped.mediaKind);
+
+    // Extract clean text from text, extended text, or media caption
+    const text =
+      innerMsg.conversation ||
+      innerMsg.extendedTextMessage?.text ||
+      innerMsg.imageMessage?.caption ||
+      innerMsg.videoMessage?.caption ||
+      innerMsg.documentMessage?.caption ||
+      (isAudio ? (isViewOnce ? '🎙️ [View Once Voice Note]' : '🎙️ [Voice Note]') : '') ||
+      '';
+
+    // Ingest native WhatsApp shared contact cards (Share Contacts via WhatsApp)
+    if (innerMsg.contactMessage?.vcard) {
+      const res = broadcastService.importFromText(innerMsg.contactMessage.vcard);
+      console.log(`👤 [WhatsApp Contact Shared]: Processed vCard (${res.added} new added).`);
+    }
+    if (innerMsg.contactsArrayMessage?.contacts) {
+      let totalAdded = 0;
+      for (const c of innerMsg.contactsArrayMessage.contacts) {
+        if (c.vcard) {
+          const res = broadcastService.importFromText(c.vcard);
+          totalAdded += res.added;
+        }
+      }
+      console.log(`👥 [WhatsApp Contacts Shared]: Processed contacts batch (${totalAdded} new added).`);
+    }
+
+    // Skip completely empty non-media messages
+    if (!text.trim() && !isMedia && !innerMsg.contactMessage && !innerMsg.contactsArrayMessage) return;
+
+    // Real content arrived → mark processed (dedupes PDO path vs. Baileys re-emit) & cancel View-Once wait
+    if (msg.key.id) {
+      this.processedMessageIds.add(msg.key.id);
+      if (this.processedMessageIds.size > 2000) {
+        const oldest = this.processedMessageIds.values().next().value;
+        if (oldest) this.processedMessageIds.delete(oldest);
+      }
+      const pendingTimer = this.pendingViewOnce.get(msg.key.id);
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        this.pendingViewOnce.delete(msg.key.id);
+        console.log(`✅ [View-Once 1️⃣] Fariintii hal-mar-la-arko si guul leh ayaa loo helay (source=${source})!`);
+      }
+    }
+
+    // ─── Log incoming message ─────────────────────────────────────────────────
+    const mediaTag = isViewOnce ? '(VIEW-ONCE 1️⃣ MEDIA) ' : isMedia ? '(MEDIA) ' : '';
+    if (isGroup) {
+      console.log(`\n📩 [Group ${mediaTag}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
+    } else {
+      console.log(`\n📩 [Private ${mediaTag}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
+    }
+
+    // ─── Download & encode media (including View Once 1️⃣) to base64 for Gemini ─
+    let mediaAttachment: { type: 'image' | 'audio' | 'document' | 'video'; mimeType: string; dataBase64: string; fileName?: string; isViewOnce?: boolean } | undefined;
+    if (isMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && unwrapped.mediaKind) {
+      try {
+        const stream = await downloadContentFromMessage(unwrapped.mediaContent as any, unwrapped.baileysMediaType as any);
+        const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
+        const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
+        const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
+        if (dataBase64) {
+          mediaAttachment = {
+            type: unwrapped.mediaKind,
+            mimeType,
+            dataBase64,
+            fileName: (unwrapped.mediaContent as any)?.fileName,
+            isViewOnce,
+          };
+          if (isViewOnce) {
+            console.log(`👁️‍🗨️ [View-Once / One-Click 1️⃣] Si guul leh ayaa loo furay oo loo akhriyay ${unwrapped.mediaKind} (${mimeType})!`);
+          }
+        }
+      } catch (mediaErr: any) {
+        console.warn(`[WhatsAppBaileys] Media download failed (${mediaErr?.message}), trying downloadMediaMessage fallback...`);
+        try {
+          const buffer = await downloadMediaMessage(
+            { key: msg.key, message: innerMsg } as any,
+            'buffer',
+            {},
+            {
+              logger: pino({ level: 'silent' }) as any,
+              reuploadRequest: this.socket ? this.socket.updateMediaMessage : (async (m: any) => m),
+            }
+          );
+          if (buffer && Buffer.isBuffer(buffer) && buffer.length > 0) {
+            const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
+            const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
+            mediaAttachment = {
+              type: unwrapped.mediaKind,
+              mimeType,
+              dataBase64: buffer.toString('base64'),
+              fileName: (unwrapped.mediaContent as any)?.fileName,
+              isViewOnce,
+            };
+            console.log(`✅ [WhatsAppBaileys] Fallback downloadMediaMessage succeeded for ${unwrapped.mediaKind}!`);
+          }
+        } catch (fallbackErr: any) {
+          console.warn(`[WhatsAppBaileys] Fallback media download also failed: ${fallbackErr?.message}`);
+        }
+      }
+    }
+
+    // ─── Extract contextInfo from ALL possible message types (including unwrapped View Once) ──
+    // CRITICAL: For voice notes (audioMessage), contextInfo is on audioMessage, NOT extendedTextMessage!
+    const contextInfoRaw =
+      innerMsg.audioMessage?.contextInfo ||
+      innerMsg.ptvMessage?.contextInfo ||
+      innerMsg.extendedTextMessage?.contextInfo ||
+      innerMsg.imageMessage?.contextInfo ||
+      innerMsg.documentMessage?.contextInfo ||
+      innerMsg.videoMessage?.contextInfo ||
+      innerMsg.stickerMessage?.contextInfo ||
+      msg.message.audioMessage?.contextInfo ||
+      msg.message.ptvMessage?.contextInfo ||
+      msg.message.extendedTextMessage?.contextInfo ||
+      msg.message.imageMessage?.contextInfo ||
+      msg.message.documentMessage?.contextInfo ||
+      msg.message.videoMessage?.contextInfo ||
+      undefined;
+
+    // Support Quoted Media (including when user quotes a View Once 1️⃣ voice note, photo, or video!)
+    const quotedStanzaIdForMedia = contextInfoRaw?.stanzaId || '';
+    const cachedOriginalMsg = quotedStanzaIdForMedia ? this.rawMessages.get(quotedStanzaIdForMedia) : undefined;
+    const quotedUnwrapped = contextInfoRaw?.quotedMessage
+      ? MediaProcessorService.unwrapMessage(contextInfoRaw.quotedMessage)
+      : null;
+    const cachedUnwrapped = cachedOriginalMsg?.message
+      ? MediaProcessorService.unwrapMessage(cachedOriginalMsg.message)
+      : null;
+
+    // Prefer quotedUnwrapped if it has valid mediaKey + (url or directPath); otherwise recover from cachedOriginalMsg!
+    const quotedHasKeys = Boolean(
+      quotedUnwrapped?.mediaContent?.mediaKey &&
+      (quotedUnwrapped?.mediaContent?.url || quotedUnwrapped?.mediaContent?.directPath)
+    );
+    const effectiveQuoted = quotedHasKeys
+      ? quotedUnwrapped
+      : (cachedUnwrapped?.mediaContent ? cachedUnwrapped : quotedUnwrapped);
+
+    const hasQuotedMedia = !mediaAttachment && Boolean(effectiveQuoted?.mediaContent && effectiveQuoted?.baileysMediaType && effectiveQuoted?.mediaKind);
+
+    if (hasQuotedMedia && effectiveQuoted) {
+      try {
+        const stream = await downloadContentFromMessage(
+          effectiveQuoted.mediaContent as any,
+          effectiveQuoted.baileysMediaType as any
+        );
+        const rawMime = (effectiveQuoted.mediaContent as any)?.mimetype || '';
+        const mimeType = MediaProcessorService.getMimeType(effectiveQuoted.msgType, rawMime);
+        const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
+        if (dataBase64) {
+          mediaAttachment = {
+            type: effectiveQuoted.mediaKind!,
+            mimeType,
+            dataBase64,
+            fileName: (effectiveQuoted.mediaContent as any)?.fileName,
+            isViewOnce: effectiveQuoted.isViewOnce,
+          };
+          console.log(`📎 [Quoted ${effectiveQuoted.isViewOnce ? 'View-Once 1️⃣ ' : ''}Media] Si guul leh ayaa loo soo dejiyay ${effectiveQuoted.mediaKind} laga soo xigtay chat-ka!`);
+        }
+      } catch (quotedErr: any) {
+        console.warn(`[WhatsAppBaileys] Quoted media download failed: ${quotedErr?.message}`);
+      }
+    }
+
+    // ─── ANTI-LOOP & ECHO GUARDS ─────────────────────────────────────────────
+    // 1. Skip if message ID is known to be sent by this bot
+    if (msg.key?.id && this.botSentMessageIds.has(msg.key.id)) {
+      return;
+    }
+
+    const lowerText = text.toLowerCase().trim();
+
+    // 2. Echo Protection: Ignore exact text recently sent by this bot
+    if (lowerText && this.recentSentTexts.has(lowerText)) {
+      return;
+    }
+
+    // 3. Signature Protection: Drop any message containing bot tags/error banners
+    if (
+      lowerText.includes('[cardoso ai]') ||
+      lowerText.includes('[cardoso ai cooldown]') ||
+      lowerText.includes('xadkii daqiiqada') ||
+      lowerText.includes('server-ku wuxuu gaadhay xadkii') ||
+      lowerText.includes('gemini api request failed')
+    ) {
+      return;
+    }
+
+    // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', broadcast commands, or Abaarso triggers
+    const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
+    const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
+    const hasAbaarsoCommand =
+      lowerText.includes('@abaarso') ||
+      lowerText.startsWith('!abaarso') ||
+      /\b@abaarso\b/i.test(lowerText) ||
+      /\b!abaarso\b/i.test(lowerText);
+    const hasBroadcastCommand =
+      lowerText.startsWith('!fariin') ||
+      lowerText.startsWith('!barasho') ||
+      lowerText.startsWith('!broadcast') ||
+      lowerText.startsWith('!contacts') ||
+      lowerText.startsWith('!liis') ||
+      lowerText.startsWith('!xiriir') ||
+      lowerText.startsWith('!jooji') ||
+      lowerText.startsWith('!dar') ||
+      lowerText.startsWith('!add') ||
+      lowerText.startsWith('!kudar') ||
+      lowerText.startsWith('!shub') ||
+      lowerText.startsWith('!import') ||
+      lowerText.startsWith('!load-contacts') ||
+      lowerText.startsWith('!admin');
+
+    const isContactsDoc = Boolean(
+      mediaAttachment?.type === 'document' &&
+      /\.(vcf|csv|txt)$/i.test(mediaAttachment.fileName || '')
+    );
+
+    const hasCardosoMention =
+      lowerText.includes('@cardoso') ||
+      lowerText.startsWith('!cardoso') ||
+      hasVoiceCommand ||
+      hasImageCommand ||
+      hasBroadcastCommand ||
+      hasAbaarsoCommand ||
+      isContactsDoc;
+
+    // 4. Strict fromMe Handling:
+    // Allow host messages only with explicit triggers — or a View-Once test sent to the bot's own chat
+    // (the bot itself never sends View-Once messages).
+    if (msg.key.fromMe) {
+      const isSelfViewOnceTest = isViewOnce && this.isSelfChat(chatId);
+      if (!hasCardosoMention && !isSelfViewOnceTest) {
+        return;
+      }
+    }
+
+    // ─── Bot JID & LID extraction ─────────────────────────────────────────────
+    const botJidRaw = this.socket?.user?.id || '';
+    const botLidRaw = (this.socket?.user as any)?.lid || '';
+    const botJid = botJidRaw.split(':')[0].split('@')[0];
+    const botLid = botLidRaw.split(':')[0].split('@')[0];
+
+    const quotedSender = contextInfoRaw?.participant || '';
+    const quotedStanzaId = contextInfoRaw?.stanzaId || '';
+
+    const isReplyingToBot = Boolean(
+      !msg.key.fromMe &&
+      (
+        (quotedSender && botJid && quotedSender.includes(botJid)) ||
+        (quotedSender && botLid && quotedSender.includes(botLid)) ||
+        (quotedStanzaId && this.botSentMessageIds.has(quotedStanzaId))
+      )
+    );
+
+    if (isReplyingToBot) {
+      console.log(`💬 [Reply Detected] Ardaygu wuxuu reply ugu sameeyay bot-ka! quotedSender=${quotedSender} botJid=${botJid} botLid=${botLid} stanzaId=${quotedStanzaId}`);
+    }
+
+    // In 1-on-1 private DM: ALWAYS respond. In groups: @mention, !cardoso prefix, or reply-to-bot.
+    const mentionedJids: string[] = contextInfoRaw?.mentionedJid || [];
+    const isMentioned =
+      !isGroup ||
+      isReplyingToBot ||
+      mentionedJids.some((j: string) => (botJid && j.includes(botJid)) || (botLid && j.includes(botLid))) ||
+      hasCardosoMention;
+
+    // For media in groups, skip if not mentioned/replied-to (avoid processing every group photo/video)
+    if (isMedia && isGroup && !isMentioned) return;
+
+    // View-Once media whose bytes WhatsApp withheld (no mediaKey / download blocked):
+    // never send a blind placeholder to Gemini (it would hallucinate) — explain instead.
+    if (isMedia && isViewOnce && !mediaAttachment) {
+      console.warn(`⚠️ [View-Once 1️⃣] Media-da lama soo dejin karin (mediaKey/url ma jiro). Jawaab caawimo ah ayaa la dirayaa.`);
+      await this.sendViewOnceFallback(chatId, msg.key.id || undefined);
+      return;
+    }
+
+    const incoming: IncomingMessage = {
+      id: msg.key.id || `baileys_${Date.now()}`,
+      senderId,
+      senderName: msg.pushName || undefined,
+      chatId,
+      isGroup,
+      content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]' : isVideo || mediaAttachment?.type === 'video' ? '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
+      rawTimestamp: WhatsAppBaileysTransport.toNumber(msg.messageTimestamp) * 1000 || Date.now(),
+      isMentioned,
+      isFromMe: Boolean(msg.key.fromMe),
+      replyToMessageId: msg.key.id || undefined,
+      media: mediaAttachment,
+    };
+
+    if (this.messageHandler) {
+      // Immediately show typing presence to user so they know bot is actively formulating response
+      if (this.socket) {
+        this.socket.sendPresenceUpdate('composing', chatId).catch(() => {});
+      }
+
+      try {
+        await this.messageHandler(incoming);
+      } catch (err) {
+        console.error('[WhatsAppBaileys] Error processing message:', err);
+      }
+    }
   }
 
   public async stop(): Promise<void> {
