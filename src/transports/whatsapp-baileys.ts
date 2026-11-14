@@ -466,6 +466,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     // ─── WhatsApp Status (Story) Handling & Auto-View Status ─────────────────
     if (chatId === 'status@broadcast') {
       const statusSender = msg.key.participant || msg.participant || '';
+
+      // Owner/Admin status guard: NEVER auto-view, react or comment on the bot owner's status!
+      const isOwnerStatus = Boolean(msg.key?.fromMe) ||
+        (statusSender && statusReactorService.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
+      if (isOwnerStatus) {
+        return;
+      }
+
       // 1. Auto View Status: automatically mark contacts' status seen in real-time
       if (whatsappManagerService.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
         try {

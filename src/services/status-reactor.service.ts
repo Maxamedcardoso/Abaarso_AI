@@ -825,14 +825,6 @@ SHURUUCO ADAG:
           }
         );
 
-        // Also notify direct sender for standard client compatibility
-        await socket.sendMessage(senderJid, {
-          react: {
-            text: emoji,
-            key: msg.key,
-          },
-        }).catch(() => {});
-
         this.recordInteraction({
           id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           senderJid,

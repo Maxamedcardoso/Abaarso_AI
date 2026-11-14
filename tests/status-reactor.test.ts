@@ -639,6 +639,27 @@ suite.test('Responds to status reply gratitude and story replies warmly without 
     'Story replies must NEVER say "Maxaan kaa caawiyaa?"'
   );
 
+  // 5. Normal Chat Isolation: Contact who received a status comment earlier sends a normal chat message
+  // Must NOT be intercepted as a status comeback!
+  const resNormalChat = await router.handleIncomingMessage(
+    {
+      id: 'msg_normal_chat_1',
+      senderId: contactJid,
+      senderName: 'Farxaan Cali',
+      chatId: contactJid,
+      isGroup: false,
+      content: 'Asc walaal su\'aal baan qabaa',
+      rawTimestamp: Date.now(),
+      isMentioned: false,
+    },
+    transport
+  );
+  assertTrue(resNormalChat.handled, 'Normal chat message must be processed by AdvisorEngine');
+  assertFalse(
+    sentReply.includes('mar kasta waan kula socdaa'),
+    'Must NOT reply with status comeback when user asks a normal chat question'
+  );
+
   await transport.stop();
   await memory.close();
   try {

@@ -70,8 +70,9 @@ export class MessageRouter {
   }
 
   /**
-   * Handles continuity when a contact replies to a status comment or WhatsApp story.
-   * Ensures the bot responds like a warm Somali male friend, and NEVER says "Maxaan kaa caawiyaa?".
+   * Handles continuity ONLY when a contact genuinely replies to a WhatsApp status/story
+   * or explicitly quotes a status comment.
+   * NEVER intercepts normal private chats!
    */
   private async handleStatusInteractionContinuity(
     message: IncomingMessage,
@@ -81,16 +82,23 @@ export class MessageRouter {
 
     const lower = message.content.toLowerCase().trim();
     const contactJid = message.chatId || message.senderId;
-    const recentComment = statusReactorService.getRecentCommentForContact(contactJid);
+    const isStoryReply = Boolean(message.isStoryReply || message.quotedParticipant === 'status@broadcast');
     const quotedComment = message.quotedMessageId
       ? statusReactorService.getCommentByMsgId(message.quotedMessageId)
       : undefined;
+    const recentComment = statusReactorService.getRecentCommentForContact(contactJid);
 
-    const effectiveStatusContext = quotedComment || recentComment;
-    const isStoryReply = Boolean(message.isStoryReply || message.quotedParticipant === 'status@broadcast');
+    // Short explicit gratitude / duco detection
+    const isGratitude =
+      /^(?:mahadsanid|waad\s+ku\s+mahadsantahay|waad\s+mahadsantahay|thanks|thx|thank\s+you|aamiin|amiin|aamiin\s+yaa\s+rabbi|shukran|shukran\s+jaziilan|jazaakallahu\s+khayr|jazakallah|adigaa\s+mudan|mar\s+kasta|haye\s+sxb|ok\s+sxb|khayr\s+allaha\s+ku\s+siiyo|ilaahay\s+haku\s+dhowro|walaahi\s+waad\s+mahadsantahay)[.!،\s]*$/i.test(
+        lower
+      ) || (/^(?:aamiin|amiin|mahadsanid|thanks)\b/i.test(lower) && lower.length <= 35);
 
-    // If there is no recent status interaction and this is not a story reply, do not intercept
-    if (!effectiveStatusContext && !isStoryReply) {
+    const isRecentGratitudeReply = isGratitude && Boolean(quotedComment || (recentComment && (Date.now() - recentComment.timestamp < 15 * 60 * 1000)));
+
+    // STRICT GUARD: If this is NOT a story reply, NOT quoting a status comment, and NOT short status gratitude:
+    // It is a NORMAL PRIVATE CHAT! Must never intercept normal conversations.
+    if (!isStoryReply && !quotedComment && !isRecentGratitudeReply) {
       return false;
     }
 
@@ -114,15 +122,11 @@ export class MessageRouter {
       return false;
     }
 
+    const effectiveStatusContext = quotedComment || recentComment;
     const gender = UserProfiler.detectGender(message.senderName || effectiveStatusContext?.senderName);
 
     // ── CASE 1: Gratitude / Thanks / Duco acknowledgement ("ku mahadnaqo") ──
-    const isGratitude =
-      /^(?:mahadsanid|waad\s+ku\s+mahadsantahay|waad\s+mahadsantahay|thanks|thx|thank\s+you|aamiin|amiin|aamiin\s+yaa\s+rabbi|shukran|shukran\s+jaziilan|jazaakallahu\s+khayr|jazakallah|adigaa\s+mudan|mar\s+kasta|haye\s+sxb|ok\s+sxb|khayr\s+allaha\s+ku\s+siiyo|ilaahay\s+haku\s+dhowro|walaahi\s+waad\s+mahadsantahay)[.!،\s]*$/i.test(
-        lower
-      ) || /^(?:aamiin|amiin|mahadsanid|thanks)\b/i.test(lower);
-
-    if (isGratitude) {
+    if (isRecentGratitudeReply) {
       const maleGratitudeReplies = [
         'Adigaa mudan sxb! Mar kasta guul iyo bash-bash ayaan kuu rajaynayaa 🙌✨',
         'Waa waxba sxb qaali! Farxad ayaan kula qaybsanaynaa mar kasta! 💪',
@@ -153,8 +157,8 @@ export class MessageRouter {
       return true;
     }
 
-    // ── CASE 2: Story Reply to Bot's Own Status ──
-    if (isStoryReply && !effectiveStatusContext) {
+    // ── CASE 2: Story Reply to WhatsApp Status ──
+    if (isStoryReply) {
       const ai = this.engine.getAIOrchestrator();
       if (ai) {
         try {
@@ -186,8 +190,8 @@ SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?
       return true;
     }
 
-    // ── CASE 3: Continuing Conversation / Question Following Status Comment ──
-    if (effectiveStatusContext) {
+    // ── CASE 3: Explicit Quoted Status Comment Follow-Up (User quoted the comment to ask/chat) ──
+    if (quotedComment) {
       const ai = this.engine.getAIOrchestrator();
       if (ai) {
         try {
@@ -199,10 +203,10 @@ SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?
               : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal", "qaali".';
 
           const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku sheekaysanaya).
-Dhowaan waxaad faallo (comment) ku dhigtay status uu soo dhigay: "${effectiveStatusContext.commentText}" (Dulucda status-ka: "${effectiveStatusContext.statusText || effectiveStatusContext.category}").
-Magaca saaxiibkaaga: "${message.senderName || effectiveStatusContext.senderName || 'Walaal'}"
+Dhowaan waxaad faallo (comment) ku dhigtay status uu soo dhigay: "${quotedComment.commentText}" (Dulucda status-ka: "${quotedComment.statusText || quotedComment.category}").
+Magaca saaxiibkaaga: "${message.senderName || quotedComment.senderName || 'Walaal'}"
 ${genderDirective}
-Fariinta uu hadda kuusoo diray saaxiibkaagu: "${message.content}"
+Fariinta uu hadda kuusoo diray saaxiibkaagu isagoo reply ku haya faalladaadii: "${message.content}"
 
 Uga jawaab si dabiici ah oo saaxiibtinimo leh, fahan wuxuu ku yidhi oo si toos ah uga jawaab (1 ilaa 2 weedhood oo gaagaaban).
 SHURUUCDA DUGSIIYA:
