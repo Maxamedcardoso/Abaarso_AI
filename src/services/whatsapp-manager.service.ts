@@ -71,6 +71,19 @@ export class WhatsAppManagerService {
       jidSet.add(`${this.botJid}@s.whatsapp.net`);
     }
 
+    if (this.socket?.user?.id) {
+      const cleanMe = this.socket.user.id.split(':')[0].split('@')[0];
+      if (cleanMe) jidSet.add(`${cleanMe}@s.whatsapp.net`);
+    }
+
+    const envAdmins = (process.env.ADMIN_PHONE_NUMBERS || '')
+      .split(',')
+      .map(n => n.trim().replace(/[^0-9]/g, ''))
+      .filter(Boolean);
+    for (const a of envAdmins) {
+      jidSet.add(`${a}@s.whatsapp.net`);
+    }
+
     return Array.from(jidSet);
   }
 

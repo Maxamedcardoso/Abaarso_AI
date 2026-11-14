@@ -721,9 +721,18 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       /\.(vcf|csv|txt)$/i.test(mediaAttachment.fileName || '')
     );
 
+    // Any command starting with standard prefix (!, ., /, #)
+    const isPrefixCommand = /^[!./#][a-zA-Z0-9_-]+/i.test(lowerText);
+
+    // Any WhatsApp management or bot command keyword (with or without prefix)
+    const hasManagementCommand =
+      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul|help|shax|ogaansho|kuliyadaha|kharashka|shuruudaha|contact|reset|abaarso)\b/i.test(lowerText);
+
     const hasCardosoMention =
       lowerText.includes('@cardoso') ||
       lowerText.startsWith('!cardoso') ||
+      isPrefixCommand ||
+      hasManagementCommand ||
       hasVoiceCommand ||
       hasImageCommand ||
       hasBroadcastCommand ||

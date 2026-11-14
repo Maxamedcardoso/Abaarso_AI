@@ -141,7 +141,7 @@ export class MessageRouter {
     }
 
     // ─── 1e. Comprehensive WhatsApp Management Help Command (!maamul / !whatsapp) ──
-    if (/^!(?:maamul|whatsapp|status-help|bot-help)\b/i.test(lowerText) && isAdminUser) {
+    if (/^[!./#]?(?:maamul|whatsapp|status-help|bot-help)\b/i.test(lowerText) && isAdminUser) {
       const helpText =
         `🌟 *[CARDOSO AI — AWOODDA MAAMULKA WHATSAPP 100%]* 🌟\n\n` +
         `📱 *WHATSAPP STATUS (STORIES):*\n` +
@@ -183,8 +183,8 @@ export class MessageRouter {
     }
 
     // ─── 1f. WhatsApp Status Posting & Management ─────────────────────────────
-    if (/^!status-ai(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^!status-ai(?:\s+(.+))?$/i);
+    if (/^[!./#]?(?:status-ai)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:status-ai)(?:\s+(.+))?$/i);
       const topic = match?.[1]?.trim();
       await transport.sendMessage(message.chatId, '⏳ *[CARDOSO AI Status]*: AI ayaa diyaarinaya status dhiirigelin ah...');
       const res = await whatsappManagerService.generateAndPostAIStatus(topic);
@@ -192,8 +192,8 @@ export class MessageRouter {
       return { handled: true, reason: 'AI Status generated and posted' };
     }
 
-    if (/^!autoview(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^!autoview(?:\s+(on|off))?$/i);
+    if (/^[!./#]?(?:autoview)(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:autoview)(?:\s+(on|off))?$/i);
       const mode = match?.[1]?.toLowerCase();
       if (mode === 'on') {
         whatsappManagerService.setAutoViewStatus(true);
@@ -211,8 +211,8 @@ export class MessageRouter {
       return { handled: true, reason: 'Auto-view status toggled' };
     }
 
-    if (/^!(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^!(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i);
+    if (/^[!./#]?(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i);
       const statusContent = (match?.[1] || '').trim();
 
       // If media is attached (image, video, voice note)
@@ -242,8 +242,8 @@ export class MessageRouter {
     }
 
     // ─── 1g. Direct Reply & Person Messaging ("reply u gali karo qofka") ──────
-    if (/^!(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i);
+    if (/^[!./#]?(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:reply|send)\s+([0-9+]+)\s+([\s\S]+)$/i);
       const targetNumber = match![1].trim();
       const replyText = match![2].trim();
 
@@ -263,8 +263,8 @@ export class MessageRouter {
     }
 
     // Quoted reply in chat: !reply <fariin>
-    if (/^!reply\s+([\s\S]+)$/i.test(text) && isAdminUser && message.quotedParticipant) {
-      const match = text.match(/^!reply\s+([\s\S]+)$/i);
+    if (/^[!./#]?reply\s+([\s\S]+)$/i.test(text) && isAdminUser && message.quotedParticipant) {
+      const match = text.match(/^[!./#]?reply\s+([\s\S]+)$/i);
       const replyText = match![1].trim();
       const targetParticipant = message.quotedParticipant;
       const res = await whatsappManagerService.sendDirectReply(targetParticipant, replyText, transport, { replyToMessageId: message.quotedMessageId });
@@ -275,8 +275,8 @@ export class MessageRouter {
     }
 
     // Send Somali voice note directly to a number: !cod <number> <fariin>
-    if (/^!cod\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!cod\s+([0-9+]+)\s+([\s\S]+)$/i);
+    if (/^[!./#]?cod\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?cod\s+([0-9+]+)\s+([\s\S]+)$/i);
       const targetNumber = match![1].trim();
       const voiceText = match![2].trim();
       const targetJid = whatsappManagerService.normalizeToJid(targetNumber);
@@ -302,8 +302,8 @@ export class MessageRouter {
     }
 
     // ─── 1h. Custom Auto-Replies Management ───────────────────────────────────
-    if (/^!autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i);
+    if (/^[!./#]?autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?autoreply\s+add\s+([^|\->]+)(?:\||->)\s*([\s\S]+)$/i);
       const keyword = match![1].trim();
       const replyContent = match![2].trim();
       if (this.memory?.saveAutoReply) {
@@ -315,7 +315,7 @@ export class MessageRouter {
       return { handled: true, reason: 'Auto-reply added' };
     }
 
-    if (/^!autoreply\s+(?:list|liis)$/i.test(lowerText.trim()) && isAdminUser) {
+    if (/^[!./#]?autoreply\s+(?:list|liis)$/i.test(lowerText.trim()) && isAdminUser) {
       if (this.memory?.getAutoReplies) {
         const list = await this.memory.getAutoReplies();
         if (list.length === 0) {
@@ -331,8 +331,8 @@ export class MessageRouter {
       return { handled: true, reason: 'Auto-replies list displayed' };
     }
 
-    if (/^!autoreply\s+(?:delete|tirtir)\s+(.+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!autoreply\s+(?:delete|tirtir)\s+(.+)$/i);
+    if (/^[!./#]?autoreply\s+(?:delete|tirtir)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?autoreply\s+(?:delete|tirtir)\s+(.+)$/i);
       const keyword = match![1].trim();
       if (this.memory?.deleteAutoReply) {
         const deleted = await this.memory.deleteAutoReply(keyword);
@@ -342,12 +342,12 @@ export class MessageRouter {
     }
 
     // ─── 1i. Group Management Commands (100% Full Control) ────────────────────
-    if (/^!(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+    if (/^[!./#]?(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
       if (!message.isGroup) {
         await transport.sendMessage(message.chatId, '⚠️ Amarkan waxaa loogu talagalay Groups-ka oo kaliya.');
         return { handled: true, reason: 'tagall not in group' };
       }
-      const match = text.match(/^!(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i);
+      const match = text.match(/^[!./#]?(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i);
       const customMsg = match?.[1]?.trim();
       const res = await whatsappManagerService.tagAll(message.chatId, customMsg);
       if (!res.success) {
@@ -356,8 +356,8 @@ export class MessageRouter {
       return { handled: true, reason: 'tagall executed' };
     }
 
-    if (/^!(?:kick|ka-saar)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
-      const match = text.match(/^!(?:kick|ka-saar)(?:\s+(.+))?$/i);
+    if (/^[!./#]?(?:kick|ka-saar)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^[!./#]?(?:kick|ka-saar)(?:\s+(.+))?$/i);
       const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
       if (!target) {
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka fariintiisa ama lambar ku qor ka dib: `!kick @user`');
@@ -368,16 +368,16 @@ export class MessageRouter {
       return { handled: true, reason: 'kick executed' };
     }
 
-    if (/^!(?:add|soo-geli)\s+([0-9+]+)$/i.test(text) && isAdminUser && message.isGroup) {
-      const match = text.match(/^!(?:add|soo-geli)\s+([0-9+]+)$/i);
+    if (/^[!./#]?(?:add|soo-geli)\s+([0-9+]+)$/i.test(text) && isAdminUser && message.isGroup) {
+      const match = text.match(/^[!./#]?(?:add|soo-geli)\s+([0-9+]+)$/i);
       const target = match![1].trim();
       const res = await whatsappManagerService.addMember(message.chatId, target);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'add member executed' };
     }
 
-    if (/^!(?:promote|dalacsii)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
-      const match = text.match(/^!(?:promote|dalacsii)(?:\s+(.+))?$/i);
+    if (/^[!./#]?(?:promote|dalacsii)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^[!./#]?(?:promote|dalacsii)(?:\s+(.+))?$/i);
       const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
       if (!target) {
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!promote @user`');
@@ -388,8 +388,8 @@ export class MessageRouter {
       return { handled: true, reason: 'promote executed' };
     }
 
-    if (/^!(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
-      const match = text.match(/^!(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i);
+    if (/^[!./#]?(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^[!./#]?(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i);
       const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
       if (!target) {
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!demote @user`');
@@ -400,48 +400,48 @@ export class MessageRouter {
       return { handled: true, reason: 'demote executed' };
     }
 
-    if (/^!(?:mute|xidh)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+    if (/^[!./#]?(?:mute|xidh)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
       const res = await whatsappManagerService.setGroupMute(message.chatId, true);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'group mute executed' };
     }
 
-    if (/^!(?:unmute|fur)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+    if (/^[!./#]?(?:unmute|fur)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
       const res = await whatsappManagerService.setGroupMute(message.chatId, false);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'group unmute executed' };
     }
 
-    if (/^!(?:grouplink|link)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+    if (/^[!./#]?(?:grouplink|link)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
       const res = await whatsappManagerService.getGroupInviteLink(message.chatId);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'grouplink executed' };
     }
 
-    if (/^!groupinfo$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
+    if (/^[!./#]?groupinfo$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
       const res = await whatsappManagerService.getGroupInfo(message.chatId);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'groupinfo executed' };
     }
 
     // ─── 1j. Profile & Account Management Commands ────────────────────────────
-    if (/^!setname\s+(.+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!setname\s+(.+)$/i);
+    if (/^[!./#]?setname\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?setname\s+(.+)$/i);
       const newName = match![1].trim();
       const res = await whatsappManagerService.updateProfileName(newName);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'setname executed' };
     }
 
-    if (/^!(?:setbio|setstatus)\s+(.+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!(?:setbio|setstatus)\s+(.+)$/i);
+    if (/^[!./#]?(?:setbio|setstatus)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:setbio|setstatus)\s+(.+)$/i);
       const newBio = match![1].trim();
       const res = await whatsappManagerService.updateProfileBio(newBio);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'setbio executed' };
     }
 
-    if (/^!(?:setpp|setpfp)$/i.test(lowerText.trim()) && isAdminUser) {
+    if (/^[!./#]?(?:setpp|setpfp)$/i.test(lowerText.trim()) && isAdminUser) {
       if (message.media?.type === 'image' && message.media.dataBase64) {
         const buffer = Buffer.from(message.media.dataBase64, 'base64');
         const res = await whatsappManagerService.updateProfilePicture(buffer);
@@ -452,23 +452,23 @@ export class MessageRouter {
       return { handled: true, reason: 'setpp executed' };
     }
 
-    if (/^!block\s+([0-9+]+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!block\s+([0-9+]+)$/i);
+    if (/^[!./#]?block\s+([0-9+]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?block\s+([0-9+]+)$/i);
       const target = match![1].trim();
       const res = await whatsappManagerService.blockUser(target);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'block executed' };
     }
 
-    if (/^!unblock\s+([0-9+]+)$/i.test(text) && isAdminUser) {
-      const match = text.match(/^!unblock\s+([0-9+]+)$/i);
+    if (/^[!./#]?unblock\s+([0-9+]+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?unblock\s+([0-9+]+)$/i);
       const target = match![1].trim();
       const res = await whatsappManagerService.unblockUser(target);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'unblock executed' };
     }
 
-    if (/^!(?:delete|tirtir)$/i.test(lowerText.trim()) && isAdminUser && message.quotedMessageId) {
+    if (/^[!./#]?(?:delete|tirtir)$/i.test(lowerText.trim()) && isAdminUser && message.quotedMessageId) {
       if (transport.deleteMessage) {
         await transport.deleteMessage(message.chatId, message.quotedMessageId, message.quotedParticipant);
         await transport.sendMessage(message.chatId, '🗑️ Fariintii waa la tirtiray.');
@@ -478,8 +478,8 @@ export class MessageRouter {
       return { handled: true, reason: 'delete executed' };
     }
 
-    if (/^!react\s+(.+)$/i.test(text) && isAdminUser && message.quotedMessageId) {
-      const match = text.match(/^!react\s+(.+)$/i);
+    if (/^[!./#]?react\s+(.+)$/i.test(text) && isAdminUser && message.quotedMessageId) {
+      const match = text.match(/^[!./#]?react\s+(.+)$/i);
       const emoji = match![1].trim();
       if (transport.reactToMessage) {
         await transport.reactToMessage(message.chatId, message.quotedMessageId, emoji, message.quotedParticipant);
@@ -489,7 +489,7 @@ export class MessageRouter {
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^\!(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);
