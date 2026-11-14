@@ -467,6 +467,22 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (chatId === 'status@broadcast') {
       const statusSender = msg.key.participant || msg.participant || '';
 
+      // Ignore protocol messages, revokes, edits, or reaction stanzas
+      if (
+        msg.message?.protocolMessage ||
+        msg.message?.reactionMessage ||
+        (msg.message?.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)
+      ) {
+        return;
+      }
+
+      // Ignore historical status backlogs (older than 10 minutes) dumped by WhatsApp on socket connect
+      const nowSec = Math.floor(Date.now() / 1000);
+      const msgTimestamp = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
+      if (msgTimestamp > 0 && nowSec - msgTimestamp > 600) {
+        return;
+      }
+
       // Owner/Admin status guard: NEVER auto-view, react or comment on the bot owner's status!
       const isOwnerStatus = Boolean(msg.key?.fromMe) ||
         (statusSender && statusReactorService.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
@@ -812,7 +828,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     }
 
     const isStoryReply = Boolean(
-      contextInfoRaw?.remoteJid === 'status@broadcast' ||
+      (contextInfoRaw?.remoteJid === 'status@broadcast' && contextInfoRaw?.quotedMessage) ||
       quotedSender === 'status@broadcast'
     );
     const quotedInner = quotedUnwrapped?.message;

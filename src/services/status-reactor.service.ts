@@ -80,6 +80,7 @@ export class StatusReactorService {
   private recentCommentsByContact: Map<string, SentStatusCommentContext> = new Map();
   private commentByMsgId: Map<string, SentStatusCommentContext> = new Map();
   private recentCommentHistory: string[] = [];
+  private processedStatusIds: Set<string> = new Set();
 
   constructor(customConfigPath?: string) {
     this.configPath = customConfigPath || path.resolve(process.cwd(), 'data', 'status_reactor_config.json');
@@ -725,14 +726,43 @@ SHURUUCO ADAG:
       return false;
     }
 
-    // 1. Enforce owner / admin guard: never react or comment on admin's or self status!
+    // 1. Deduplication guard: ignore if this specific status was already processed or queued
+    if (msg.key?.id && (this.processedStatusIds.has(msg.key.id) || this.pendingTimeouts.has(msg.key.id))) {
+      return false;
+    }
+
+    // 2. Ignore protocol messages, revokes, edits, or reaction stanzas (not actual status posts!)
+    if (
+      msg.message?.protocolMessage ||
+      msg.message?.reactionMessage ||
+      (msg.message?.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)
+    ) {
+      return false;
+    }
+
+    // 3. Strict Real-Time Freshness Guard:
+    // When the bot starts or reconnects, WhatsApp pushes historical status updates from the last 24h.
+    // We MUST ignore old status updates (> 5 minutes / 300s) so contacts are NEVER messaged for old or deleted stories!
+    const nowSec = Math.floor(Date.now() / 1000);
+    const msgTimestamp = typeof msg.messageTimestamp === 'number'
+      ? msg.messageTimestamp
+      : typeof (msg.messageTimestamp as any)?.toNumber === 'function'
+      ? (msg.messageTimestamp as any).toNumber()
+      : Number(msg.messageTimestamp) || 0;
+
+    if (msgTimestamp > 0 && nowSec - msgTimestamp > 300) {
+      console.log(`⏳ [StatusReactor] Ignored historical status from ${senderJid} (posted ${nowSec - msgTimestamp}s ago).`);
+      return false;
+    }
+
+    // 4. Enforce owner / admin guard: never react or comment on admin's or self status!
     // Per user requirement: "status waxaan soo dhigan bot yaanu wax jawaaba ka bixin dadka kale haka bixiyo"
     if (this.isAdminOrSelf(senderJid, Boolean(msg.key?.fromMe), socket)) {
       console.log(`🛡️ [StatusReactor] Ignored status from owner/admin (${senderJid}). Bot only interacts with other contacts.`);
       return false;
     }
 
-    // 2. Cooldown check (only active if cooldownHours is configured > 0):
+    // 5. Cooldown check (only active if cooldownHours is configured > 0):
     if (this.config.cooldownHours > 0 && this.isCooldownActive(senderJid)) {
       console.log(`⏳ [StatusReactor] Skipped ${senderJid}: Cooldown active.`);
       return false;
@@ -742,14 +772,31 @@ SHURUUCO ADAG:
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
     const mediaKind = unwrapped.mediaKind || undefined;
-    const hasMedia = Boolean(mediaKind);
-    const text =
+    const hasMedia = Boolean(mediaKind && (innerMsg.imageMessage || innerMsg.videoMessage || innerMsg.audioMessage || innerMsg.documentMessage));
+    const text = (
       innerMsg.conversation ||
       innerMsg.extendedTextMessage?.text ||
       innerMsg.imageMessage?.caption ||
       innerMsg.videoMessage?.caption ||
       innerMsg.documentMessage?.caption ||
-      '';
+      ''
+    ).trim();
+
+    // 6. Strict Content Guard:
+    // Status MUST have actual content (either non-empty text or real media).
+    // Never interact with empty, ghost, or deleted stanzas!
+    if (!text && !hasMedia) {
+      console.log(`⚠️ [StatusReactor] Ignored empty status stanza from ${senderJid} (no text or media).`);
+      return false;
+    }
+
+    if (msg.key?.id) {
+      this.processedStatusIds.add(msg.key.id);
+      if (this.processedStatusIds.size > 1000) {
+        const first = this.processedStatusIds.values().next().value;
+        if (first) this.processedStatusIds.delete(first);
+      }
+    }
 
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
