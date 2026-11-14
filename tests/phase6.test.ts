@@ -35,6 +35,11 @@ suite.test('IntentClassifier accurately categorizes user intents', () => {
   // Creator questions
   assertEqual(IntentClassifier.classify('Yaa ku sameeyey?').intent, 'creator', 'Should classify who made you as creator');
   assertEqual(IntentClassifier.classify('who created you?').intent, 'creator', 'Should classify who created you as creator');
+  // Gibberish spam guard
+  assertEqual(IntentClassifier.classify('Jj').intent, 'gibberish', 'Should classify Jj as gibberish');
+  assertEqual(IntentClassifier.classify('ggg').intent, 'gibberish', 'Should classify ggg as gibberish');
+  assertEqual(IntentClassifier.classify('Teeddf').intent, 'gibberish', 'Should classify Teeddf as gibberish');
+  assertEqual(IntentClassifier.classify('.....').intent, 'gibberish', 'Should classify ..... as gibberish');
 });
 
 suite.test('MotivationCoach catches distress keywords and offers compassionate support without clinical diagnosis', () => {

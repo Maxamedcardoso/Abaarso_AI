@@ -87,6 +87,32 @@ export class StudentAdvisorEngine {
       };
     }
 
+    // 1.5. Handle Gibberish / Keyboard Smash Guard (Zero AI Quota Burn)
+    if (intentResult.intent === 'gibberish' && !media) {
+      const gibberishReplies = lang === 'en'
+        ? [
+            "Hi there! Did you want to ask me something? Please type your question clearly and I'll be happy to help! 😊",
+            "Hello! I am here and listening. Please type what you need clearly! ✨",
+          ]
+        : [
+            "Haa walaal, wax ma i weydiinaysaa? Fariintaada si fiican iigu soo qor waan kula socdaaye! 😊",
+            "Haa sxb, waan ku maqlayaaye maxaad doonaysay? Fariinta si fiican iigu soo qor! ✨",
+            "Waan kula socdaa walaal! Wixii su'aal ama caawimaad ah ee aad u baahan tahay si cad iigu soo qor 😊",
+          ];
+      const reply = gibberishReplies[Math.floor(Math.random() * gibberishReplies.length)];
+
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'user', content, languageDetected: lang, timestamp });
+      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'model', content: reply, languageDetected: lang, timestamp: Date.now() });
+
+      return {
+        replyText: reply,
+        studentId: student.studentId,
+        intent: 'gibberish',
+        language: lang,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
     // 1.6. Learn Somali vocabulary from every incoming user message (background, non-blocking)
     if (this.memory instanceof SQLiteStudentMemory) {
       this.memory.learnVocabFromText(content);

@@ -8,6 +8,7 @@ export type AdvisorIntent =
   | 'greeting'
   | 'creator'
   | 'owner_inquiry'
+  | 'gibberish'
   | 'general';
 
 export interface ClassifiedIntent {
@@ -17,8 +18,53 @@ export interface ClassifiedIntent {
 }
 
 export class IntentClassifier {
+  public static isGibberish(text: string): boolean {
+    const clean = text.trim().toLowerCase();
+    if (clean.length === 0) return true;
+    if (clean.length > 25) return false;
+
+    // Punctuation/symbols only (e.g. "...", "???", "!??", ":)", ";;--")
+    if (/^[^\p{L}\p{N}]+$/u.test(clean)) return true;
+
+    // Single repeated letter (e.g. "j", "jj", "jjj", "g", "ggg", "aaaa", "kkk")
+    if (/^(.)\1*$/.test(clean) && clean.length <= 15) {
+      if (clean === 'a' || clean === 'i' || clean === 'u' || clean === 'o') return false;
+      return true;
+    }
+
+    // Short consonant-only string with no vowels (e.g. "jj", "ggg", "hjk", "sdfg", "bcdf", "zzz")
+    if (clean.length >= 2 && clean.length <= 8 && !/[aeiouy]/i.test(clean)) {
+      const allowedShort = new Set(['wcs', 'asc', 'scw', 'sxb', 'sxbo', 'bro', 'js', 'ai', 'ok', 'cv', 'tv', 'dj']);
+      if (!allowedShort.has(clean)) {
+        return true;
+      }
+    }
+
+    // Common keyboard home-row mash patterns (e.g. "asdf", "asdfgh", "zxcvb", "qwer", "teeddf")
+    const mashPatterns = [
+      /^asdf/i,
+      /^zxcv/i,
+      /^qwer/i,
+      /^hjkl/i,
+      /^teeddf/i,
+      /^kjkj/i,
+      /^fghj/i,
+    ];
+    if (mashPatterns.some(p => p.test(clean))) {
+      return true;
+    }
+
+    return false;
+  }
+
   public static classify(text: string): ClassifiedIntent {
     const lower = text.toLowerCase().trim();
+
+    // 0. Gibberish & Keyboard Smash Guard ("jj", "ggg", "teeddf", "asdfgh", ".....")
+    // Prevents burning daily Gemini AI quota on random key presses and test spam!
+    if (IntentClassifier.isGibberish(lower)) {
+      return { intent: 'gibberish', confidence: 0.99, tags: ['gibberish', 'spam_guard'] };
+    }
 
     // 1. Privacy / Right-to-be-Forgotten commands
     if (

@@ -11,7 +11,7 @@ export class GeminiProvider implements IAIProvider {
   private quotaTracker: QuotaTracker;
   private clients: GoogleGenerativeAI[] = [];
 
-  constructor(apiKeyOrKeys: string | string[], modelName: string = 'gemini-3.8-flash', quotaTracker?: QuotaTracker) {
+  constructor(apiKeyOrKeys: string | string[], modelName: string = 'gemini-flash-lite-latest', quotaTracker?: QuotaTracker) {
     if (Array.isArray(apiKeyOrKeys)) {
       this.apiKeys = apiKeyOrKeys.filter(Boolean);
     } else if (apiKeyOrKeys) {
@@ -103,100 +103,128 @@ export class GeminiProvider implements IAIProvider {
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
     // 3. Candidate models fallback list — Active Google Gemini Models with intelligent failover
+    const unsupportedModels = new Set([
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-flash-8b',
+      'gemini-1.5-pro',
+      'gemini-2.5-flash-lite',
+    ]);
+
     const candidateModels = Array.from(new Set([
-      this.modelName,          // Primary model from config (default: gemini-3.5-flash)
-      'gemini-2.0-flash',      // Top active Google Gemini model
-      'gemini-1.5-flash',      // Proven stable production model
-      'gemini-2.5-flash',      // Cutting-edge reasoning model
-      'gemini-3.5-flash',      // High-quota model
-      'gemini-3.8-flash',      // Advanced preview model
-      'gemini-1.5-flash-8b',   // Lightweight fallback
-      'gemini-1.5-pro',        // Deep reasoning fallback
-    ])).filter(m => Boolean(m));
+      this.modelName,             // Model from env (default: gemini-flash-lite-latest)
+      'gemini-flash-lite-latest', // Dynamic pointer to active flash-lite (high quota)
+      'gemini-3.5-flash-lite',    // Proven active model with high quota & low latency
+      'gemini-3.1-flash-lite',    // High-performance lite fallback
+      'gemini-3.5-flash',         // Standard flash
+      'gemini-3.6-flash',         // Standard flash
+      'gemini-3.8-flash',         // Advanced flash
+    ])).filter(m => Boolean(m) && !unsupportedModels.has(m));
 
     let lastError: any = null;
 
     for (let modelIdx = 0; modelIdx < candidateModels.length; modelIdx++) {
       const currentModelName = candidateModels[modelIdx];
 
-      try {
-        const responseText = await executeWithRetry(
-          async () => {
-            const client = this.currentClient!;
-            const modelInstance = client.getGenerativeModel({
-              model: currentModelName,
-              systemInstruction,
-              generationConfig: {
-                temperature: options.temperature ?? 0.7,
-                maxOutputTokens: options.maxOutputTokens ?? 1000,
-              },
-            });
-
-            // Prepare prompt payload (text and optional multimodal image/audio/document)
-            const contentParts: Array<string | Part> = [];
-            if (options.media?.dataBase64 && options.media?.mimeType) {
-              const cleanMime = options.media.mimeType.split(';')[0].trim();
-              contentParts.push({
-                inlineData: {
-                  mimeType: cleanMime,
-                  data: options.media.dataBase64,
+      // Try across available rotated API keys for this model before falling over
+      const keyAttempts = Math.max(1, this.clients.length);
+      for (let kAttempt = 0; kAttempt < keyAttempts; kAttempt++) {
+        try {
+          const responseText = await executeWithRetry(
+            async () => {
+              const client = this.currentClient!;
+              const modelInstance = client.getGenerativeModel({
+                model: currentModelName,
+                systemInstruction,
+                generationConfig: {
+                  temperature: options.temperature ?? 0.7,
+                  maxOutputTokens: options.maxOutputTokens ?? 1000,
                 },
               });
-            }
-            contentParts.push(userPrompt);
 
-            const callPromise = (async () => {
-              if (formattedHistory.length > 0) {
-                const chat = modelInstance.startChat({
-                  history: formattedHistory,
+              // Prepare prompt payload (text and optional multimodal image/audio/document)
+              const contentParts: Array<string | Part> = [];
+              if (options.media?.dataBase64 && options.media?.mimeType) {
+                const cleanMime = options.media.mimeType.split(';')[0].trim();
+                contentParts.push({
+                  inlineData: {
+                    mimeType: cleanMime,
+                    data: options.media.dataBase64,
+                  },
                 });
-                const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-                return result.response.text();
-              } else {
-                const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
-                return result.response.text();
               }
-            })();
+              contentParts.push(userPrompt);
 
-            // Allow sufficient time for cloud latency and AI generation (25s)
-            const timeoutPromise = new Promise<string>((_, reject) => {
-              setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 25000ms`)), 25000);
-            });
+              const callPromise = (async () => {
+                if (formattedHistory.length > 0) {
+                  const chat = modelInstance.startChat({
+                    history: formattedHistory,
+                  });
+                  const result = await chat.sendMessage(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+                  return result.response.text();
+                } else {
+                  const result = await modelInstance.generateContent(contentParts.length === 1 && typeof contentParts[0] === 'string' ? contentParts[0] : (contentParts as any));
+                  return result.response.text();
+                }
+              })();
 
-            return await Promise.race([callPromise, timeoutPromise]);
-          },
-          {
-            maxRetries: 1, // Fast retry on current model before switching
-            initialDelayMs: 500,
-            onRetry: (attempt, delayMs, err) => {
-              console.warn(`[GeminiProvider] Retry ${attempt} on ${currentModelName} in ${delayMs}ms due to: ${err.message}`);
-              if (err.message.includes('429') || err.message.includes('quota') || err.message.includes('ResourceExhausted')) {
-                this.rotateKey();
-              }
+              // Fast 12s timeout per model to prevent hanging
+              const timeoutPromise = new Promise<string>((_, reject) => {
+                setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 12000ms`)), 12000);
+              });
+
+              return await Promise.race([callPromise, timeoutPromise]);
             },
+            {
+              maxRetries: 1, // Fast retry on current model before switching
+              initialDelayMs: 400,
+              onRetry: (attempt, delayMs, err) => {
+                console.warn(`[GeminiProvider] Retry ${attempt} on ${currentModelName} in ${delayMs}ms due to: ${err.message}`);
+                if (err.message.includes('429') || err.message.includes('quota') || err.message.includes('ResourceExhausted')) {
+                  this.rotateKey();
+                }
+              },
+            }
+          );
+
+          // Record successful request for quota tracking
+          const cleanResponseText = responseText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+          const estimatedTokens = Math.ceil((userPrompt.length + cleanResponseText.length) / 4);
+          this.quotaTracker.recordRequest(estimatedTokens);
+
+          return {
+            text: cleanResponseText,
+            provider: 'gemini',
+            modelUsed: currentModelName,
+            tokensUsed: {
+              promptTokens: Math.ceil(userPrompt.length / 4),
+              completionTokens: Math.ceil(responseText.length / 4),
+              totalTokens: estimatedTokens,
+            },
+            latencyMs: Date.now() - startTime,
+          };
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err?.message || '';
+          const is404 = errMsg.includes('404') || errMsg.includes('not found') || err?.status === 404;
+          if (is404) {
+            unsupportedModels.add(currentModelName);
+            console.warn(`[GeminiProvider] Model ${currentModelName} is not available (404). Skipping immediately.`);
+            break; // Skip all keys for this 404 model
           }
-        );
 
-        // Record successful request for quota tracking
-        const cleanResponseText = responseText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
-        const estimatedTokens = Math.ceil((userPrompt.length + cleanResponseText.length) / 4);
-        this.quotaTracker.recordRequest(estimatedTokens);
+          const isQuota = errMsg.includes('429') || errMsg.includes('quota') || err?.status === 429;
+          if (isQuota && this.clients.length > 1 && kAttempt < keyAttempts - 1) {
+            console.warn(`[GeminiProvider] Key #${this.currentKeyIndex + 1} reached quota on ${currentModelName}. Rotating to next key...`);
+            this.rotateKey();
+            continue; // Try next key on this model!
+          }
 
-        return {
-          text: cleanResponseText,
-          provider: 'gemini',
-          modelUsed: currentModelName,
-          tokensUsed: {
-            promptTokens: Math.ceil(userPrompt.length / 4),
-            completionTokens: Math.ceil(responseText.length / 4),
-            totalTokens: estimatedTokens,
-          },
-          latencyMs: Date.now() - startTime,
-        };
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[GeminiProvider] Model ${currentModelName} threw error (${err?.message || err}). Failing over to next free candidate...`);
-        this.rotateKey();
+          console.warn(`[GeminiProvider] Model ${currentModelName} threw error (${errMsg}). Failing over...`);
+          this.rotateKey();
+          break; // Proceed to next candidate model
+        }
       }
     }
 
@@ -206,7 +234,7 @@ export class GeminiProvider implements IAIProvider {
     const isRateLimit = lastError?.status === 429 || (lastError?.message && lastError.message.includes('429'));
     if (isRateLimit) {
       return {
-        text: 'Waan ka xumahay walaal, server-ka AI-da ayaa hadda su\'aalo badan helay hal mar. Fadlan 5-10 ilbiriqsi kadib mar kale codka ii soo duub! 🙏',
+        text: 'Walaal, xilligan server-ka AI ayaa mashquul ah maadaama fariimo badan soo gaadheen. Fadlan ilbiriqsiyo yar kadib dib iigu soo qor waan kula socdaaye! 😊',
         provider: 'gemini',
         modelUsed: this.modelName,
         latencyMs: Date.now() - startTime,
