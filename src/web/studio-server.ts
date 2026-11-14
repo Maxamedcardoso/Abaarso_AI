@@ -6,6 +6,7 @@ import { IMessagingTransport } from '../transports/transport.interface.js';
 import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { broadcastService } from '../services/broadcast.service.js';
 import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
+import { statusReactorService } from '../services/status-reactor.service.js';
 import { AppConfig } from '../config/env.js';
 
 export interface StudioServerOptions {
@@ -204,6 +205,30 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       status: 'ok',
       enabled: whatsappManagerService.isAutoViewStatusEnabled(),
       message: `Auto-View Status is now ${whatsappManagerService.isAutoViewStatusEnabled() ? 'ENABLED' : 'DISABLED'}`,
+    });
+  });
+
+  app.get('/api/status/reactor', (req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      config: statusReactorService.getConfig(),
+      recent: statusReactorService.getRecentInteractions(),
+    });
+  });
+
+  app.post('/api/status/reactor', (req: Request, res: Response) => {
+    const { enabled, autoReact, autoComment, mode, cooldownHours } = req.body;
+    const updated = statusReactorService.setConfig({
+      ...(enabled !== undefined ? { enabled: Boolean(enabled) } : {}),
+      ...(autoReact !== undefined ? { autoReact: Boolean(autoReact) } : {}),
+      ...(autoComment !== undefined ? { autoComment: Boolean(autoComment) } : {}),
+      ...(mode ? { mode } : {}),
+      ...(cooldownHours !== undefined ? { cooldownHours: Number(cooldownHours) } : {}),
+    });
+    res.json({
+      status: 'ok',
+      config: updated,
+      message: 'Status reactor settings updated successfully',
     });
   });
 
@@ -865,6 +890,51 @@ function renderStudioHTML(): string {
             </div>
             <button id="autoViewBtn" class="btn btn-primary" style="width:auto; padding:0.4rem 0.9rem; font-size:0.8rem;" onclick="toggleAutoView()">ON (Furan)</button>
           </div>
+
+          <hr style="border-color:var(--card-border); margin:1.25rem 0;" />
+
+          <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.4rem; color:#38bdf8; display:flex; align-items:center; gap:0.4rem;">
+            <span>🤖</span> Fal-celinta & Faallada Status-ka (Status AI Reactor)
+          </div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:1rem; line-height:1.4;">
+            Bot-ku wuxuu fahmayaa waxa ay dadku soo dhigaan (qoraal, xikmad, sawir, qalinjabin, aroos, ganacsi, jimce) isagoo si dabiici ah uga bixinaya Emoji Reaction ama Faallo (Comment) Soomaali ah.
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+            <div>
+              <div style="font-weight:600; font-size:0.85rem;">❤️ Falcelinta Emoji-ga (Auto-React)</div>
+              <div style="font-size:0.72rem; color:var(--text-muted);">Status-ka toos emoji ugu dhufo (❤️, 😂, 👏, 🔥, 🤲)</div>
+            </div>
+            <button id="srReactBtn" class="btn btn-primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.75rem;" onclick="toggleStatusReactor('autoReact')">ON (Furan)</button>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+            <div>
+              <div style="font-weight:600; font-size:0.85rem;">💬 Faallada Tooska ah (Auto-Comment)</div>
+              <div style="font-size:0.72rem; color:var(--text-muted);">Faallo kooban oo Soomaali ah kaga dhiibo status-ka (Quote DM)</div>
+            </div>
+            <button id="srCommentBtn" class="btn btn-primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.75rem;" onclick="toggleStatusReactor('autoComment')">ON (Furan)</button>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:0.75rem;">
+            <div>
+              <label style="font-size:0.75rem;">Nooca Falcelinta</label>
+              <select id="srMode" style="padding:0.4rem 0.6rem; font-size:0.8rem;" onchange="updateStatusReactorSettings()">
+                <option value="both">Labada (Reaction + Comment)</option>
+                <option value="reaction">Emoji Keliya (Reaction Only)</option>
+                <option value="comment">Faallo Keliya (Comment Only)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:0.75rem;">Cooldown Qofkiiba</label>
+              <select id="srCooldown" style="padding:0.4rem 0.6rem; font-size:0.8rem;" onchange="updateStatusReactorSettings()">
+                <option value="2">2 Saacadood</option>
+                <option value="4" selected>4 Saacadood</option>
+                <option value="6">6 Saacadood</option>
+                <option value="12">12 Saacadood</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <!-- Direct Reply Card -->
@@ -1181,6 +1251,76 @@ function renderStudioHTML(): string {
       }
     }
 
+    // Status Reactor UI
+    let srConfig = { enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 4 };
+
+    async function loadStatusReactor() {
+      try {
+        const res = await fetch('/api/status/reactor');
+        const data = await res.json();
+        if (data.status === 'ok' && data.config) {
+          srConfig = data.config;
+          updateStatusReactorUI();
+        }
+      } catch (err) {}
+    }
+
+    function updateStatusReactorUI() {
+      const reactBtn = document.getElementById('srReactBtn');
+      const commentBtn = document.getElementById('srCommentBtn');
+      const modeSelect = document.getElementById('srMode');
+      const cdSelect = document.getElementById('srCooldown');
+
+      if (reactBtn) {
+        reactBtn.innerText = srConfig.autoReact ? 'ON (Furan)' : 'OFF (Xidhan)';
+        reactBtn.style.background = srConfig.autoReact ? '#10b981' : '#64748b';
+      }
+      if (commentBtn) {
+        commentBtn.innerText = srConfig.autoComment ? 'ON (Furan)' : 'OFF (Xidhan)';
+        commentBtn.style.background = srConfig.autoComment ? '#10b981' : '#64748b';
+      }
+      if (modeSelect) modeSelect.value = srConfig.mode || 'both';
+      if (cdSelect) cdSelect.value = String(srConfig.cooldownHours || 4);
+    }
+
+    async function toggleStatusReactor(field) {
+      try {
+        const next = !srConfig[field];
+        const res = await fetch('/api/status/reactor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: next })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          srConfig = data.config;
+          updateStatusReactorUI();
+          showToast(field === 'autoReact' ? (srConfig.autoReact ? '❤️ Auto-React waa la daaray' : '🛑 Auto-React waa la damiyay') : (srConfig.autoComment ? '💬 Auto-Comment waa la daaray' : '🛑 Auto-Comment waa la damiyay'));
+        }
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
+    async function updateStatusReactorSettings() {
+      const mode = document.getElementById('srMode').value;
+      const cooldownHours = parseInt(document.getElementById('srCooldown').value, 10);
+      try {
+        const res = await fetch('/api/status/reactor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, cooldownHours })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          srConfig = data.config;
+          showToast('✅ Habaynta Status Reactor waa la keydiyay!');
+        }
+      } catch (err) {
+        alert('Cilad: ' + err.message);
+      }
+    }
+
     // Direct Reply
     async function sendDirectMessage() {
       const phone = document.getElementById('directPhone').value.trim();
@@ -1277,6 +1417,7 @@ function renderStudioHTML(): string {
     // Init
     loadConfig();
     loadAutoReplies();
+    loadStatusReactor();
     pollStatus();
     setInterval(pollStatus, 3500); // Poll status every 3.5s
   </script>

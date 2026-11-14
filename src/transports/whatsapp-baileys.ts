@@ -18,6 +18,7 @@ import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
 import { broadcastService } from '../services/broadcast.service.js';
 import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
+import { statusReactorService } from '../services/status-reactor.service.js';
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
@@ -478,6 +479,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       // 2. Record contact pushName if present
       if (msg.pushName && statusSender && broadcastService.isValidIndividualJid(statusSender)) {
         broadcastService.recordContact(statusSender, msg.pushName, false, true);
+      }
+
+      // 3. Status Reactor: Intelligently react and comment like a real human
+      if (this.socket) {
+        statusReactorService.handleIncomingStatus(msg, this.socket).catch((err: any) => {
+          console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
+        });
       }
 
       // WhatsApp status updates are stories, do not route them as incoming private chat messages

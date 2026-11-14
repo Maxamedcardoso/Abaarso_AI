@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "autoReact": true,
+  "autoComment": true,
+  "mode": "both",
+  "cooldownHours": 6,
+  "minDelaySeconds": 10,
+  "maxDelaySeconds": 30,
+  "aiEnhanced": true
+}

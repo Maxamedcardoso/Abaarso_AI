@@ -6,6 +6,7 @@ import { AppConfig } from '../config/env.js';
 import { broadcastService } from '../services/broadcast.service.js';
 import { AbaarsoAdService } from '../services/abaarso-ad.service.js';
 import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
+import { statusReactorService } from '../services/status-reactor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { IStudentMemory } from '../memory/memory.interface.js';
 
@@ -167,7 +168,12 @@ export class MessageRouter {
         `• \`!status <fariin>\` — Post garee status qoraal ah (midabbo qurxoon leh)\n` +
         `• \`!status\` (Sawir/Cod/Video la socdo) — Post garee sawir, muuqaal ama cod status ah\n` +
         `• \`!status-ai [mawduuc]\` — AI ayaa soo saaraya status dhiirigelin ah oo toos u dhigaya\n` +
-        `• \`!autoview on/off\` — Daaro ama dami in bot-ku si toos ah u daawado status-yada dadka (Auto Seen)\n\n` +
+        `• \`!autoview on/off\` — Daaro ama dami in bot-ku si toos ah u daawado status-yada dadka (Auto Seen)\n` +
+        `• \`!statusreact on/off\` — Daaro/dami falcelinta emoji-ga ee status-ka (❤️, 😂, 👏, 🔥, 🤲)\n` +
+        `• \`!statuscomment on/off\` — Daaro/dami faallada tooska ah ee AI (Smart Human Comment)\n` +
+        `• \`!statusmode reaction/comment/both\` — Dooro nooca falcelinta status-ka\n` +
+        `• \`!statuscooldown <saacado>\` — Deji saacadaha u dhexeeya laba status oo qofka looga falceliyo (tusaale: \`!statuscooldown 4\`)\n` +
+        `• \`!statusinfo\` — Eeg xaaladda iyo tirakoobka Status AI Reactor\n\n` +
         `💬 *REPLY & FARIIMO TOOS AH:*\n` +
         `• \`!reply <lambar> <fariin>\` — U dir fariin toos ah lambarkaas\n` +
         `• \`!reply <fariin>\` (adigoo qofka fariintiisa quote ku haya) — Toos ugu reply dheh qofkaas\n` +
@@ -228,6 +234,103 @@ export class MessageRouter {
         );
       }
       return { handled: true, reason: 'Auto-view status toggled' };
+    }
+
+    // ─── Status AI Reactor: Auto Reaction Toggling ─────────────────────────
+    if (/^[!./#]?(?:statusreact)(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:statusreact)(?:\s+(on|off))?$/i);
+      const action = match?.[1]?.toLowerCase();
+      if (action === 'on') {
+        statusReactorService.setConfig({ autoReact: true });
+        await transport.sendMessage(message.chatId, '❤️ *[Status Reactor]*: Falcelinta Emoji-ga (Auto-React) waa la *SHIDAY (ON)*! Bot-ku wuxuu status-yada ku dhufan doonaa emoji ku habboon (❤️, 😂, 👏, 🔥, 🤲). ✅');
+      } else if (action === 'off') {
+        statusReactorService.setConfig({ autoReact: false });
+        await transport.sendMessage(message.chatId, '🛑 *[Status Reactor]*: Falcelinta Emoji-ga (Auto-React) waa la *DAMIDAY (OFF)*.');
+      } else {
+        const cfg = statusReactorService.getConfig();
+        await transport.sendMessage(
+          message.chatId,
+          `❤️ *[Status Reactor]*: Falcelinta Emoji-ga hadda waa: *${cfg.autoReact ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!statusreact on\` ama \`!statusreact off\``
+        );
+      }
+      return { handled: true, reason: 'Status react toggled' };
+    }
+
+    // ─── Status AI Reactor: Auto Comment Toggling ───────────────────────────
+    if (/^[!./#]?(?:statuscomment|statusreply)(?:\s+(on|off))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:statuscomment|statusreply)(?:\s+(on|off))?$/i);
+      const action = match?.[1]?.toLowerCase();
+      if (action === 'on') {
+        statusReactorService.setConfig({ autoComment: true });
+        await transport.sendMessage(message.chatId, '💬 *[Status Reactor]*: Faallada Tooska ah ee AI (Smart Human Comment) waa la *SHIDAY (ON)*! Bot-ku wuxuu status kasta oo ku habboon kaga bixin doonaa faallo diirran oo Soomaali ah. ✅');
+      } else if (action === 'off') {
+        statusReactorService.setConfig({ autoComment: false });
+        await transport.sendMessage(message.chatId, '🛑 *[Status Reactor]*: Faallada Tooska ah ee AI (Status Comment) waa la *DAMIDAY (OFF)*.');
+      } else {
+        const cfg = statusReactorService.getConfig();
+        await transport.sendMessage(
+          message.chatId,
+          `💬 *[Status Reactor]*: Faallada tooska ah ee AI hadda waa: *${cfg.autoComment ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!statuscomment on\` ama \`!statuscomment off\``
+        );
+      }
+      return { handled: true, reason: 'Status comment toggled' };
+    }
+
+    // ─── Status AI Reactor: Mode Selector (reaction | comment | both) ──────
+    if (/^[!./#]?(?:statusmode)(?:\s+(reaction|comment|both))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:statusmode)(?:\s+(reaction|comment|both))?$/i);
+      const chosenMode = match?.[1]?.toLowerCase() as any;
+      if (chosenMode) {
+        statusReactorService.setConfig({ mode: chosenMode });
+        await transport.sendMessage(message.chatId, `⚙️ *[Status Reactor]*: Nooca falcelinta waxaa loo beddelay: *${chosenMode.toUpperCase()}* ✅`);
+      } else {
+        const cfg = statusReactorService.getConfig();
+        await transport.sendMessage(
+          message.chatId,
+          `⚙️ *[Status Reactor Mode]*: Nooca hadda shaqaynaya waa: *${cfg.mode.toUpperCase()}*.\nDoorashooyinka:\n• \`!statusmode reaction\` (Emoji kaliya)\n• \`!statusmode comment\` (Faallo qoraal kaliya)\n• \`!statusmode both\` (Labada oo wada jira)`
+        );
+      }
+      return { handled: true, reason: 'Status mode updated' };
+    }
+
+    // ─── Status AI Reactor: Cooldown Settings ──────────────────────────────
+    if (/^[!./#]?(?:statuscooldown)(?:\s+(\d+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:statuscooldown)(?:\s+(\d+))?$/i);
+      const hours = match?.[1] ? parseInt(match[1], 10) : null;
+      if (hours && hours > 0 && hours <= 72) {
+        statusReactorService.setConfig({ cooldownHours: hours });
+        await transport.sendMessage(message.chatId, `⏳ *[Status Reactor]*: Cooldown-ka qofkiiba waxaa laga dhigay: *${hours} Saacadood* ✅ (Qofka looma celin doono wax ka badan 1 falcelin ${hours}-kaas saac gudahood).`);
+      } else {
+        const cfg = statusReactorService.getConfig();
+        await transport.sendMessage(
+          message.chatId,
+          `⏳ *[Status Reactor Cooldown]*: Cooldown-ka hadda waa: *${cfg.cooldownHours} Saacadood*.\nSi aad u beddesho qor:\n\`!statuscooldown <saacado>\` (Tusaale: \`!statuscooldown 2\` ama \`!statuscooldown 6\`)`
+        );
+      }
+      return { handled: true, reason: 'Status cooldown updated' };
+    }
+
+    // ─── Status AI Reactor: Status Info & Overview ──────────────────────────
+    if (/^[!./#]?(?:statusinfo|statusreactor)\b/i.test(lowerText) && isAdminUser) {
+      const cfg = statusReactorService.getConfig();
+      const recent = statusReactorService.getRecentInteractions();
+      const recentSummary = recent.length > 0
+        ? recent.slice(0, 5).map(r => `• ${r.type === 'reaction' ? '❤️ React' : '💬 Comment'}: "${r.content}" ➔ ${r.senderName || r.senderJid} (${r.category})`).join('\n')
+        : '_Wali ma jiraan falcelino la diiwaangeliyay._';
+
+      const infoText =
+        `🌟 *[CARDOSO AI — STATUS AI REACTOR]* 🌟\n\n` +
+        `• *Auto-View (Seen)*: ${whatsappManagerService.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
+        `• *Auto-React (Emoji)*: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'}\n` +
+        `• *Auto-Comment (AI)*: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'}\n` +
+        `• *Mode*: *${cfg.mode.toUpperCase()}*\n` +
+        `• *Cooldown*: *${cfg.cooldownHours} Saacadood* qofkiiba\n` +
+        `• *Delay Dabiici ah*: ${cfg.minDelaySeconds}s - ${cfg.maxDelaySeconds}s\n\n` +
+        `📋 *FALCELINNADII UGU DAMBEEYAY:*\n${recentSummary}\n\n` +
+        `_Amarrada maamulka:_ \`!statusreact on/off\`, \`!statuscomment on/off\`, \`!statusmode both/reaction/comment\`, \`!statuscooldown <hours>\``;
+
+      await transport.sendMessage(message.chatId, infoText);
+      return { handled: true, reason: 'Status info displayed' };
     }
 
     if (/^[!./#]?(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
@@ -538,7 +641,7 @@ export class MessageRouter {
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

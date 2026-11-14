@@ -3,7 +3,7 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R] /Count 6 >>
+<< /Type /Pages /Kids [7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R] /Count 7 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
@@ -31,7 +31,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 1 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 1 ee 7) Tj ET
 0.118 0.161 0.231 RG
 1 w
 0.039 0.098 0.184 rg
@@ -108,7 +108,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 6 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 8 0 obj
-<< /Length 7558 >>
+<< /Length 7563 >>
 stream
 0.059 0.090 0.165 rg
 36.00 781.89 523.28 24.00 re f
@@ -124,7 +124,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 2 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 2 ee 7) Tj ET
 0.024 0.714 0.831 rg
 36.00 731.89 4.00 18.00 re f
 0.059 0.090 0.165 rg
@@ -213,48 +213,48 @@ BT /F1 8.5 Tf 48.00 453.89 Td (Shid ama dami in bot-ku si toos ah u daawado dham
 BT /F3 8 Tf 48.00 441.89 Td (Tusaale: !autoview on   ama   !autoview off) Tj ET
 0.706 0.325 0.035 rg
 BT /F1 7.5 Tf 48.00 429.89 Td (Xog: Marka ay furan tahay, bot-ku wuxuu qofka u muujinayaa inuu status-kiisa arkay \(Seen 24/7\).) Tj ET
-0.059 0.090 0.165 rg
-BT /F2 10.5 Tf 36.00 401.89 Td (=¬ 1.2 U JAWAABIDDA QOFKA & FARIIMAHA TOOSKA AH \(REPLY & DIRECT MESSAGING\):) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
-36.00 327.89 523.28 62.00 re B
+36.00 353.89 523.28 62.00 re B
 0.059 0.090 0.165 rg
-44.00 371.89 140.00 14.00 re f
+44.00 397.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 375.89 Td (!reply <lambar> <fariin>) Tj ET
+BT /F2 8.5 Tf 50.00 401.89 Td (!statusreact on / off) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
-481.28 371.89 70.00 14.00 re B
+481.28 397.89 70.00 14.00 re B
 0.063 0.725 0.506 rg
-BT /F2 7.5 Tf 487.28 375.89 Td ([ADMIN KALIYA]) Tj ET
+BT /F2 7.5 Tf 487.28 401.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 357.89 Td (Qof kasta oo WhatsApp haysta fariin toos ah ugu dir adoo magaca bot-ka u adeegsanaya \(waxaa la socon kara sawir/cod\).) Tj ET
+BT /F1 8.5 Tf 48.00 383.89 Td (Shid ama dami falcelinta tooska ah ee emoji-ga \(d, =, =O, =%, >2\) marka bot-ku daawado status-ka qofka.) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 345.89 Td (Tusaale: !reply 252615000000 Salaan walaal, dalabkaagii waa diyaar!) Tj ET
+BT /F3 8 Tf 48.00 371.89 Td (Tusaale: !statusreact on   ama   !statusreact off) Tj ET
 0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 333.89 Td (Xog: Haddii aad sawir soo raaciso, sawirka iyo qoraalkaba wuxuu u dirayaa lambarkaas.) Tj ET
+BT /F1 7.5 Tf 48.00 359.89 Td (Xog: Bot-ku wuxuu fahmayaa dareenka status-ka \(hambalyo, aroos, qosol, ganacsi, jimce\) wuxuuna ku dhufanayaa emoji ku habboon.) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
-36.00 257.89 523.28 62.00 re B
+36.00 283.89 523.28 62.00 re B
 0.059 0.090 0.165 rg
-44.00 301.89 140.00 14.00 re f
+44.00 327.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 305.89 Td (!reply <fariin> \(Quote\)) Tj ET
+BT /F2 8.5 Tf 50.00 331.89 Td (!statuscomment on / off) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
-481.28 301.89 70.00 14.00 re B
+481.28 327.89 70.00 14.00 re B
 0.063 0.725 0.506 rg
-BT /F2 7.5 Tf 487.28 305.89 Td ([ADMIN KALIYA]) Tj ET
+BT /F2 7.5 Tf 487.28 331.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 287.89 Td (Qof fariintiisa quote ku qabo \(swipe reply\), bot-kuna toos buu qofkaas fariinta ugu celinayaa.) Tj ET
+BT /F1 8.5 Tf 48.00 313.89 Td (Shid ama dami faallada tooska ah ee AI \(Human Status Comment\) oo qofka loogu reply-gareynayo status-kiisa.) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 275.89 Td (Tusaale: \(Quote fariinta qofka\) !reply Waan helnay fariintaada, mahadsanid.) Tj ET
+BT /F3 8 Tf 48.00 301.89 Td (Tusaale: !statuscomment on   ama   !statuscomment off) Tj ET
 0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 263.89 Td (Xog: Waxay si toos ah u beegsanaysaa qofka fariintiisa la quote-gareeyay.) Tj ET
+BT /F1 7.5 Tf 48.00 289.89 Td (Xog: Bot-ku wuxuu qofka u dirayaa faallo kooban oo Soomaali diirran ah isagoo quote ku samaynaya status-kiisa.) Tj ET
+0.059 0.090 0.165 rg
+BT /F2 10.5 Tf 36.00 261.89 Td (=¬ 1.2 U JAWAABIDDA QOFKA & FARIIMAHA TOOSKA AH \(REPLY & DIRECT MESSAGING\):) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
@@ -262,7 +262,7 @@ BT /F1 7.5 Tf 48.00 263.89 Td (Xog: Waxay si toos ah u beegsanaysaa qofka fariin
 0.059 0.090 0.165 rg
 44.00 231.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 235.89 Td (!cod <lambar> <fariin>) Tj ET
+BT /F2 8.5 Tf 50.00 235.89 Td (!reply <lambar> <fariin>) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
@@ -270,11 +270,11 @@ BT /F2 8.5 Tf 50.00 235.89 Td (!cod <lambar> <fariin>) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7.5 Tf 487.28 235.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 217.89 Td (Bot-ka ayaa qoraalkaaga u rogaya Cod Soomaali dabiici ah \(Voice Note\) oo toos ugu diraya lambarkaas.) Tj ET
+BT /F1 8.5 Tf 48.00 217.89 Td (Qof kasta oo WhatsApp haysta fariin toos ah ugu dir adoo magaca bot-ka u adeegsanaya \(waxaa la socon kara sawir/cod\).) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 205.89 Td (Tusaale: !cod 252615000000 Asc walaal, sidee tahay maanta? Shaqadu sidee tahay?) Tj ET
+BT /F3 8 Tf 48.00 205.89 Td (Tusaale: !reply 252615000000 Salaan walaal, dalabkaagii waa diyaar!) Tj ET
 0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 193.89 Td (Xog: Qofku wuxuu helayaa Voice Note la maqli karo oo leh waveform dhab ah.) Tj ET
+BT /F1 7.5 Tf 48.00 193.89 Td (Xog: Haddii aad sawir soo raaciso, sawirka iyo qoraalkaba wuxuu u dirayaa lambarkaas.) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
@@ -282,7 +282,7 @@ BT /F1 7.5 Tf 48.00 193.89 Td (Xog: Qofku wuxuu helayaa Voice Note la maqli karo
 0.059 0.090 0.165 rg
 44.00 161.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 165.89 Td (!autoreply add <key> | <ans>) Tj ET
+BT /F2 8.5 Tf 50.00 165.89 Td (!reply <fariin> \(Quote\)) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
@@ -290,17 +290,80 @@ BT /F2 8.5 Tf 50.00 165.89 Td (!autoreply add <key> | <ans>) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7.5 Tf 487.28 165.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 147.89 Td (Sameyso ereyo gaar ah oo bot-ku isla markiiba ugu jawaabo macaamiisha adoon AI isticmaalin \(0ms latency\).) Tj ET
+BT /F1 8.5 Tf 48.00 147.89 Td (Qof fariintiisa quote ku qabo \(swipe reply\), bot-kuna toos buu qofkaas fariinta ugu celinayaa.) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 135.89 Td (Tusaale: !autoreply add goobta | Xafiiskeenu wuxuu ku yaallaa Suuqa Hoose.) Tj ET
+BT /F3 8 Tf 48.00 135.89 Td (Tusaale: \(Quote fariinta qofka\) !reply Waan helnay fariintaada, mahadsanid.) Tj ET
 0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 123.89 Td (Xog: Eeg dhammaan kuwa kaydsan adoo qoraya: !autoreply list ama tirtir adoo qoraya: !autoreply delete goobta) Tj ET
+BT /F1 7.5 Tf 48.00 123.89 Td (Xog: Waxay si toos ah u beegsanaysaa qofka fariintiisa la quote-gareeyay.) Tj ET
 endstream
 endobj
 9 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 8 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 10 0 obj
+<< /Length 2206 >>
+stream
+0.059 0.090 0.165 rg
+36.00 781.89 523.28 24.00 re f
+0.024 0.714 0.831 rg
+36.00 779.89 523.28 2.00 re f
+1.000 1.000 1.000 rg
+BT /F2 9 Tf 46.00 789.89 Td (CARDOSO AI  WHATSAPP BOT PLATFORM) Tj ET
+0.580 0.639 0.722 rg
+BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUIDE\)) Tj ET
+0.886 0.910 0.941 RG
+1 w
+36.00 52.00 523.28 1.00 re S
+0.392 0.455 0.545 rg
+BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
+0.059 0.090 0.165 rg
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 3 ee 7) Tj ET
+0.886 0.910 0.941 RG
+1 w
+0.973 0.980 0.988 rg
+36.00 698.89 523.28 62.00 re B
+0.059 0.090 0.165 rg
+44.00 742.89 140.00 14.00 re f
+0.220 0.741 0.973 rg
+BT /F2 8.5 Tf 50.00 746.89 Td (!cod <lambar> <fariin>) Tj ET
+0.063 0.725 0.506 RG
+1 w
+0.925 0.992 0.961 rg
+481.28 742.89 70.00 14.00 re B
+0.063 0.725 0.506 rg
+BT /F2 7.5 Tf 487.28 746.89 Td ([ADMIN KALIYA]) Tj ET
+0.118 0.161 0.231 rg
+BT /F1 8.5 Tf 48.00 728.89 Td (Bot-ka ayaa qoraalkaaga u rogaya Cod Soomaali dabiici ah \(Voice Note\) oo toos ugu diraya lambarkaas.) Tj ET
+0.392 0.455 0.545 rg
+BT /F3 8 Tf 48.00 716.89 Td (Tusaale: !cod 252615000000 Asc walaal, sidee tahay maanta? Shaqadu sidee tahay?) Tj ET
+0.706 0.325 0.035 rg
+BT /F1 7.5 Tf 48.00 704.89 Td (Xog: Qofku wuxuu helayaa Voice Note la maqli karo oo leh waveform dhab ah.) Tj ET
+0.886 0.910 0.941 RG
+1 w
+0.973 0.980 0.988 rg
+36.00 628.89 523.28 62.00 re B
+0.059 0.090 0.165 rg
+44.00 672.89 140.00 14.00 re f
+0.220 0.741 0.973 rg
+BT /F2 8.5 Tf 50.00 676.89 Td (!autoreply add <key> | <ans>) Tj ET
+0.063 0.725 0.506 RG
+1 w
+0.925 0.992 0.961 rg
+481.28 672.89 70.00 14.00 re B
+0.063 0.725 0.506 rg
+BT /F2 7.5 Tf 487.28 676.89 Td ([ADMIN KALIYA]) Tj ET
+0.118 0.161 0.231 rg
+BT /F1 8.5 Tf 48.00 658.89 Td (Sameyso ereyo gaar ah oo bot-ku isla markiiba ugu jawaabo macaamiisha adoon AI isticmaalin \(0ms latency\).) Tj ET
+0.392 0.455 0.545 rg
+BT /F3 8 Tf 48.00 646.89 Td (Tusaale: !autoreply add goobta | Xafiiskeenu wuxuu ku yaallaa Suuqa Hoose.) Tj ET
+0.706 0.325 0.035 rg
+BT /F1 7.5 Tf 48.00 634.89 Td (Xog: Eeg dhammaan kuwa kaydsan adoo qoraya: !autoreply list ama tirtir adoo qoraya: !autoreply delete goobta) Tj ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 10 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
+endobj
+12 0 obj
 << /Length 7635 >>
 stream
 0.059 0.090 0.165 rg
@@ -317,7 +380,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 3 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 4 ee 7) Tj ET
 0.059 0.090 0.165 rg
 BT /F2 10.5 Tf 36.00 756.89 Td (=e 1.3 MAAMULKA KOOXAHA \(GROUP MANAGEMENT 100% CONTROL\):) Tj ET
 0.886 0.910 0.941 RG
@@ -504,10 +567,10 @@ BT /F3 8 Tf 48.00 114.89 Td (Tusaale: Sawirkaaga soo dir adoo qoraal ku soo raac
 BT /F1 7.5 Tf 48.00 102.89 Td (Xog: Profile-ka bot-ka ayaa isla markiiba sawirkaas qaadanaya.) Tj ET
 endstream
 endobj
-11 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 10 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 12 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
-12 0 obj
+14 0 obj
 << /Length 2222 >>
 stream
 0.059 0.090 0.165 rg
@@ -524,7 +587,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 4 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 5 ee 7) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
@@ -567,10 +630,10 @@ BT /F3 8 Tf 48.00 646.89 Td (Tusaale: !fariin Salaan dhammaan, waxaan haynaa oge
 BT /F1 7.5 Tf 48.00 634.89 Td (Xog: Smart Broadcast wuxuu fariinta ugu yeerayaa magaca qof kasta \(Personalized\).) Tj ET
 endstream
 endobj
-13 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 12 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 14 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
-14 0 obj
+16 0 obj
 << /Length 7727 >>
 stream
 0.059 0.090 0.165 rg
@@ -587,7 +650,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 5 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 6 ee 7) Tj ET
 0.024 0.714 0.831 rg
 36.00 731.89 4.00 18.00 re f
 0.059 0.090 0.165 rg
@@ -762,11 +825,11 @@ BT /F3 8 Tf 48.00 109.89 Td (Tusaale: !abaarso   ama   @abaarso) Tj ET
 BT /F1 7.5 Tf 48.00 97.89 Td (Xog: Waxaa la soo dirayaa cod rasmi ah oo sharaxaya kulliyadaha, deeqaha waxbarasho, iyo diiwaangelinta.) Tj ET
 endstream
 endobj
-15 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 14 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 16 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
-16 0 obj
-<< /Length 12530 >>
+18 0 obj
+<< /Length 13317 >>
 stream
 0.059 0.090 0.165 rg
 36.00 781.89 523.28 24.00 re f
@@ -782,7 +845,7 @@ BT /F1 8 Tf 266.00 789.89 Td (BUUG-TILMAAMEEDKA AMARRADA \(OFFICIAL COMMAND GUID
 0.392 0.455 0.545 rg
 BT /F1 8 Tf 36.00 40.00 Td (CARDOSO AI v1.0.0  Barasho, Dhiirigelin, iyo Horumar | Waxaa diyaariyay Maxamed Daahir) Tj ET
 0.059 0.090 0.165 rg
-BT /F2 8 Tf 499.28 40.00 Td (Bogga 6 ee 6) Tj ET
+BT /F2 8 Tf 499.28 40.00 Td (Bogga 7 ee 7) Tj ET
 0.024 0.714 0.831 rg
 36.00 731.89 4.00 18.00 re f
 0.059 0.090 0.165 rg
@@ -852,324 +915,350 @@ BT /F3 6.8 Tf 420.00 643.89 Td (!autoview on) Tj ET
 1.000 1.000 1.000 rg
 36.00 625.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 629.89 Td (!reply <num> <msg>) Tj ET
+BT /F2 7 Tf 40.00 629.89 Td (!statusreact on/off) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 629.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 629.89 Td (Fariin toos ah u dir qof kasta) Tj ET
+BT /F1 7 Tf 250.00 629.89 Td (Falcelinta emoji-ga ee status-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 629.89 Td (!reply 252615... Asc) Tj ET
+BT /F3 6.8 Tf 420.00 629.89 Td (!statusreact on) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 611.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 615.89 Td (!reply \(Quote\)) Tj ET
+BT /F2 7 Tf 40.00 615.89 Td (!statuscomment on/off) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 615.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 615.89 Td (Fariin qof quote ugu celi toos) Tj ET
+BT /F1 7 Tf 250.00 615.89 Td (Faallada tooska ah ee status-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 615.89 Td (!reply Waan helnay) Tj ET
+BT /F3 6.8 Tf 420.00 615.89 Td (!statuscomment on) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 597.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 601.89 Td (!cod <num> <msg>) Tj ET
+BT /F2 7 Tf 40.00 601.89 Td (!reply <num> <msg>) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 601.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 601.89 Td (Cod Soomaali ah u dir qofka) Tj ET
+BT /F1 7 Tf 250.00 601.89 Td (Fariin toos ah u dir qof kasta) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 601.89 Td (!cod 252615... Asc) Tj ET
+BT /F3 6.8 Tf 420.00 601.89 Td (!reply 252615... Asc) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 583.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 587.89 Td (!autoreply add) Tj ET
+BT /F2 7 Tf 40.00 587.89 Td (!reply \(Quote\)) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 587.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 587.89 Td (Sameyso jawaab toos ah oo degdeg ah) Tj ET
+BT /F1 7 Tf 250.00 587.89 Td (Fariin qof quote ugu celi toos) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 587.89 Td (!autoreply add goobta | ...) Tj ET
+BT /F3 6.8 Tf 420.00 587.89 Td (!reply Waan helnay) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 569.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 573.89 Td (!tagall / !dhammaan) Tj ET
+BT /F2 7 Tf 40.00 573.89 Td (!cod <num> <msg>) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 573.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 573.89 Td (Kooxda oo dhan hal mar tag garee) Tj ET
+BT /F1 7 Tf 250.00 573.89 Td (Cod Soomaali ah u dir qofka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 573.89 Td (!tagall Shir degdeg ah) Tj ET
+BT /F3 6.8 Tf 420.00 573.89 Td (!cod 252615... Asc) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 555.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 559.89 Td (!kick / !ka-saar) Tj ET
+BT /F2 7 Tf 40.00 559.89 Td (!autoreply add) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 559.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 559.89 Td (Xubin ka saar kooxda) Tj ET
+BT /F1 7 Tf 250.00 559.89 Td (Sameyso jawaab toos ah oo degdeg ah) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 559.89 Td (!kick @25261...) Tj ET
+BT /F3 6.8 Tf 420.00 559.89 Td (!autoreply add goobta | ...) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 541.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 545.89 Td (!add / !soo-geli) Tj ET
+BT /F2 7 Tf 40.00 545.89 Td (!tagall / !dhammaan) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 545.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 545.89 Td (Xubin ku dar kooxda) Tj ET
+BT /F1 7 Tf 250.00 545.89 Td (Kooxda oo dhan hal mar tag garee) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 545.89 Td (!add 25261...) Tj ET
+BT /F3 6.8 Tf 420.00 545.89 Td (!tagall Shir degdeg ah) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 527.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 531.89 Td (!promote / !demote) Tj ET
+BT /F2 7 Tf 40.00 531.89 Td (!kick / !ka-saar) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 531.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 531.89 Td (Admin ka dhig ama ka qaad xubin) Tj ET
+BT /F1 7 Tf 250.00 531.89 Td (Xubin ka saar kooxda) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 531.89 Td (!promote @user) Tj ET
+BT /F3 6.8 Tf 420.00 531.89 Td (!kick @25261...) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 513.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 517.89 Td (!mute / !unmute) Tj ET
+BT /F2 7 Tf 40.00 517.89 Td (!add / !soo-geli) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 517.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 517.89 Td (Kooxda xidh ama fur dhammaan) Tj ET
+BT /F1 7 Tf 250.00 517.89 Td (Xubin ku dar kooxda) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 517.89 Td (!mute / !unmute) Tj ET
+BT /F3 6.8 Tf 420.00 517.89 Td (!add 25261...) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 499.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 503.89 Td (!link / !grouplink) Tj ET
+BT /F2 7 Tf 40.00 503.89 Td (!promote / !demote) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 503.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 503.89 Td (Soo saar WhatsApp invite link) Tj ET
+BT /F1 7 Tf 250.00 503.89 Td (Admin ka dhig ama ka qaad xubin) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 503.89 Td (!link) Tj ET
+BT /F3 6.8 Tf 420.00 503.89 Td (!promote @user) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 485.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 489.89 Td (!setname / !setbio) Tj ET
+BT /F2 7 Tf 40.00 489.89 Td (!mute / !unmute) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 489.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 489.89 Td (Beddel magaca ama bio-ga bot-ka) Tj ET
+BT /F1 7 Tf 250.00 489.89 Td (Kooxda xidh ama fur dhammaan) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 489.89 Td (!setname CARDOSO) Tj ET
+BT /F3 6.8 Tf 420.00 489.89 Td (!mute / !unmute) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 471.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 475.89 Td (!setpp \(Image\)) Tj ET
+BT /F2 7 Tf 40.00 475.89 Td (!link / !grouplink) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 475.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 475.89 Td (Beddel sawirka profile picture-ka) Tj ET
+BT /F1 7 Tf 250.00 475.89 Td (Soo saar WhatsApp invite link) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 475.89 Td (Sawir + !setpp) Tj ET
+BT /F3 6.8 Tf 420.00 475.89 Td (!link) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 457.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 461.89 Td (!block / !unblock) Tj ET
+BT /F2 7 Tf 40.00 461.89 Td (!setname / !setbio) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 461.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 461.89 Td (Block garee ama unblock ka qaad) Tj ET
+BT /F1 7 Tf 250.00 461.89 Td (Beddel magaca ama bio-ga bot-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 461.89 Td (!block 25261...) Tj ET
+BT /F3 6.8 Tf 420.00 461.89 Td (!setname CARDOSO) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 443.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 447.89 Td (!delete \(Quote\)) Tj ET
+BT /F2 7 Tf 40.00 447.89 Td (!setpp \(Image\)) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 447.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 447.89 Td (Delete for everyone ku tirtir fariin) Tj ET
+BT /F1 7 Tf 250.00 447.89 Td (Beddel sawirka profile picture-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 447.89 Td (!delete \(fariin quote\)) Tj ET
+BT /F3 6.8 Tf 420.00 447.89 Td (Sawir + !setpp) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 429.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 433.89 Td (!react <emoji>) Tj ET
+BT /F2 7 Tf 40.00 433.89 Td (!block / !unblock) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 433.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 433.89 Td (Emoji ku dhufo fariinta quote-ka) Tj ET
+BT /F1 7 Tf 250.00 433.89 Td (Block garee ama unblock ka qaad) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 433.89 Td (!react d) Tj ET
+BT /F3 6.8 Tf 420.00 433.89 Td (!block 25261...) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 415.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 419.89 Td (!fariin / !contacts) Tj ET
+BT /F2 7 Tf 40.00 419.89 Td (!delete \(Quote\)) Tj ET
 0.863 0.149 0.149 rg
 BT /F2 7 Tf 150.00 419.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 419.89 Td (50 qof fariin wadareed u dir) Tj ET
+BT /F1 7 Tf 250.00 419.89 Td (Delete for everyone ku tirtir fariin) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 419.89 Td (!fariin Salaan dhammaan) Tj ET
+BT /F3 6.8 Tf 420.00 419.89 Td (!delete \(fariin quote\)) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 401.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 405.89 Td (Chat Caadi ah) Tj ET
-0.063 0.725 0.506 rg
-BT /F2 7 Tf 150.00 405.89 Td (Qof Kasta) Tj ET
+BT /F2 7 Tf 40.00 405.89 Td (!react <emoji>) Tj ET
+0.863 0.149 0.149 rg
+BT /F2 7 Tf 150.00 405.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 405.89 Td (Su'aalo weydii bot-ka 1-on-1) Tj ET
+BT /F1 7 Tf 250.00 405.89 Td (Emoji ku dhufo fariinta quote-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 405.89 Td (Python loop ii sharax) Tj ET
+BT /F3 6.8 Tf 420.00 405.89 Td (!react d) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 387.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 391.89 Td (@cardoso <su'aal>) Tj ET
-0.063 0.725 0.506 rg
-BT /F2 7 Tf 150.00 391.89 Td (Qof Kasta) Tj ET
+BT /F2 7 Tf 40.00 391.89 Td (!fariin / !contacts) Tj ET
+0.863 0.149 0.149 rg
+BT /F2 7 Tf 150.00 391.89 Td (Admin Only) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 391.89 Td (Kooxaha dhexdeeda bot-ka kula hadal) Tj ET
+BT /F1 7 Tf 250.00 391.89 Td (50 qof fariin wadareed u dir) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 391.89 Td (@cardoso xisaabtan xalli) Tj ET
+BT /F3 6.8 Tf 420.00 391.89 Td (!fariin Salaan dhammaan) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 373.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 377.89 Td (Cod Soo Duub) Tj ET
+BT /F2 7 Tf 40.00 377.89 Td (Chat Caadi ah) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 377.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 377.89 Td (Cod u soo dir, bot-kuna cod buu kuugu celin) Tj ET
+BT /F1 7 Tf 250.00 377.89 Td (Su'aalo weydii bot-ka 1-on-1) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 377.89 Td (Soo duub voice note) Tj ET
+BT /F3 6.8 Tf 420.00 377.89 Td (Python loop ii sharax) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 359.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 363.89 Td (@cod / !cod) Tj ET
+BT /F2 7 Tf 40.00 363.89 Td (@cardoso <su'aal>) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 363.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 363.89 Td (Cod dabiici ah kaga dalbo bot-ka) Tj ET
+BT /F1 7 Tf 250.00 363.89 Td (Kooxaha dhexdeeda bot-ka kula hadal) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 363.89 Td (@cod i dhiiri-geli) Tj ET
+BT /F3 6.8 Tf 420.00 363.89 Td (@cardoso xisaabtan xalli) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 345.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 349.89 Td (@sawir / !sawir) Tj ET
+BT /F2 7 Tf 40.00 349.89 Td (Cod Soo Duub) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 349.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 349.89 Td (Sawir AI ah ka codso bot-ka) Tj ET
+BT /F1 7 Tf 250.00 349.89 Td (Cod u soo dir, bot-kuna cod buu kuugu celin) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 349.89 Td (@sawir arday dugsi jooga) Tj ET
+BT /F3 6.8 Tf 420.00 349.89 Td (Soo duub voice note) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 331.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 335.89 Td (jooji / stop) Tj ET
+BT /F2 7 Tf 40.00 335.89 Td (@cod / !cod) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 335.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 335.89 Td (Ka bax fariin-wadareedka \(Opt-out\)) Tj ET
+BT /F1 7 Tf 250.00 335.89 Td (Cod dabiici ah kaga dalbo bot-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 335.89 Td (jooji) Tj ET
+BT /F3 6.8 Tf 420.00 335.89 Td (@cod i dhiiri-geli) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 1.000 1.000 1.000 rg
 36.00 317.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 321.89 Td (!tirtir / !clear) Tj ET
+BT /F2 7 Tf 40.00 321.89 Td (@sawir / !sawir) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 321.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 321.89 Td (Xogtaada oo dhan tirtir \(Privacy\)) Tj ET
+BT /F1 7 Tf 250.00 321.89 Td (Sawir AI ah ka codso bot-ka) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 321.89 Td (!tirtir) Tj ET
+BT /F3 6.8 Tf 420.00 321.89 Td (@sawir arday dugsi jooga) Tj ET
 0.886 0.910 0.941 RG
 0.5 w
 0.973 0.980 0.988 rg
 36.00 303.89 523.28 14.00 re B
 0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 307.89 Td (!abaarso) Tj ET
+BT /F2 7 Tf 40.00 307.89 Td (jooji / stop) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7 Tf 150.00 307.89 Td (Qof Kasta) Tj ET
 0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 307.89 Td (Xayeysiiska rasmiga ah ee jaamacadda) Tj ET
+BT /F1 7 Tf 250.00 307.89 Td (Ka bax fariin-wadareedka \(Opt-out\)) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 307.89 Td (!abaarso) Tj ET
+BT /F3 6.8 Tf 420.00 307.89 Td (jooji) Tj ET
+0.886 0.910 0.941 RG
+0.5 w
+1.000 1.000 1.000 rg
+36.00 289.89 523.28 14.00 re B
+0.059 0.090 0.165 rg
+BT /F2 7 Tf 40.00 293.89 Td (!tirtir / !clear) Tj ET
+0.063 0.725 0.506 rg
+BT /F2 7 Tf 150.00 293.89 Td (Qof Kasta) Tj ET
+0.200 0.255 0.333 rg
+BT /F1 7 Tf 250.00 293.89 Td (Xogtaada oo dhan tirtir \(Privacy\)) Tj ET
+0.392 0.455 0.545 rg
+BT /F3 6.8 Tf 420.00 293.89 Td (!tirtir) Tj ET
+0.886 0.910 0.941 RG
+0.5 w
+0.973 0.980 0.988 rg
+36.00 275.89 523.28 14.00 re B
+0.059 0.090 0.165 rg
+BT /F2 7 Tf 40.00 279.89 Td (!abaarso) Tj ET
+0.063 0.725 0.506 rg
+BT /F2 7 Tf 150.00 279.89 Td (Qof Kasta) Tj ET
+0.200 0.255 0.333 rg
+BT /F1 7 Tf 250.00 279.89 Td (Xayeysiiska rasmiga ah ee jaamacadda) Tj ET
+0.392 0.455 0.545 rg
+BT /F3 6.8 Tf 420.00 279.89 Td (!abaarso) Tj ET
 0.369 0.918 0.831 RG
 1 w
 0.941 0.992 0.980 rg
-36.00 262.89 523.28 26.00 re B
+36.00 234.89 523.28 26.00 re B
 0.051 0.580 0.533 rg
-BT /F2 7.5 Tf 46.00 278.89 Td (= SIDA LOO CUSBOONAYSIIN KARO PDF-KAN MAR KASTA OO AMAR CUSUB LA SOO DARO:) Tj ET
+BT /F2 7.5 Tf 46.00 250.89 Td (= SIDA LOO CUSBOONAYSIIN KARO PDF-KAN MAR KASTA OO AMAR CUSUB LA SOO DARO:) Tj ET
 0.059 0.090 0.165 rg
-BT /F1 7 Tf 46.00 268.89 Td (Kaliya terminal-ka ka dhex qor: "npm run generate-pdf" ama "node scripts/generate-commands-pdf.js". Isla markiiba PDF-ka dib buu u dhisayaa.) Tj ET
+BT /F1 7 Tf 46.00 240.89 Td (Kaliya terminal-ka ka dhex qor: "npm run generate-pdf" ama "node scripts/generate-commands-pdf.js". Isla markiiba PDF-ka dib buu u dhisayaa.) Tj ET
 endstream
 endobj
-17 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 16 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 18 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 xref
-0 18
+0 20
 0000000000 65535 f 
 0000000009 00000 n 
 0000000058 00000 n 
-0000000149 00000 n 
-0000000219 00000 n 
-0000000294 00000 n 
-0000000367 00000 n 
-0000004398 00000 n 
-0000004550 00000 n 
-0000012170 00000 n 
-0000012322 00000 n 
-0000020022 00000 n 
-0000020176 00000 n 
-0000022459 00000 n 
-0000022613 00000 n 
-0000030409 00000 n 
-0000030563 00000 n 
-0000043157 00000 n 
+0000000156 00000 n 
+0000000226 00000 n 
+0000000301 00000 n 
+0000000374 00000 n 
+0000004405 00000 n 
+0000004557 00000 n 
+0000012194 00000 n 
+0000012346 00000 n 
+0000014609 00000 n 
+0000014763 00000 n 
+0000022463 00000 n 
+0000022617 00000 n 
+0000024900 00000 n 
+0000025054 00000 n 
+0000032850 00000 n 
+0000033004 00000 n 
+0000046385 00000 n 
 trailer
-<< /Size 18 /Root 1 0 R >>
+<< /Size 20 /Root 1 0 R >>
 startxref
-43311
+46539
 %%EOF

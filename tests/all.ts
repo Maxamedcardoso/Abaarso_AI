@@ -11,6 +11,7 @@ const testFiles = [
   'tests/human-persona.test.ts',
   'tests/broadcast.test.ts',
   'tests/whatsapp-manager.test.ts',
+  'tests/status-reactor.test.ts',
   'tests/e2e-master.test.ts',
 ];
 

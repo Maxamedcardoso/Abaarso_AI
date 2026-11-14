@@ -401,6 +401,22 @@ export function generateCommandsPDF() {
     'Marka ay furan tahay, bot-ku wuxuu qofka u muujinayaa inuu status-kiisa arkay (Seen 24/7).'
   );
 
+  doc.addCommandCard(
+    '!statusreact on / off',
+    '[ADMIN KALIYA]',
+    'Shid ama dami falcelinta tooska ah ee emoji-ga (❤️, 😂, 👏, 🔥, 🤲) marka bot-ku daawado status-ka qofka.',
+    '!statusreact on   ama   !statusreact off',
+    'Bot-ku wuxuu fahmayaa dareenka status-ka (hambalyo, aroos, qosol, ganacsi, jimce) wuxuuna ku dhufanayaa emoji ku habboon.'
+  );
+
+  doc.addCommandCard(
+    '!statuscomment on / off',
+    '[ADMIN KALIYA]',
+    'Shid ama dami faallada tooska ah ee AI (Human Status Comment) oo qofka loogu reply-gareynayo status-kiisa.',
+    '!statuscomment on   ama   !statuscomment off',
+    'Bot-ku wuxuu qofka u dirayaa faallo kooban oo Soomaali diirran ah isagoo quote ku samaynaya status-kiisa.'
+  );
+
   doc.currentY -= 10;
   doc.drawText('💬 1.2 U JAWAABIDDA QOFKA & FARIIMAHA TOOSKA AH (REPLY & DIRECT MESSAGING):', doc.margin, doc.currentY - 4, {
     bold: true,
@@ -674,6 +690,8 @@ export function generateCommandsPDF() {
     ['!status (Media)', 'Admin Only', 'Sawir/Cod/Video Status ka dhig', 'Sawir + caption !status'],
     ['!status-ai', 'Admin Only', 'AI Status dhiirigelin ah curi', '!status-ai waxbarasho'],
     ['!autoview on/off', 'Admin Only', 'Daawashada tooska ah ee status-ka', '!autoview on'],
+    ['!statusreact on/off', 'Admin Only', 'Falcelinta emoji-ga ee status-ka', '!statusreact on'],
+    ['!statuscomment on/off', 'Admin Only', 'Faallada tooska ah ee status-ka', '!statuscomment on'],
     ['!reply <num> <msg>', 'Admin Only', 'Fariin toos ah u dir qof kasta', '!reply 252615... Asc'],
     ['!reply (Quote)', 'Admin Only', 'Fariin qof quote ugu celi toos', '!reply Waan helnay'],
     ['!cod <num> <msg>', 'Admin Only', 'Cod Soomaali ah u dir qofka', '!cod 252615... Asc'],

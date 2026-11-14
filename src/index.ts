@@ -11,6 +11,7 @@ import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
 import { reminderService } from './services/reminder.service.js';
 import { broadcastService } from './services/broadcast.service.js';
 import { whatsappManagerService } from './services/whatsapp-manager.service.js';
+import { statusReactorService } from './services/status-reactor.service.js';
 import { createStudioServer } from './web/studio-server.js';
 
 async function bootstrap() {
@@ -42,6 +43,7 @@ async function bootstrap() {
   const ai = new AIOrchestrator(config);
   await ai.initialize();
   whatsappManagerService.setAIOrchestrator(ai);
+  statusReactorService.setAIOrchestrator(ai);
   console.log(`✅ [AI Engine] Primary Model: ${config.gemini.model} (Daily free limit: ${config.gemini.dailyLimit})`);
 
   // 4. Initialize Advisor Engine & Message Router

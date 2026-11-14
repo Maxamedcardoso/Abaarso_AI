@@ -47,6 +47,11 @@ Bot-kan waxaa lagu dhisay nidaam ammaan oo heer sare ah (**Strict Role-Based Acc
 | `!status-ai <dulucda>` | `!status-ai dhiirrigelin ganacsi` | Gemini AI ayaa soo saaraysa xikmad/oraah heer sare ah oo Soomaali ah kuna dhigaysa status-kaaga. | **Admin Only** |
 | `!autoview on` | `!autoview on` | Bot-ku wuxuu si toos ah u daawanayaa (Auto-Seen) dhammaan stories-ka dadkaaga isla markiiba. | **Admin Only** |
 | `!autoview off` | `!autoview off` | Daminta daawashada tooska ah ee stories-ka. | **Admin Only** |
+| `!statusreact on/off` | `!statusreact on` | Daaro/dami in bot-ku emoji dabiici ah (❤️, 😂, 👏, 🔥, 🤲) ku dhufto status kasta oo uu arko. | **Admin Only** |
+| `!statuscomment on/off`| `!statuscomment on` | Daaro/dami in bot-ku faallo (comment) Soomaali ah oo dabiici ah ku reply-gareeyo status-ka dadka. | **Admin Only** |
+| `!statusmode <mode>` | `!statusmode both` | Dooro nooca falcelinta: `reaction` (emoji), `comment` (faallo), ama `both` (labadaba). | **Admin Only** |
+| `!statuscooldown <h>` | `!statuscooldown 4` | Deji saacadaha u dhexeeya laba status oo qofka looga falceliyo (anti-spam cooldown). | **Admin Only** |
+| `!statusinfo` | `!statusinfo` | Soo bandhig xaaladda, habaynta iyo falcelinnadii u dambeeyay ee Status Reactor. | **Admin Only** |
 
 ---
 
