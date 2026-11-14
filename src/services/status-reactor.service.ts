@@ -807,23 +807,18 @@ SHURUUCO ADAG:
       this.config.autoComment &&
       (this.config.mode === 'comment' || this.config.mode === 'both' || !this.config.autoReact);
 
-    // 1. Send Emoji Reaction (Love ❤️ / Contextual Emoji)
+    // 1. Send Emoji Reaction (Love Cagaaran 💚 / Green Heart / Contextual Emoji)
     if (shouldReact) {
-      // Determine appropriate emoji: ❤️ (Love) for general/positive/media, 🤲 for tacsi/xanuun
-      let emoji = '❤️';
+      // Determine appropriate emoji: 💚 (Love Cagaaran / Green Heart) for general/positive/media, 🤲 for tacsi/xanuun
+      let emoji = '💚';
       if (analysis.category === 'condolence' || analysis.category === 'illness') {
         emoji = '🤲';
       } else if (analysis.category === 'islamic_friday' || analysis.category === 'islamic_duco') {
         const islamic = ['🤲', '🤍', '✨'];
         emoji = islamic[Math.floor(Math.random() * islamic.length)];
-      } else if (analysis.suggestedEmojis && analysis.suggestedEmojis.length > 0) {
-        if (analysis.suggestedEmojis.includes('❤️')) {
-          emoji = '❤️';
-        } else {
-          // Strongly include ❤️ in the pool so Love is the primary story reaction
-          const pool = ['❤️', ...analysis.suggestedEmojis];
-          emoji = pool[Math.floor(Math.random() * pool.length)];
-        }
+      } else {
+        // Default to Green Heart 💚 (Love Cagaaran - WhatsApp Status Like)
+        emoji = '💚';
       }
 
       try {
@@ -889,7 +884,7 @@ SHURUUCO ADAG:
           timestamp: Date.now(),
         });
 
-        console.log(`❤️ [StatusReactor] Reacted "${emoji}" (Love) to status of ${senderName || senderJid} (${gender})`);
+        console.log(`💚 [StatusReactor] Reacted "${emoji}" (Love Cagaaran) to status of ${senderName || senderJid} (${gender})`);
       } catch (err: any) {
         console.warn(`[StatusReactor] Failed to react to status: ${err?.message}`);
       }

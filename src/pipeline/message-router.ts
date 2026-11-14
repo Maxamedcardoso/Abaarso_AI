@@ -404,7 +404,7 @@ SHURUUCDA DUGSIIYA:
             '👁️✨ *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *SHIDAY (ON)*!\n\n' +
             'Hadda bot-ku hal mar ayuu dhammaan si toos ah u wada qabanayaa:\n' +
             '✅ *Auto-View (Seen)*: Wuxuu daawanayaa dhammaan status-yada (views ayaad ka mid noqonaysaa).\n' +
-            '✅ *Auto-React (Love ❤️)*: Wuxuu status-ka saarayaa Love (❤️) ama emoji ku habboon.\n' +
+            '✅ *Auto-React (Love Cagaaran 💚)*: Wuxuu status-ka si toos ah u saarayaa Love Cagaaran (💚) ama emoji ku habboon.\n' +
             '✅ *Auto-Comment (AI)*: Wuxuu si dabiici ah ugu reply-garaynayaa faallo Soomaali ah oo diirran!\n\n' +
             '_Bot-ku wuxuu u dhaqmayaa sida qof caadi ah oo kale!_ 😊'
           );
