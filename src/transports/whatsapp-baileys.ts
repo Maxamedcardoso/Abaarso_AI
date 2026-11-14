@@ -929,6 +929,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
+          sendOptions.backgroundColor = (options as any)?.backgroundColor || '#1e3c72';
+          sendOptions.font = (options as any)?.font || 1;
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
@@ -983,6 +985,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
+          sendOptions.backgroundColor = (options as any)?.backgroundColor || '#1e3c72';
+          sendOptions.font = (options as any)?.font || 1;
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }

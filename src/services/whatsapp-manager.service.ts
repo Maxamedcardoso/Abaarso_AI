@@ -471,10 +471,14 @@ export class WhatsAppManagerService {
 
       const statusSendOptions: any = {
         broadcast: true,
+        backgroundColor: chosenColor,
+        font: chosenFont,
       };
       if (targetRecipients.length > 0) {
         statusSendOptions.statusJidList = targetRecipients;
       }
+
+      console.log(`📢 [WhatsApp Status] Posting text status (Color: ${chosenColor}, Font: ${chosenFont}, Recipients: ${targetRecipients.length}): "${cleanText.slice(0, 45)}"...`);
 
       const sent = await this.socket.sendMessage(
         'status@broadcast',
@@ -485,6 +489,8 @@ export class WhatsAppManagerService {
         } as any,
         statusSendOptions
       );
+
+      console.log(`📢 [WhatsApp Status] Message dispatched successfully! MessageId: ${sent?.key?.id}`);
 
       if (sent?.key?.id) {
         this.recordPostedStatus(sent.key.id, 'text', cleanText, chosenColor, targetRecipients.length);
@@ -552,6 +558,10 @@ export class WhatsAppManagerService {
       } else if (media.type === 'audio') {
         const colors = ['#1e3c72', '#0f5132', '#4a154b', '#0d6efd', '#6f42c1'];
         const chosenColor = options?.backgroundColor || colors[Math.floor(Math.random() * colors.length)];
+        const audioSendOptions = {
+          ...statusSendOptions,
+          backgroundColor: chosenColor,
+        };
         sent = await this.socket.sendMessage(
           'status@broadcast',
           {
@@ -560,7 +570,7 @@ export class WhatsAppManagerService {
             ptt: true,
             backgroundColor: chosenColor,
           } as any,
-          statusSendOptions
+          audioSendOptions
         );
       }
 
