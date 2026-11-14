@@ -355,11 +355,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     const fromMe = Boolean(msg.key.fromMe);
     console.log(`\n👁️‍🗨️ [View-Once 1️⃣ Stub] Fariin hal-mar-la-arko ayaa timid (id=${id}, chat=${chatId}). Waxaa la sugayaa in dib loo soo diro...`);
 
-    // Ask the primary phone again (no-op if Baileys already requested it)
+    // Ask the primary phone again via placeholder resend AND on-demand history sync
     const sock: any = this.socket;
     if (sock?.requestPlaceholderResend) {
       Promise.resolve(
         sock.requestPlaceholderResend({ remoteJid: chatId, fromMe, id, participant: msg.key.participant || undefined })
+      ).catch(() => {});
+    }
+    if (sock?.fetchMessageHistory) {
+      const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp) * 1000 || Date.now();
+      Promise.resolve(
+        sock.fetchMessageHistory(2, msg.key, ts)
       ).catch(() => {});
     }
 
@@ -391,8 +397,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     }
 
     const notice =
-      'Walaal, fariinta aad ii soo dirtay waxay ahayd *View Once (1️⃣)*, WhatsApp-kuna ma oggola in aaladaha ku xiran (linked devices) ay furaan fariimaha hal-mar-la-arko, sidaas darteed ma maqlin oo ma arkin. 🔒\n\n' +
-      'Fadlan mar kale ii soo dir adigoo *aan dooran 1️⃣* (cod ama sawir caadi ah), isla markiiba waan dhagaysanayaa/eegayaa oo kuugu jawaabayaa! 🎙️✅';
+      'Walaal, codadka ama sawirrada *View Once (1️⃣)* waxaa xannibay amniga WhatsApp-ka si aan aaladaha ku xiran toos ugu furin. 🔒\n\n' +
+      'Si aan isla markiiba uga jawaabo, labadan midkood samee:\n' +
+      '• *Swipe/Reply ku qabo:* Codkaaga uun reply u dheh, WhatsApp-kuna toos buu ii soo fasaxayaa! 💬\n' +
+      '• *Cod Caadi ah:* Ii soo duub cod adigoon taaban astaanta (1️⃣) — isla markiiba cod baan kuugu soo jawaabayaa! 🎙️✨';
 
     let voiceSent = false;
     try {
