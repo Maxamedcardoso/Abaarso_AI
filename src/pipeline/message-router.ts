@@ -129,14 +129,14 @@ export class MessageRouter {
     if (isRecentGratitudeReply) {
       const maleGratitudeReplies = [
         'Adigaa mudan sxb! Mar kasta guul iyo bash-bash ayaan kuu rajaynayaa 🙌✨',
-        'Waa waxba sxb qaali! Farxad ayaan kula qaybsanaynaa mar kasta! 💪',
+        'Waa waxba sxb! Farxad ayaan kula qaybsanaynaa mar kasta! 💪',
         'Aamiin yaa Rabbi sxb! Adna khayr iyo caafimaad Allaha ku siiyo! 🤲✨',
         'Adigaa mudan bro! Iska waran see tahay xagaaga? 😊',
       ];
       const femaleGratitudeReplies = [
         'Adigaa mudan abaayo! Mar kasta bash-bash iyo khayr baan kuu rajaynayaa 🌸✨',
         'Aamiin yaa Rabbi abaayo macaan! Adigana Allaha ku dhowro! 🤲🤍',
-        'Waa waxba abaayo qaali, mar kasta nolosha ku farax! ✨',
+        'Waa waxba abaayo macaan, mar kasta nolosha ku farax! ✨',
         'Adigaa mudan abaayo! See tahay xagaaga iyo caafimaadka? 🌸',
       ];
       const neutralGratitudeReplies = [
@@ -150,7 +150,8 @@ export class MessageRouter {
           : gender === 'female'
           ? femaleGratitudeReplies
           : neutralGratitudeReplies;
-      const reply = pool[Math.floor(Math.random() * pool.length)];
+      let reply = pool[Math.floor(Math.random() * pool.length)];
+      reply = reply.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
 
       await transport.sendMessage(message.chatId, reply, { replyToMessageId: message.id });
       console.log(`🤝 [Status Continuity] Responded with friendly gratitude to ${message.senderName || contactJid} (${gender})`);
@@ -167,12 +168,16 @@ Saaxiibkaaga (${message.senderName || 'Walaal'}, Jinsiga: ${gender === 'male' ? 
 Qoraalka status-kaaga: "${message.quotedText || 'Status'}"
 Fariinta uu qofku kusoo qoray: "${message.content}"
 
-Uga jawaab si dabiici ah oo saaxiibtinimo leh (1 ilaa 2 weedhood oo gaagaaban).
-SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI". U hadal sidii nin dhab ah oo saaxiibkiis la hadlaya!`;
+Uga jawaab si dabiici ah oo saaxiibtinimo leh (1 ilaa 2 weedhood oo gaagaaban), fahan hadalkiisa oo toos uga jawaab.
+SHURUUCO ADAG:
+1. MAMNUUC ADAG: WELIGAA qofna ha ku odhan "qaali" ama "qaaliga ah". Ereyga "qaali" gabi ahaanba waa mamnuuc!
+2. WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI". U hadal sidii nin dhab ah oo saaxiibkiis la hadlaya!`;
 
           const res = await ai.generateResponse(prompt, [], { maxOutputTokens: 60 });
           if (res && res.text && res.text.trim().length > 3) {
-            await transport.sendMessage(message.chatId, res.text.trim(), { replyToMessageId: message.id });
+            let replyText = res.text.trim().replace(/^["']|["']$/g, '');
+            replyText = replyText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+            await transport.sendMessage(message.chatId, replyText, { replyToMessageId: message.id });
             return true;
           }
         } catch (e: any) {
@@ -182,7 +187,7 @@ SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?
 
       const fallback =
         gender === 'male'
-          ? "Masha'Allah sxb qaali! Waad ku mahadsantahay inaad status-ka soo booqatay 🙌"
+          ? "Masha'Allah sxb! Waad ku mahadsantahay inaad status-ka soo booqatay 🙌"
           : gender === 'female'
           ? "Masha'Allah abaayo macaan! Waad ku mahadsantahay inaad status-ka soo booqatay 🌸"
           : "Masha'Allah walaal! Waad ku mahadsantahay inaad status-ka soo booqatay ✨";
@@ -197,10 +202,10 @@ SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?
         try {
           const genderDirective =
             gender === 'male'
-              ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib/walaal qaali ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo"!'
+              ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib dhow oo rag ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo" ama "qaali"!'
               : gender === 'female'
-              ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno", "qaali". Weligaa ha ku odhan "ninyahow"!'
-              : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal", "qaali".';
+              ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno". Weligaa ha ku odhan "ninyahow" ama "qaali"!'
+              : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal". Weligaa ha isticmaalin "qaali".';
 
           const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku sheekaysanaya).
 Dhowaan waxaad faallo (comment) ku dhigtay status uu soo dhigay: "${quotedComment.commentText}" (Dulucda status-ka: "${quotedComment.statusText || quotedComment.category}").
@@ -210,13 +215,16 @@ Fariinta uu hadda kuusoo diray saaxiibkaagu isagoo reply ku haya faalladaadii: "
 
 Uga jawaab si dabiici ah oo saaxiibtinimo leh, fahan wuxuu ku yidhi oo si toos ah uga jawaab (1 ilaa 2 weedhood oo gaagaaban).
 SHURUUCDA DUGSIIYA:
-1. WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI".
-2. Ha u hadlin sidii bot ama shirkad, u hadal sidii nin dhab ah oo saaxiibkiis la hadlaya.
-3. Luuqad Soomaali saafi ah oo diirran.`;
+1. MAMNUUC ADAG: WELIGAA qofna ha ku odhan "qaali" ama "qaaliga ah". Ereyga "qaali" gabi ahaanba waa mamnuuc!
+2. WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI".
+3. Ha u hadlin sidii bot ama shirkad, u hadal sidii nin dhab ah oo saaxiibkiis la hadlaya.
+4. Luuqad Soomaali saafi ah oo diirran.`;
 
           const res = await ai.generateResponse(prompt, [], { maxOutputTokens: 60 });
           if (res && res.text && res.text.trim().length > 3) {
-            await transport.sendMessage(message.chatId, res.text.trim(), { replyToMessageId: message.id });
+            let replyText = res.text.trim().replace(/^["']|["']$/g, '');
+            replyText = replyText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+            await transport.sendMessage(message.chatId, replyText, { replyToMessageId: message.id });
             console.log(`💬 [Status Continuity] Responded contextually to status follow-up from ${message.senderName || contactJid}`);
             return true;
           }
@@ -227,7 +235,7 @@ SHURUUCDA DUGSIIYA:
 
       const fallback =
         gender === 'male'
-          ? 'Waa caadi sxb qaali, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
+          ? 'Waa caadi sxb, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
           : gender === 'female'
           ? 'Waa caadi abaayo macaan, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
           : 'Waa caadi walaal, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?';

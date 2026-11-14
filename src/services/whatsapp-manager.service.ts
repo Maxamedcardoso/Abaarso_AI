@@ -255,7 +255,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           '💡 "Ha sugin waqti ku habboon, qaado waqtiga hadda jira oo ka dhig mid ku habboon." 🌱🌟',
           '🎯 "Caqabadaha maanta waxay dhisayaan awooddaada berri. Waligaa ha quusan!" 💪🔥',
           '📖 "Aqoontu waa iftiinka kaliya ee qofka ka saara mugdiga jahliga una horseeda mustaqbal ifaya." 🎓✨',
-          '⏳ "Waqtigu waa raasamaalkaaga ugu qaalisan, u maal-gali waxyaabaha mustaqbalkaaga dhisaya." ⏰💎',
+          '⏳ "Waqtigu waa raasamaalkaaga ugu qiimaha badan, u maal-gali waxyaabaha mustaqbalkaaga dhisaya." ⏰💎',
         ];
         statusText = quotes[Math.floor(Math.random() * quotes.length)];
       }

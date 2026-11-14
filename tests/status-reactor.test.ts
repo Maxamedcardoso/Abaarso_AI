@@ -553,7 +553,7 @@ suite.test('Responds to status reply gratitude and story replies warmly without 
     senderJid: contactJid,
     senderName: 'Farxaan Cali',
     gender: 'male',
-    commentText: "Masha'Allah hambalyo sxb qaali! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
+    commentText: "Masha'Allah hambalyo sxb! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
     category: 'graduation',
     statusText: 'Qalinjabin jaamacad',
     timestamp: Date.now(),
@@ -674,6 +674,43 @@ suite.test('Responds to status reply gratitude and story replies warmly without 
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
   } catch {}
+});
+
+suite.test('Strictly guarantees zero occurrences of "qaali" and zero generic "heer sarreeya" copy-paste', () => {
+  const service = new StatusReactorService('./data/test_sr_config.json');
+
+  const sampleTexts = [
+    'Alxamdullilah maanta waxaan qalinjabiyey',
+    'Barakallahu lakumaa aroos wacan',
+    'Innaa Lillaahi wa innaa Ilayhi Raajicuun geeri naxdin leh',
+    'Hooyo ayaa isbitaalka jiifta oo xanuunsan',
+    'Jimco wanaagsan dhammaan',
+    'Aamiin yaa rabbi ducada naga aqbal',
+    'Hahaha kkkk yaabka meeday',
+    'Dhar iyo alaab cusub oo qiimo jaban',
+    'Airport safar toos ah',
+    'Style cusub iyo vibe shidan',
+    'Xikmad qoto dheer oo miisaan culus ku fadhida qofka caqliga leh',
+    '',
+  ];
+
+  const genders: Array<'male' | 'female' | 'unknown'> = ['male', 'female', 'unknown'];
+
+  for (const text of sampleTexts) {
+    for (const g of genders) {
+      const res = service.analyzeStatus(text, true, 'image', g);
+      for (const comment of res.suggestedComments) {
+        assertFalse(
+          /\bqaali\b/i.test(comment),
+          `Comment must NEVER contain "qaali": "${comment}"`
+        );
+        assertFalse(
+          comment.includes("Masha'Allah wax aad u heer sarreeya walaal"),
+          `Comment must NEVER use robotic copy-paste "Masha'Allah wax aad u heer sarreeya walaal": "${comment}"`
+        );
+      }
+    }
+  }
 });
 
 suite.run().then(summary => {

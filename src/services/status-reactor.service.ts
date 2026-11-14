@@ -245,7 +245,7 @@ export class StatusReactorService {
     ) {
       const maleList = [
         'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha idinka siiyo sxb, marxuumkana jannadii fardowsa 🤲',
-        'Ilaahay ha u naxariisto sxb qaali, qabrigana ha u nuuro, samir iyo iimaanna Allaha idinka siiyo 🤲',
+        'Ilaahay ha u naxariisto sxb, qabrigana ha u nuuro, samir iyo iimaanna Allaha idinka siiyo 🤲',
         'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha kaa siiyo walaal 🤲',
       ];
       const femaleList = [
@@ -277,12 +277,12 @@ export class StatusReactorService {
       const maleList = [
         'Ilaahay shifa taam ah iyo caafimaad degdeg ah ha siiyo sxb, aamiin yaa rabbi 🤲',
         'Rabi xanuunka ha ka qaado bro, caafimaad taam ahna ha ugu beddelo 🤲✨',
-        'Allaha caafiyo sxb qaali, shifa degdeg ah ayaan u rajaynayaa 🤲',
+        'Allaha caafiyo sxb, shifa degdeg ah ayaan u rajaynayaa 🤲',
       ];
       const femaleList = [
         'Ilaahay shifa degdeg ah iyo caafimaad taam ah ha siiyo abaayo macaan 🤲🌸',
         'Rabi xanuunka ha ka fududeeyo abaayo, caafimaad khayr lehna ha ugu beddelo 🤲✨',
-        'Allaha caafiyo abaayo qaali, aamiin yaa rabbi 🤲',
+        'Allaha caafiyo abaayo, aamiin yaa rabbi 🤲',
       ];
       const neutralList = [
         'Ilaahay shifa taam ah iyo caafimaad degdeg ah ha siiyo, aamiin yaa rabbi 🤲',
@@ -308,7 +308,7 @@ export class StatusReactorService {
       )
     ) {
       const maleList = [
-        "Masha'Allah hambalyo sxb qaali! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
+        "Masha'Allah hambalyo sxb! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
         "Hambalyo guusha weyn geesi! Waxaad tahay nin ku dayasho mudan bro! 🎓🔥",
         "Masha'Allah hambalyo qalinjabinta sxb! Cilmigaaga Allaha kuu barakeeyo 🎓✨",
         "Aad baad u dadaashay ninyahow, hambalyo guusha weyn! 👏🎉",
@@ -316,9 +316,9 @@ export class StatusReactorService {
       ];
       const femaleList = [
         "Masha'Allah hambalyo abaayo macaan! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓🌸",
-        "Hambalyo qalinjabinta abaayo! Allaha kuu barakeeyo shahaadada qaaliga ah 🎓✨",
+        "Hambalyo qalinjabinta abaayo! Allaha kuu barakeeyo shahaadada 🎓✨",
         "Masha'Allah aad baad u dadaashay walaashay, guul mar kasta! 👏💐",
-        "Hambalyo weyn abaayo qaali, waxaad tahay qof lagu faano! 🎓🎉",
+        "Hambalyo weyn abaayo, waxaad tahay qof lagu faano! 🎓🎉",
         "Masha'Allah bash-bash iyo guul joogto ah abaayo! 🎓❤️",
       ];
       const neutralList = [
@@ -346,20 +346,20 @@ export class StatusReactorService {
       )
     ) {
       const maleList = [
-        "Barakallahu lakumaa sxb qaali! Guri nagi, nolol barako leh iyo ubad khayr qaba! 💍🤲",
+        "Barakallahu lakumaa sxb! Guri nagi, nolol barako leh iyo ubad khayr qaba! 💍🤲",
         "Masha'Allah hambalyo arooska bro! Bash-bash iyo barako Allaha idinku mannaysto! ❤️🔥",
         "Hambalyo meherka ninyahow! Reerkii lagu nastee lagu nagaado Allaha idinka dhigo! 💍✨",
         "Masha'Allah reer barakaysan iyo nolol macaan sxb! 💐🤲",
       ];
       const femaleList = [
         "Barakallahu lakumaa abaayo macaan! Guri nagi iyo nolol farxad leh! 💍🌸",
-        "Masha'Allah hambalyo arooska qaali! Ubad khayr qaba iyo barako Allaha idin siiyo! ❤️💐",
+        "Masha'Allah hambalyo arooska abaayo! Ubad khayr qaba iyo barako Allaha idin siiyo! ❤️💐",
         "Hambalyo meherka abaayo! Farxad iyo barako joogto ah Allaha kugu arzuqo! 💍✨",
         "Masha'Allah aroosad aad u qurux badan, guri nagi iyo bash-bash abaayo! 🌸🤲",
       ];
       const neutralList = [
         "Barakallahu lakumaa wa baaraka calaykumaa, Masha'Allah guri nagi iyo bash-bash! 💍🤲",
-        "Masha'Allah hambalyo meherka/arooska qaali, nolol barako leh iyo ubad khayr qaba! ❤️✨",
+        "Masha'Allah hambalyo meherka/arooska, nolol barako leh iyo ubad khayr qaba! ❤️✨",
       ];
 
       return {
@@ -377,13 +377,13 @@ export class StatusReactorService {
     // 5. Islamic Friday / Jimco
     if (/\b(jimce|jimco|jummah|jumah|juma)\b/i.test(lower)) {
       const maleList = [
-        'Jimco barakaysan sxb qaali! Ducada iyo camalka wanaagsan Rabi ha inaga aqbalo 🤲✨',
+        'Jimco barakaysan sxb! Ducada iyo camalka wanaagsan Rabi ha inaga aqbalo 🤲✨',
         'Jimco mubaarak bro! Naxariis iyo dambi-dhaaf Allaha inagu mannaysto 🤲🤍',
         'Jimco wanaagsan ninyahow! Ducada ha iska illaawin maanta 🤲🕌',
       ];
       const femaleList = [
         'Jimco barakaysan abaayo macaan! Rabi ducada iyo cibaadada ha inaga aqbalo 🤲🌸',
-        'Jimco mubaarak abaayo qaali! Dambi-dhaaf iyo naxariis Allaha inagu arzuqo 🤲🤍',
+        'Jimco mubaarak abaayo! Dambi-dhaaf iyo naxariis Allaha inagu arzuqo 🤲🤍',
         'Jimco wanaagsan abaayo! Barako iyo khayr Allaha kugu mannaysto 🤲✨',
       ];
       const neutralList = [
@@ -412,11 +412,11 @@ export class StatusReactorService {
       const maleList = [
         'Aamiin yaa Rabbi sxb! Rabi ducada ha inaga aqbalo 🤲🤍',
         'Aamiin yaa Hayyu yaa Qayuum! Khayr badan Allaha ku siiyo bro 🤲✨',
-        'Aamiin sxb qaali, ducadaada mid la ajiibo Allaha ka dhigo 🤲',
+        'Aamiin sxb, ducadaada mid la ajiibo Allaha ka dhigo 🤲',
       ];
       const femaleList = [
         'Aamiin yaa Rabbi abaayo macaan! Rabi ducada ha aqbalo 🤲🌸',
-        'Aamiin yaa kareem abaayo qaali! Khayr iyo caafimaad Allaha ku siiyo 🤲🤍',
+        'Aamiin yaa kareem abaayo macaan! Khayr iyo caafimaad Allaha ku siiyo 🤲🤍',
         'Aamiin abaayo, ducadaada mid la aqbalo Allaha ka dhigo 🤲✨',
       ];
       const neutralList = [
@@ -480,14 +480,14 @@ export class StatusReactorService {
     ) {
       const maleList = [
         "Masha'Allah sxb ganacsi barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🤲",
-        "Alaab aad u heer saraysa weeye bro! Macaamiil badan iyo barako Allaha kugu arzuqo! ✨🔥",
+        "Alaab aad u wanaagsan weeye bro! Macaamiil badan iyo barako Allaha kugu arzuqo! ✨🔥",
         "Masha'Allah ganacsi horumar leh ninyahow, suuq wanaagsan! 👏💼",
         "Dadaal fiican weeye sxb, Rabi shaqadaada iyo hantidaada ha kuu barakeeyo! 🤲💼",
       ];
       const femaleList = [
         "Masha'Allah abaayo meherad barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🌸",
         "Alaab aad u qurux badan weeye abaayo macaan! Macaamiil badan iyo barako! ✨💐",
-        "Masha'Allah horumar joogto ah abaayo qaali, suuq wanaagsan! 👏💼",
+        "Masha'Allah horumar joogto ah abaayo, suuq wanaagsan! 👏💼",
         "Rabi ganacsigaaga iyo dadaalkaaga ha kuu barakeeyo abaayo! 🤲💼",
       ];
       const neutralList = [
@@ -515,12 +515,12 @@ export class StatusReactorService {
     ) {
       const maleList = [
         "Masha'Allah safar khayr iyo nabad qab leh sxb! Soo bashaal ✈️🌍",
-        "Safar nabad qab leh bro qaali! Meel aad u bilicsan weeye, soo raaxayso! 🌴✨",
+        "Safar nabad qab leh bro! Meel aad u bilicsan weeye, soo raaxayso! 🌴✨",
         "Masha'Allah ninyahow safar badhaadhe leh Allaha kaaga dhigo! ✈️🔥",
       ];
       const femaleList = [
         "Masha'Allah safar nabad qab iyo farxad leh abaayo macaan! ✈️🌸",
-        "Safar khayr leh abaayo qaali! Soo bashaal oo nolosha ku raaxayso! 🌴✨",
+        "Safar khayr leh abaayo! Soo bashaal oo nolosha ku raaxayso! 🌴✨",
         "Masha'Allah meel aad u qurux badan, soo badhaadh abaayo! ✈️💖",
       ];
       const neutralList = [
@@ -543,13 +543,13 @@ export class StatusReactorService {
     // 10. Style / Selfie / Outfit
     if (/\b(style|outfit|fashion|dhar|shidan|vibe|mood|aniga|selfie|pose)\b/i.test(lower)) {
       const maleList = [
-        "Masha'Allah aad baad u shidan tahay sxb qaali! Style aad u heer sarreeya 🔥👏",
+        "Masha'Allah aad baad u shidan tahay sxb! Style aad u fiican 🔥👏",
         "Nin rag ah oo shidan weeye ninyahow! Masha'Allah aad u xarrago badan! ✨🔥",
         "Vibe aad u fiican bro! Style qurux badan mar kasta! 👏🕶️",
       ];
       const femaleList = [
         "Masha'Allah aad baad u qurux badan tahay abaayo macaan! Style aad u shidan 🌸✨",
-        "Masha'Allah xarrago iyo qurux dabiici ah abaayo qaali! 💖👏",
+        "Masha'Allah xarrago iyo qurux dabiici ah abaayo! 💖👏",
         "Masha'Allah style aad u bilic san abaayo, aad baad u shidan tahay! ✨💐",
       ];
       const neutralList = [
@@ -578,12 +578,12 @@ export class StatusReactorService {
       ];
       const femaleList = [
         "Masha'Allah muuqaal aad u qurux badan abaayo macaan! 🌸✨",
-        "Muuqaal aad u bilic san abaayo qaali! 💖🎥",
+        "Muuqaal aad u bilic san abaayo! 💖🎥",
         "Masha'Allah vibe aad u macaan abaayo! ✨👏",
       ];
       const neutralList = [
         "Masha'Allah muuqaal aad u qurux badan walaal! ✨🔥",
-        "Muuqaal aad u heer sarreeya! 🎥👏",
+        "Muuqaal aad u bilic san! 🎥👏",
       ];
 
       return {
@@ -601,13 +601,13 @@ export class StatusReactorService {
     // 12. General Quote / Deep thought (clean text > 20 chars)
     if (clean.length > 20) {
       const maleList = [
-        "Masha'Allah xikmad aad u miisaan culus sxb qaali! Runti waa runtaa 👏✨",
+        "Masha'Allah xikmad aad u miisaan culus sxb! Runti waa runtaa 👏✨",
         "Hadal aad u qiimo badan weeye bro, xaqiiq! 💯🔥",
         "Masha'Allah ninyahow aragti aad u qoto dheer! 👏💡",
       ];
       const femaleList = [
         "Masha'Allah xikmad aad u qiimo badan abaayo macaan! Runti waa hadal miisaan leh 🌸✨",
-        "Aad baad ugu mahadsantahay hadalka qaaliga ah abaayo! 💖💡",
+        "Aad baad ugu mahadsantahay hadalka xikmadda leh abaayo! 💖💡",
         "Masha'Allah hadal aad u qurux badan abaayo! 👏✨",
       ];
       const neutralList = [
@@ -629,18 +629,18 @@ export class StatusReactorService {
 
     // 13. Media only (Photo without specific caption)
     const maleMedia = [
-      "Masha'Allah sawir aad u qurux badan sxb qaali! 🔥✨",
-      "Masha'Allah nin shidan bro, sawir aad u heer sarreeya! 👏📸",
+      "Masha'Allah sawir aad u qurux badan sxb! 🔥✨",
+      "Masha'Allah nin shidan bro, sawir aad u wanaagsan! 👏📸",
       "Masha'Allah ninyahow sawirkaagu waa mid aad u bilic san! 🔥👌",
     ];
     const femaleMedia = [
       "Masha'Allah sawir aad u qurux badan abaayo macaan! 🌸✨",
-      "Masha'Allah sawir aad u bilic san abaayo qaali! 💖📸",
+      "Masha'Allah sawir aad u bilic san abaayo! 💖📸",
       "Masha'Allah aad baad u shidan tahay abaayo! ✨👏",
     ];
     const neutralMedia = [
-      "Masha'Allah aad u qurux badan! ✨",
-      "Masha'Allah wax aad u heer sarreeya walaal 🔥",
+      "Masha'Allah sawir aad u qurux badan! ✨",
+      "Masha'Allah muuqaal/sawir aad u bilic san! ✨👏",
     ];
 
     return {
@@ -667,37 +667,43 @@ export class StatusReactorService {
   ): Promise<string> {
     const effectiveGender = gender || analysis.gender || 'unknown';
 
-    // If AI is available and enabled, try generating a nuanced short Somali comment
-    if (this.config.aiEnhanced && this.aiOrchestrator && (analysis.extractedText.length > 5 || analysis.hasMedia)) {
+    // If AI is available and enabled, try generating a nuanced short Somali comment with highest intelligence
+    if (this.config.aiEnhanced && this.aiOrchestrator && (analysis.extractedText.trim().length > 0 || analysis.hasMedia)) {
       try {
         const genderDirective =
           effectiveGender === 'male'
-            ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib/walaal qaali ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo" ama erayo dheddig ah!'
+            ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib dhow oo rag ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo" ama "qaali"!'
             : effectiveGender === 'female'
-            ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin dheddig leh: "abaayo", "walaashay", "huuno", "qaali". Weligaa ha ku odhan "ninyahow" ama "wiilka"!'
-            : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal", "qaali".';
+            ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno". Weligaa ha ku odhan "ninyahow" ama "qaali"!'
+            : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal". Weligaa ha isticmaalin "qaali".';
 
-        const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku arkaya status uu saaxiibkii soo dhigay).
+        const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, garaad iyo caqli aad u sarreeya leh, aftahan ah, aadna u asluub badan. Waxaad WhatsApp ku arkaysaa status uu saaxiibkaa ama saaxiibtaada soo dhigtay.
 Magaca qofka: "${senderName || 'Walaal'}"
 ${genderDirective}
 Nooca status-ka: ${mediaKind === 'video' ? 'Muuqaal/Video' : mediaKind === 'image' || analysis.hasMedia ? 'Sawir/Image' : 'Qoraal/Text'}
-Qoraalka status-ka: "${analysis.extractedText || (mediaKind === 'video' ? 'Muuqaal qurux badan' : 'Sawir qurux badan')}"
-Nooca/Dulucda: ${analysis.category}
+Qoraalka status-ka: "${analysis.extractedText || (mediaKind === 'video' ? 'Muuqaal/Video' : 'Sawir/Image')}"
+Nooca/Dulucda la falanqeeyay: ${analysis.category}
 
-Qor hal weedh oo faallo gaaban ah (3 ilaa 8 eray) oo aad ugu hambalyaynayso, ugu ducaynayso, u bogaadinayso, ama kula qoslayso si dabiici ah oo aad u heer saraysa.
-SHURUUCO ADAG:
-1. Ha u hadlin sidii robot, AI, ama shirkad ganacsi. Noqo qof dhab ah oo la nool asxaabtiisa.
-2. Weligaa ha bilaabin "Asc", "Wcs", "Kusoo dhawoow", ama "Maxaan kaa caawiyaa".
-3. Ha ku celin isla ereyadii uu qoray; u jawaab adoo dareenka ama dhacdada la qaybsanaya.
-4. Ha bixin wax talo caafimaad ama dawo ah.
-5. Luuqadda waa inay noqotaa Somali saafi ah, diirran, dhalinyaronimo leh oo asluubaysan.`;
+HAWSHAADA:
+Fahan qoraalka iyo waxa uu qofku ka hadlayo si qoto dheer oo caqli badan (dulucda, dareenka, macnaha dhabta ah).
+Qor hal weedh oo kooban (3 ilaa 8 eray) oo toos ugu socota waxa uu qofku soo qoray ama soo dhigay, adoo muujinaya inaad 100% fahantay oo aad dareenka la qaybsanayso.
 
-        const res = await this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 50 });
+SHURUUCO ADAG OO MAMNUUC AH:
+1. MAMNUUC ADAG: WELIGAA qofna ha ku odhan "qaali" ama "qaaliga ah". Ereyga "qaali" gabi ahaanba waa mamnuuc oo lama ogola!
+2. MAMNUUC: Ha dhihin hadalo caadi ah oo aan waxba fahansanayn sida "Masha'Allah wax aad u heer sarreeya walaal" ama faallooyin indho la'aan ah.
+3. MAMNUUC: Ha u hadlin sidii robot, AI, bot, ama shirkad. Weligaa ha bilaabin "Asc", "Wcs", "Kusoo dhawoow", ama "Maxaan kaa caawiyaa".
+4. Haddii uu qofku soo dhigay tacsi ama xanuun, duco qiiro leh u dir (ha isticmaalin emoji qosol ama dab ah).
+5. Luuqad Soomaali saafi ah oo aad u heer sarreysa, dhalinyaronimo iyo xushmad leh.`;
+
+        const res = await this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 60 });
         if (res && res.text && !res.text.includes('mashquulsan') && res.text.trim().length > 3) {
-          const cleanComment = res.text.trim().replace(/^["']|["']$/g, '');
-          // Register in history to avoid repetition
-          this.recentCommentHistory.push(cleanComment);
-          return cleanComment;
+          let cleanComment = res.text.trim().replace(/^["']|["']$/g, '');
+          // Enforce 100% ban on the word "qaali"
+          cleanComment = cleanComment.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+          if (cleanComment.length > 3) {
+            this.recentCommentHistory.push(cleanComment);
+            return cleanComment;
+          }
         }
       } catch (err: any) {
         console.warn(`[StatusReactor] AI comment generation fallback to rule: ${err?.message}`);
@@ -709,7 +715,8 @@ SHURUUCO ADAG:
     // Prefer comments not used in the last 15 interactions
     const unusedList = list.filter(c => !this.recentCommentHistory.includes(c));
     const finalList = unusedList.length > 0 ? unusedList : list;
-    const chosen = finalList[Math.floor(Math.random() * finalList.length)];
+    let chosen = finalList[Math.floor(Math.random() * finalList.length)];
+    chosen = chosen.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
     this.recentCommentHistory.push(chosen);
     return chosen;
   }
@@ -940,7 +947,9 @@ SHURUUCO ADAG:
     // 2. Send Smart Comment / Reply
     if (shouldComment) {
       try {
-        const comment = await this.generateComment(analysis, senderName, gender, mediaKind);
+        let comment = await this.generateComment(analysis, senderName, gender, mediaKind);
+        // Absolute safety guard: ensure the word "qaali" NEVER appears in comments sent to contacts
+        comment = comment.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
 
         // Natural short typing indicator before delivering comment
         await socket.sendPresenceUpdate('composing', senderJid).catch(() => {});

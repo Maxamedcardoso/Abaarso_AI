@@ -102,12 +102,16 @@ export class GeminiProvider implements IAIProvider {
 
     const systemInstruction = options.systemInstruction || 'You are CARDOSO AI, a helpful, intelligent personal AI assistant.';
 
-    // 3. Candidate models fallback list — Active Google Gemini Models
+    // 3. Candidate models fallback list — Active Google Gemini Models with intelligent failover
     const candidateModels = Array.from(new Set([
       this.modelName,          // Primary model from config (default: gemini-3.5-flash)
-      'gemini-3.5-flash',      // High-quota stable production model
-      'gemini-3.5-flash-lite', // Lightweight, fast production fallback
+      'gemini-2.0-flash',      // Top active Google Gemini model
+      'gemini-1.5-flash',      // Proven stable production model
+      'gemini-2.5-flash',      // Cutting-edge reasoning model
+      'gemini-3.5-flash',      // High-quota model
       'gemini-3.8-flash',      // Advanced preview model
+      'gemini-1.5-flash-8b',   // Lightweight fallback
+      'gemini-1.5-pro',        // Deep reasoning fallback
     ])).filter(m => Boolean(m));
 
     let lastError: any = null;
@@ -174,11 +178,12 @@ export class GeminiProvider implements IAIProvider {
         );
 
         // Record successful request for quota tracking
-        const estimatedTokens = Math.ceil((userPrompt.length + responseText.length) / 4);
+        const cleanResponseText = responseText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+        const estimatedTokens = Math.ceil((userPrompt.length + cleanResponseText.length) / 4);
         this.quotaTracker.recordRequest(estimatedTokens);
 
         return {
-          text: responseText,
+          text: cleanResponseText,
           provider: 'gemini',
           modelUsed: currentModelName,
           tokensUsed: {
