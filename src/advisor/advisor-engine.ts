@@ -515,20 +515,33 @@ The user is listening to your answer as a SPOKEN AUDIO VOICE NOTE on WhatsApp.
 ${enrichedPrompt}`;
     }
 
-    // Audio Understanding Enhancement:
+    // Audio Understanding Enhancement (Normal & View-Once / One-Click 1️⃣ Voice Notes):
     // If incoming message contains an audio voice note, instruct Gemini with high-accuracy speech comprehension.
     if (media?.type === 'audio') {
-      enrichedPrompt = `[🎧 HIGH-ACCURACY VOICE NOTE COMPREHENSION DIRECTIVE]:
-You are listening directly to an authentic human voice message (spoken audio).
+      const viewOnceNote = media.isViewOnce ? ' (sent as a WhatsApp View-Once / One-Click 1️⃣ Voice Note)' : '';
+      enrichedPrompt = `[🎧 HIGH-ACCURACY VOICE NOTE COMPREHENSION DIRECTIVE${viewOnceNote}]:
+You are listening directly to an authentic human voice message (spoken audio)${viewOnceNote}.
 1. Listen with acute, human-level attention to every word, phrase, regional accent, and emotional nuance spoken ("codka uu ku soo duubay fahan ereyada uu ku hadlayo ka jawaab").
 2. Accurately understand colloquial Somali (e.g. sxb, sxp, wll, wlo, haye, see tahay, maxaa cusub, ii sheeg, maxaad ka taqaan, iwm), standard Somali, English, or Arabic.
-3. Answer ONLY what was asked in the voice note — never wander into other topics ("wixii la waydiiya kaliya ka jawaaba oo aan mowduuc kale dhex galin").
+3. Answer ONLY what was asked in the voice note — never wander into other topics ("wixii la waydiiya kaliya ka jawaaba oo aan mowduuc kale dhex galin"). NEVER output [SILENCE]!
 4. Formulate your response as a natural, warm, thoughtful human conversation partner speaking back directly to what they said ("AI la moodin"). Do NOT meta-reference "I heard your recording" — just talk back directly to their points!
 5. Match the length of your answer to the depth of what they asked ("hadalka aad igu jawaabayso wuxuu ku waydiiyey intuu leeg yahay ugu jawaab").
 6. Optional Transcription metadata: At the very end of your response, output a single-line hidden transcript comment:
 <!-- transcript: [the user's exact words spoken in the audio] -->
 
 [User Spoken Audio Attached]: ${enrichedPrompt}`;
+    } else if (media?.type === 'image' || media?.type === 'video') {
+      const viewOnceTag = media.isViewOnce ? ' (sent as a WhatsApp View-Once / One-Click 1️⃣ media)' : '';
+      const mediaLabel = media.type === 'video' ? 'video (visual frames + audio track)' : 'image/photo';
+      enrichedPrompt = `[👁️ HIGH-ACCURACY VISION & MULTIMODAL COMPREHENSION DIRECTIVE${viewOnceTag}]:
+You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on WhatsApp ("arki karo oo dhagaysan karo qofka waxa WhatsApp one-click ku soo diro").
+1. Examine everything in the ${mediaLabel} clearly and attentively:
+   - If it shows a person (or people), notice how they look, their expression, outfit/style, posture, setting, and vibe, and respond warmly, naturally, and respectfully like a real human friend on WhatsApp!
+   - If it shows text, a question, a document, a screenshot, an object, or a scene, read/understand it accurately and respond directly to it.
+   - If it is a video, both WATCH the visual frames and LISTEN to everything spoken in the audio track.
+2. NEVER say "I cannot see View-Once photos", "I cannot see people", or output [SILENCE]! Always give a warm, natural, human-like response in the user's language (defaulting to natural Somali if no text caption was provided).
+
+[User Visual/Video Media Attached]: ${enrichedPrompt}`;
     }
 
     // ── LIVE WEB SEARCH (100% Free) ──────────────────────────────────────────

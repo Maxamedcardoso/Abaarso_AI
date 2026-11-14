@@ -387,11 +387,13 @@ export class MessageRouter {
     const incomingMedia = (message as any).media;
     if (!queryText) {
       if (incomingMedia?.type === 'audio') {
-        queryText = '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]';
+        queryText = '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]';
       } else if (hasVoiceCommand) {
         queryText = 'cod isoo duub';
       } else if (incomingMedia?.type === 'image') {
-        queryText = '🖼️ [Sawir – Fadlan sawirkan sharax]';
+        queryText = '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]';
+      } else if (incomingMedia?.type === 'video') {
+        queryText = '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]';
       } else if (incomingMedia?.type === 'document') {
         queryText = '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]';
       } else {

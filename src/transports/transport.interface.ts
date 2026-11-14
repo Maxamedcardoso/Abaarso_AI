@@ -1,8 +1,9 @@
 export interface MessageMedia {
-  type: 'image' | 'audio' | 'document';
+  type: 'image' | 'audio' | 'document' | 'video';
   mimeType: string;
   dataBase64: string;
   fileName?: string;
+  isViewOnce?: boolean;
 }
 
 /**

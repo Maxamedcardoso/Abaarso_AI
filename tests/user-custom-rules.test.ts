@@ -7,6 +7,7 @@ import { AIOrchestrator } from '../src/ai/ai-orchestrator.js';
 import { config } from '../src/config/env.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { ConsoleSimulatorTransport } from '../src/transports/console-simulator.js';
+import { MediaProcessorService } from '../src/services/media-processor.service.js';
 import fs from 'fs';
 
 const suite = new TestSuite('Custom User Rules & Voice Intelligence Test Suite');
@@ -122,6 +123,69 @@ suite.test('When @cardoso is written, router and engine NEVER return voice note'
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
   } catch { }
+});
+
+suite.test('MediaProcessorService unwraps WhatsApp View-Once ("One-Click" 1️⃣) voice notes, images, and videos', () => {
+  // 1. View-Once Voice Note (viewOnceMessageV2Extension)
+  const viewOnceAudio = {
+    messageContextInfo: { deviceListMetadataVersion: 2 },
+    viewOnceMessageV2Extension: {
+      message: {
+        audioMessage: {
+          url: 'https://mmg.whatsapp.net/v/t62.7117-24/audio.enc',
+          mimetype: 'audio/ogg; codecs=opus',
+          ptt: true,
+          viewOnce: true,
+        },
+      },
+    },
+  };
+  const unwrappedAudio = MediaProcessorService.unwrapMessage(viewOnceAudio);
+  assertTrue(unwrappedAudio.isViewOnce, 'Should detect View-Once voice note');
+  assertEqual(unwrappedAudio.msgType, 'audioMessage', 'Should unwrap to audioMessage');
+  assertEqual(unwrappedAudio.mediaKind, 'audio', 'Media kind should be audio');
+  assertEqual(unwrappedAudio.baileysMediaType, 'audio', 'Baileys download type should be audio');
+
+  // 2. View-Once Photo inside Ephemeral container (ephemeralMessage -> viewOnceMessageV2 -> imageMessage)
+  const viewOnceImage = {
+    ephemeralMessage: {
+      message: {
+        viewOnceMessageV2: {
+          message: {
+            imageMessage: {
+              url: 'https://mmg.whatsapp.net/v/t62.7118-24/image.enc',
+              mimetype: 'image/jpeg',
+              caption: 'Arag sawirkayga',
+              viewOnce: true,
+            },
+          },
+        },
+      },
+    },
+  };
+  const unwrappedImage = MediaProcessorService.unwrapMessage(viewOnceImage);
+  assertTrue(unwrappedImage.isViewOnce, 'Should detect View-Once image inside ephemeral container');
+  assertEqual(unwrappedImage.msgType, 'imageMessage', 'Should unwrap to imageMessage');
+  assertEqual(unwrappedImage.mediaKind, 'image', 'Media kind should be image');
+  assertEqual(unwrappedImage.message.imageMessage.caption, 'Arag sawirkayga', 'Should preserve caption on View-Once image');
+
+  // 3. View-Once Video (viewOnceMessageV2 -> videoMessage)
+  const viewOnceVideo = {
+    viewOnceMessageV2: {
+      message: {
+        videoMessage: {
+          url: 'https://mmg.whatsapp.net/v/t62.7161-24/video.enc',
+          mimetype: 'video/mp4',
+          viewOnce: true,
+        },
+      },
+    },
+  };
+  const unwrappedVideo = MediaProcessorService.unwrapMessage(viewOnceVideo);
+  assertTrue(unwrappedVideo.isViewOnce, 'Should detect View-Once video');
+  assertEqual(unwrappedVideo.msgType, 'videoMessage', 'Should unwrap to videoMessage');
+  assertEqual(unwrappedVideo.mediaKind, 'video', 'Media kind should be video');
+  assertEqual(MediaProcessorService.getMimeType(unwrappedVideo.msgType, 'video/mp4'), 'video/mp4', 'Should return video/mp4 MIME');
 });
 
 suite.run().then(summary => {

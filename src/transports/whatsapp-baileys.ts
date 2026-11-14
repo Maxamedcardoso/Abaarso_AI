@@ -4,6 +4,7 @@ import makeWASocket, {
   proto,
   WASocket,
   downloadContentFromMessage,
+  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -240,10 +241,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       for (const msg of messages) {
         if (!msg.message) continue;
 
-        // Cache raw message so we can safely quote it in replies without Baileys internal crashes
+        // Cache raw message so we can safely quote it in replies AND recover View Once media when quoted
         if (msg.key?.id) {
           this.rawMessages.set(msg.key.id, msg);
-          if (this.rawMessages.size > 200) {
+          if (this.rawMessages.size > 1000) {
             const oldest = this.rawMessages.keys().next().value;
             if (oldest) this.rawMessages.delete(oldest);
           }
@@ -261,30 +262,35 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         }
 
-        // ─── Detect message type (text, audio, image, document) ───────────────────
-        const msgType = Object.keys(msg.message)[0];
-        const isAudio = msgType === 'audioMessage' || msgType === 'ptvMessage';
-        const isImage = msgType === 'imageMessage';
-        const isDocument = msgType === 'documentMessage';
-        const isMedia = isAudio || isImage || isDocument;
+        // ─── Unwrap View Once ("one-click" 1️⃣), Ephemeral & Detect Message Type ──
+        const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
+        const innerMsg = unwrapped.message;
+        const msgType = unwrapped.msgType;
+        const isViewOnce = unwrapped.isViewOnce;
+        const isAudio = unwrapped.mediaKind === 'audio';
+        const isImage = unwrapped.mediaKind === 'image';
+        const isVideo = unwrapped.mediaKind === 'video';
+        const isDocument = unwrapped.mediaKind === 'document';
+        const isMedia = Boolean(unwrapped.mediaKind);
 
-        // Extract clean text from text or extended text
+        // Extract clean text from text, extended text, or media caption
         const text =
-          msg.message.conversation ||
-          msg.message.extendedTextMessage?.text ||
-          msg.message.imageMessage?.caption ||
-          msg.message.documentMessage?.caption ||
-          (isAudio ? '🎙️ [Voice Note]' : '') ||
+          innerMsg.conversation ||
+          innerMsg.extendedTextMessage?.text ||
+          innerMsg.imageMessage?.caption ||
+          innerMsg.videoMessage?.caption ||
+          innerMsg.documentMessage?.caption ||
+          (isAudio ? (isViewOnce ? '🎙️ [View Once Voice Note]' : '🎙️ [Voice Note]') : '') ||
           '';
 
         // Ingest native WhatsApp shared contact cards (Share Contacts via WhatsApp)
-        if (msg.message.contactMessage?.vcard) {
-          const res = broadcastService.importFromText(msg.message.contactMessage.vcard);
+        if (innerMsg.contactMessage?.vcard) {
+          const res = broadcastService.importFromText(innerMsg.contactMessage.vcard);
           console.log(`👤 [WhatsApp Contact Shared]: Processed vCard (${res.added} new added).`);
         }
-        if (msg.message.contactsArrayMessage?.contacts) {
+        if (innerMsg.contactsArrayMessage?.contacts) {
           let totalAdded = 0;
-          for (const c of msg.message.contactsArrayMessage.contacts) {
+          for (const c of innerMsg.contactsArrayMessage.contacts) {
             if (c.vcard) {
               const res = broadcastService.importFromText(c.vcard);
               totalAdded += res.added;
@@ -294,44 +300,75 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         // Skip completely empty non-media messages
-        if (!text.trim() && !isMedia && !msg.message.contactMessage && !msg.message.contactsArrayMessage) continue;
+        if (!text.trim() && !isMedia && !innerMsg.contactMessage && !innerMsg.contactsArrayMessage) continue;
 
         // ─── Log incoming message ─────────────────────────────────────────────────
+        const mediaTag = isViewOnce ? '(VIEW-ONCE 1️⃣ MEDIA) ' : isMedia ? '(MEDIA) ' : '';
         if (isGroup) {
-          console.log(`\n📩 [Group ${isMedia ? '(MEDIA) ' : ''}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
+          console.log(`\n📩 [Group ${mediaTag}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
         } else {
-          console.log(`\n📩 [Private ${isMedia ? '(MEDIA) ' : ''}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
+          console.log(`\n📩 [Private ${mediaTag}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
         }
 
-        // ─── Download & encode media to base64 for Gemini multimodal ─────────────
-        let mediaAttachment: { type: 'image' | 'audio' | 'document'; mimeType: string; dataBase64: string; fileName?: string } | undefined;
-        if (isMedia) {
+        // ─── Download & encode media (including View Once 1️⃣) to base64 for Gemini ─
+        let mediaAttachment: { type: 'image' | 'audio' | 'document' | 'video'; mimeType: string; dataBase64: string; fileName?: string; isViewOnce?: boolean } | undefined;
+        if (isMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && unwrapped.mediaKind) {
           try {
-            const msgContent = isAudio
-              ? (msg.message.audioMessage || msg.message.ptvMessage)
-              : isImage
-                ? msg.message.imageMessage
-                : msg.message.documentMessage;
-            const streamType = isAudio ? 'audio' : isImage ? 'image' : 'document';
-            const stream = await downloadContentFromMessage(msgContent as any, streamType as any);
-            const rawMime = (msgContent as any)?.mimetype || '';
+            const stream = await downloadContentFromMessage(unwrapped.mediaContent as any, unwrapped.baileysMediaType as any);
+            const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
             const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
             const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
             mediaAttachment = {
-              type: streamType as 'image' | 'audio' | 'document',
+              type: unwrapped.mediaKind,
               mimeType,
               dataBase64,
-              fileName: (msgContent as any)?.fileName,
+              fileName: (unwrapped.mediaContent as any)?.fileName,
+              isViewOnce,
             };
+            if (isViewOnce) {
+              console.log(`👁️‍🗨️ [View-Once / One-Click 1️⃣] Si guul leh ayaa loo furay oo loo akhriyay ${unwrapped.mediaKind} (${mimeType})!`);
+            }
           } catch (mediaErr: any) {
-            console.warn(`[WhatsAppBaileys] Media download failed: ${mediaErr?.message}`);
+            console.warn(`[WhatsAppBaileys] Media download failed (${mediaErr?.message}), trying downloadMediaMessage fallback...`);
+            try {
+              const buffer = await downloadMediaMessage(
+                { key: msg.key, message: innerMsg } as any,
+                'buffer',
+                {},
+                {
+                  logger: pino({ level: 'silent' }) as any,
+                  reuploadRequest: this.socket ? this.socket.updateMediaMessage : (async (m: any) => m),
+                }
+              );
+              if (buffer && Buffer.isBuffer(buffer) && buffer.length > 0) {
+                const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
+                const mimeType = MediaProcessorService.getMimeType(msgType, rawMime);
+                mediaAttachment = {
+                  type: unwrapped.mediaKind,
+                  mimeType,
+                  dataBase64: buffer.toString('base64'),
+                  fileName: (unwrapped.mediaContent as any)?.fileName,
+                  isViewOnce,
+                };
+                console.log(`✅ [WhatsAppBaileys] Fallback downloadMediaMessage succeeded for ${unwrapped.mediaKind}!`);
+              }
+            } catch (fallbackErr: any) {
+              console.warn(`[WhatsAppBaileys] Fallback media download also failed: ${fallbackErr?.message}`);
+            }
           }
         }
 
-        // ─── Extract contextInfo from ALL possible message types ──────────────────
+        // ─── Extract contextInfo from ALL possible message types (including unwrapped View Once) ──
         // CRITICAL: For voice notes (audioMessage), contextInfo is on audioMessage, NOT extendedTextMessage!
         // We must check every container type to correctly detect "reply to bot" in groups.
         const contextInfoRaw =
+          innerMsg.audioMessage?.contextInfo ||
+          innerMsg.ptvMessage?.contextInfo ||
+          innerMsg.extendedTextMessage?.contextInfo ||
+          innerMsg.imageMessage?.contextInfo ||
+          innerMsg.documentMessage?.contextInfo ||
+          innerMsg.videoMessage?.contextInfo ||
+          innerMsg.stickerMessage?.contextInfo ||
           msg.message.audioMessage?.contextInfo ||
           msg.message.ptvMessage?.contextInfo ||
           msg.message.extendedTextMessage?.contextInfo ||
@@ -340,29 +377,44 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           msg.message.videoMessage?.contextInfo ||
           undefined;
 
-        // Support Quoted Media (e.g. user in a group quotes a voice note/image and types "@cardoso")
-        const quotedMsg = contextInfoRaw?.quotedMessage;
-        const quotedAudio = quotedMsg?.audioMessage || quotedMsg?.ptvMessage;
-        const quotedImage = quotedMsg?.imageMessage;
-        const quotedDoc = quotedMsg?.documentMessage;
-        const hasQuotedMedia = !mediaAttachment && Boolean(quotedAudio || quotedImage || quotedDoc);
+        // Support Quoted Media (including when user quotes a View Once 1️⃣ voice note, photo, or video!)
+        const quotedStanzaIdForMedia = contextInfoRaw?.stanzaId || '';
+        const cachedOriginalMsg = quotedStanzaIdForMedia ? this.rawMessages.get(quotedStanzaIdForMedia) : undefined;
+        const quotedUnwrapped = contextInfoRaw?.quotedMessage
+          ? MediaProcessorService.unwrapMessage(contextInfoRaw.quotedMessage)
+          : null;
+        const cachedUnwrapped = cachedOriginalMsg?.message
+          ? MediaProcessorService.unwrapMessage(cachedOriginalMsg.message)
+          : null;
 
-        if (hasQuotedMedia) {
+        // Prefer quotedUnwrapped if it has valid mediaKey + (url or directPath); otherwise recover from cachedOriginalMsg!
+        const quotedHasKeys = Boolean(
+          quotedUnwrapped?.mediaContent?.mediaKey &&
+          (quotedUnwrapped?.mediaContent?.url || quotedUnwrapped?.mediaContent?.directPath)
+        );
+        const effectiveQuoted = quotedHasKeys
+          ? quotedUnwrapped
+          : (cachedUnwrapped?.mediaContent ? cachedUnwrapped : quotedUnwrapped);
+
+        const hasQuotedMedia = !mediaAttachment && Boolean(effectiveQuoted?.mediaContent && effectiveQuoted?.baileysMediaType && effectiveQuoted?.mediaKind);
+
+        if (hasQuotedMedia && effectiveQuoted) {
           try {
-            const streamType = quotedAudio ? 'audio' : quotedImage ? 'image' : 'document';
-            const quotedContent = quotedAudio || quotedImage || quotedDoc;
-            const stream = await downloadContentFromMessage(quotedContent as any, streamType as any);
-            const rawMime = (quotedContent as any)?.mimetype || '';
-            const quotedType = quotedAudio ? 'audioMessage' : quotedImage ? 'imageMessage' : 'documentMessage';
-            const mimeType = MediaProcessorService.getMimeType(quotedType, rawMime);
+            const stream = await downloadContentFromMessage(
+              effectiveQuoted.mediaContent as any,
+              effectiveQuoted.baileysMediaType as any
+            );
+            const rawMime = (effectiveQuoted.mediaContent as any)?.mimetype || '';
+            const mimeType = MediaProcessorService.getMimeType(effectiveQuoted.msgType, rawMime);
             const dataBase64 = await MediaProcessorService.streamToBase64(stream as any);
             mediaAttachment = {
-              type: streamType as 'image' | 'audio' | 'document',
+              type: effectiveQuoted.mediaKind!,
               mimeType,
               dataBase64,
-              fileName: (quotedContent as any)?.fileName,
+              fileName: (effectiveQuoted.mediaContent as any)?.fileName,
+              isViewOnce: effectiveQuoted.isViewOnce,
             };
-            console.log(`📎 [Quoted Media] Si guul leh ayaa loo soo dejiyay ${streamType} laga soo xigtay group-ka!`);
+            console.log(`📎 [Quoted ${effectiveQuoted.isViewOnce ? 'View-Once 1️⃣ ' : ''}Media] Si guul leh ayaa loo soo dejiyay ${effectiveQuoted.mediaKind} laga soo xigtay chat-ka!`);
           } catch (quotedErr: any) {
             console.warn(`[WhatsAppBaileys] Quoted media download failed: ${quotedErr?.message}`);
           }
@@ -471,11 +523,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         // In 1-on-1 private DM: ALWAYS respond (no need to type @cardoso).
         // In group chats: respond if @mentioned, !cardoso prefix, or replied-to-bot.
         // For voice/media in groups specifically: also allow if isReplyingToBot (swipe-reply voice note).
-        const mentionedJids = contextInfoRaw?.mentionedJid || [];
+        const mentionedJids: string[] = contextInfoRaw?.mentionedJid || [];
         const isMentioned =
           !isGroup ||
           isReplyingToBot ||
-          mentionedJids.some(j => (botJid && j.includes(botJid)) || (botLid && j.includes(botLid))) ||
+          mentionedJids.some((j: string) => (botJid && j.includes(botJid)) || (botLid && j.includes(botLid))) ||
           hasCardosoMention;
 
         // For media in groups, skip if not mentioned/replied-to (avoid processing every group photo/video)
@@ -487,7 +539,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           senderName: msg.pushName || undefined,
           chatId,
           isGroup,
-          content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan akhriso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan sharax]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
+          content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]' : isVideo || mediaAttachment?.type === 'video' ? '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
           rawTimestamp: (msg.messageTimestamp as number) * 1000 || Date.now(),
           isMentioned,
           isFromMe: Boolean(msg.key.fromMe),
