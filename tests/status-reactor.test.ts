@@ -301,6 +301,9 @@ suite.test('MessageRouter administrative commands control Status Reactor setting
   assertTrue(resBlocked.handled, 'Unauthorized command should be intercepted by security guard');
   assertEqual(resBlocked.reason, 'Unauthorized admin command blocked', 'Must be blocked by security');
 
+  // Reset cooldown to 0 after test to avoid blocking real operations
+  statusReactorService.setConfig({ cooldownHours: 0 });
+
   await transport.stop();
   await memory.close();
   try {
@@ -407,6 +410,9 @@ suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen
   );
   assertTrue(resBlocked.handled, 'Unauthorized view command must be handled');
   assertEqual(resBlocked.reason, 'Unauthorized admin command blocked', 'Must be blocked by security');
+
+  // Reset cooldown to 0 after test to avoid blocking real operations
+  statusReactorService.setConfig({ cooldownHours: 0 });
 
   await transport.stop();
   await memory.close();
@@ -659,6 +665,9 @@ suite.test('Responds to status reply gratitude and story replies warmly without 
     sentReply.includes('mar kasta waan kula socdaa'),
     'Must NOT reply with status comeback when user asks a normal chat question'
   );
+
+  // Reset cooldown to 0 after test to avoid blocking real operations
+  statusReactorService.setConfig({ cooldownHours: 0 });
 
   await transport.stop();
   await memory.close();

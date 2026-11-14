@@ -807,23 +807,76 @@ SHURUUCO ADAG:
       this.config.autoComment &&
       (this.config.mode === 'comment' || this.config.mode === 'both' || !this.config.autoReact);
 
-    // 1. Send Emoji Reaction
+    // 1. Send Emoji Reaction (Love ❤️ / Contextual Emoji)
     if (shouldReact) {
-      const emoji = analysis.suggestedEmojis[Math.floor(Math.random() * analysis.suggestedEmojis.length)];
+      // Determine appropriate emoji: ❤️ (Love) for general/positive/media, 🤲 for tacsi/xanuun
+      let emoji = '❤️';
+      if (analysis.category === 'condolence' || analysis.category === 'illness') {
+        emoji = '🤲';
+      } else if (analysis.category === 'islamic_friday' || analysis.category === 'islamic_duco') {
+        const islamic = ['🤲', '🤍', '✨'];
+        emoji = islamic[Math.floor(Math.random() * islamic.length)];
+      } else if (analysis.suggestedEmojis && analysis.suggestedEmojis.length > 0) {
+        if (analysis.suggestedEmojis.includes('❤️')) {
+          emoji = '❤️';
+        } else {
+          // Strongly include ❤️ in the pool so Love is the primary story reaction
+          const pool = ['❤️', ...analysis.suggestedEmojis];
+          emoji = pool[Math.floor(Math.random() * pool.length)];
+        }
+      }
+
       try {
-        // Send status reaction to status@broadcast with statusJidList
+        const rawParticipant = msg.key.participant || msg.participant || senderJid;
+        const cleanSender = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+        const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+
+        // Target key targeting the status update with full participant identification
+        const reactionKey: proto.IMessageKey = {
+          remoteJid: 'status@broadcast',
+          id: msg.key.id,
+          participant: cleanParticipant,
+          fromMe: Boolean(msg.key.fromMe),
+        };
+
+        const statusJidSet = new Set<string>();
+        statusJidSet.add(senderJid);
+        statusJidSet.add(cleanSender);
+        statusJidSet.add(cleanParticipant);
+        if (socket.user?.id) {
+          statusJidSet.add(socket.user.id);
+          const cleanMyJid = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+          statusJidSet.add(cleanMyJid);
+        }
+        const statusJidList = Array.from(statusJidSet);
+
+        // A. Send status reaction to status@broadcast with statusJidList
         await socket.sendMessage(
           'status@broadcast',
           {
             react: {
               text: emoji,
-              key: msg.key,
+              key: reactionKey,
             },
           },
           {
-            statusJidList: [senderJid],
+            statusJidList,
           }
         );
+
+        // B. Also notify direct peer socket so official WhatsApp mobile clients (Android/iOS)
+        // reliably display the Love (❤️) reaction on the contact's status story
+        await socket.sendMessage(
+          senderJid,
+          {
+            react: {
+              text: emoji,
+              key: reactionKey,
+            },
+          }
+        ).catch((err: any) => {
+          console.warn(`[StatusReactor] Direct peer reaction notice error: ${err?.message}`);
+        });
 
         this.recordInteraction({
           id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -836,7 +889,7 @@ SHURUUCO ADAG:
           timestamp: Date.now(),
         });
 
-        console.log(`❤️ [StatusReactor] Reacted "${emoji}" to status of ${senderName || senderJid} (${gender})`);
+        console.log(`❤️ [StatusReactor] Reacted "${emoji}" (Love) to status of ${senderName || senderJid} (${gender})`);
       } catch (err: any) {
         console.warn(`[StatusReactor] Failed to react to status: ${err?.message}`);
       }

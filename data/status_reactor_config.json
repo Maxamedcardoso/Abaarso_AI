@@ -3,7 +3,7 @@
   "autoReact": true,
   "autoComment": true,
   "mode": "both",
-  "cooldownHours": 6,
+  "cooldownHours": 0,
   "minDelaySeconds": 10,
   "maxDelaySeconds": 30,
   "aiEnhanced": true

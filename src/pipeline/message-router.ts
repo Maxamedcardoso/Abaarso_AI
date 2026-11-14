@@ -398,13 +398,13 @@ SHURUUCDA DUGSIIYA:
         whatsappManagerService.setAutoViewStatus(true);
         // If user used "view on" (or !view on), activate ALL 3: Seen + Reaction + AI Comment!
         if (!isExplicitAutoviewOnly) {
-          statusReactorService.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both' });
+          statusReactorService.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 0 });
           await transport.sendMessage(
             message.chatId,
             '👁️✨ *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *SHIDAY (ON)*!\n\n' +
             'Hadda bot-ku hal mar ayuu dhammaan si toos ah u wada qabanayaa:\n' +
             '✅ *Auto-View (Seen)*: Wuxuu daawanayaa dhammaan status-yada (views ayaad ka mid noqonaysaa).\n' +
-            '✅ *Auto-React (Emoji)*: Wuxuu status-ka ku dhufanayaa emoji dabiici ah (❤️, 😂, 👏, 🔥, 🤲).\n' +
+            '✅ *Auto-React (Love ❤️)*: Wuxuu status-ka saarayaa Love (❤️) ama emoji ku habboon.\n' +
             '✅ *Auto-Comment (AI)*: Wuxuu si dabiici ah ugu reply-garaynayaa faallo Soomaali ah oo diirran!\n\n' +
             '_Bot-ku wuxuu u dhaqmayaa sida qof caadi ah oo kale!_ 😊'
           );
