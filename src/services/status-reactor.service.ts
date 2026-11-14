@@ -41,7 +41,7 @@ export interface StatusAnalysisResult {
   suggestedComments: string[];
   extractedText: string;
   hasMedia: boolean;
-  mediaKind?: string;
+  mediaKind?: string | null;
   gender?: 'male' | 'female' | 'unknown';
   confidence: number;
 }
@@ -230,7 +230,7 @@ export class StatusReactorService {
   public analyzeStatus(
     text: string,
     hasMedia: boolean = false,
-    mediaKind?: string,
+    mediaKind?: string | null,
     gender: 'male' | 'female' | 'unknown' = 'unknown'
   ): StatusAnalysisResult {
     const clean = (text || '').trim();
@@ -662,7 +662,7 @@ export class StatusReactorService {
     analysis: StatusAnalysisResult,
     senderName: string = '',
     gender: 'male' | 'female' | 'unknown' = 'unknown',
-    mediaKind?: string
+    mediaKind?: string | null
   ): Promise<string> {
     const effectiveGender = gender || analysis.gender || 'unknown';
 
@@ -741,7 +741,7 @@ SHURUUCO ADAG:
     // Unwrap message and extract content
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
-    const mediaKind = unwrapped.mediaKind;
+    const mediaKind = unwrapped.mediaKind || undefined;
     const hasMedia = Boolean(mediaKind);
     const text =
       innerMsg.conversation ||
@@ -795,7 +795,7 @@ SHURUUCO ADAG:
     analysis: StatusAnalysisResult,
     rawText: string,
     gender: 'male' | 'female' | 'unknown' = 'unknown',
-    mediaKind?: string
+    mediaKind?: string | null
   ): Promise<void> {
     if (!socket) return;
 
