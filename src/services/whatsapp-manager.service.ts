@@ -382,16 +382,30 @@ export class WhatsAppManagerService {
       if (clean) jidSet.add(clean);
     }
 
-    // 2. Add host account's own primary number (from socket.user)
+    // 2. Add host account's own primary number and specific devices (from socket.user)
     if (this.socket?.user?.id) {
-      const cleanMe = this.toCleanUserJid(this.socket.user.id);
-      if (cleanMe) jidSet.add(cleanMe);
+      const rawUser = this.socket.user.id;
+      jidSet.add(rawUser);
+      const cleanMe = this.toCleanUserJid(rawUser);
+      if (cleanMe) {
+        jidSet.add(cleanMe);
+        const num = cleanMe.split('@')[0];
+        jidSet.add(`${num}:0@s.whatsapp.net`);
+      }
+      const rawLid = (this.socket.user as any)?.lid;
+      if (rawLid) {
+        jidSet.add(rawLid);
+      }
     }
 
     // 3. Add bot's configured JID if available
     if (this.botJid) {
       const cleanBot = this.toCleanUserJid(this.botJid);
-      if (cleanBot) jidSet.add(cleanBot);
+      if (cleanBot) {
+        jidSet.add(cleanBot);
+        const num = cleanBot.split('@')[0];
+        jidSet.add(`${num}:0@s.whatsapp.net`);
+      }
     }
 
     // 4. Add admin phone numbers from environment
@@ -408,7 +422,11 @@ export class WhatsAppManagerService {
 
     for (const a of envAdmins) {
       const cleanAdmin = this.toCleanUserJid(a);
-      if (cleanAdmin) jidSet.add(cleanAdmin);
+      if (cleanAdmin) {
+        jidSet.add(cleanAdmin);
+        const num = cleanAdmin.split('@')[0];
+        jidSet.add(`${num}:0@s.whatsapp.net`);
+      }
     }
 
     return Array.from(jidSet);

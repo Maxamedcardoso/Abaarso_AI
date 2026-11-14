@@ -90,7 +90,7 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertTrue(sentOptions.broadcast, 'Must set broadcast: true');
   assertTrue(Array.isArray(sentOptions.statusJidList), 'Must provide statusJidList');
   assertTrue(sentOptions.statusJidList.includes('252610000000@s.whatsapp.net'), 'Must include clean owner phone JID');
-  assertFalse(sentOptions.statusJidList.some((j: string) => j.includes(':')), 'No device colon suffix in statusJidList');
+  assertTrue(sentOptions.statusJidList.includes('252610000000:0@s.whatsapp.net'), 'Must include primary device JID');
 
   // 2. Post Media Status
   const mediaResult = await whatsappManagerService.postMediaStatus({
