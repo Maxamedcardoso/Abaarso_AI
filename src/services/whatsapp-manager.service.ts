@@ -68,12 +68,23 @@ export class WhatsAppManagerService {
     }
 
     if (this.botJid) {
-      jidSet.add(`${this.botJid}@s.whatsapp.net`);
+      const cleanBot = this.botJid.replace(/[^0-9]/g, '');
+      if (cleanBot) {
+        jidSet.add(`${cleanBot}@s.whatsapp.net`);
+        jidSet.add(`${cleanBot}:0@s.whatsapp.net`);
+      }
     }
 
     if (this.socket?.user?.id) {
+      jidSet.add(this.socket.user.id);
       const cleanMe = this.socket.user.id.split(':')[0].split('@')[0];
-      if (cleanMe) jidSet.add(`${cleanMe}@s.whatsapp.net`);
+      if (cleanMe) {
+        jidSet.add(`${cleanMe}@s.whatsapp.net`);
+        jidSet.add(`${cleanMe}:0@s.whatsapp.net`);
+      }
+      if ((this.socket.user as any).lid) {
+        jidSet.add((this.socket.user as any).lid);
+      }
     }
 
     const envAdmins = (process.env.ADMIN_PHONE_NUMBERS || '')
@@ -82,6 +93,7 @@ export class WhatsAppManagerService {
       .filter(Boolean);
     for (const a of envAdmins) {
       jidSet.add(`${a}@s.whatsapp.net`);
+      jidSet.add(`${a}:0@s.whatsapp.net`);
     }
 
     return Array.from(jidSet);
@@ -132,6 +144,7 @@ export class WhatsAppManagerService {
           font: chosenFont,
         } as any,
         {
+          broadcast: true,
           statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
         }
       );
@@ -166,6 +179,11 @@ export class WhatsAppManagerService {
 
       let sent: any = undefined;
 
+      const statusSendOptions: any = {
+        broadcast: true,
+        statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
+      };
+
       if (media.type === 'image') {
         sent = await this.socket.sendMessage(
           'status@broadcast',
@@ -173,9 +191,7 @@ export class WhatsAppManagerService {
             image: media.buffer,
             caption: media.caption || '',
           },
-          {
-            statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
-          }
+          statusSendOptions
         );
       } else if (media.type === 'video') {
         sent = await this.socket.sendMessage(
@@ -184,9 +200,7 @@ export class WhatsAppManagerService {
             video: media.buffer,
             caption: media.caption || '',
           },
-          {
-            statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
-          }
+          statusSendOptions
         );
       } else if (media.type === 'audio') {
         const colors = ['#1e3c72', '#0f5132', '#4a154b', '#0d6efd', '#6f42c1'];
@@ -199,9 +213,7 @@ export class WhatsAppManagerService {
             ptt: true,
             backgroundColor: chosenColor,
           } as any,
-          {
-            statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
-          }
+          statusSendOptions
         );
       }
 

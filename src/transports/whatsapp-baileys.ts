@@ -467,10 +467,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (chatId === 'status@broadcast') {
       const statusSender = msg.key.participant || msg.participant || '';
       // 1. Auto View Status: automatically mark contacts' status seen in real-time
-      if (whatsappManagerService.isAutoViewStatusEnabled() && this.socket) {
+      if (whatsappManagerService.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
         try {
-          await this.socket.readMessages([msg.key]);
-          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${statusSender || 'Contact'}`);
+          const statusKey = {
+            remoteJid: 'status@broadcast',
+            id: msg.key.id,
+            participant: statusSender,
+          };
+          await this.socket.readMessages([statusKey]);
+          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${statusSender}`);
         } catch (e: any) {
           console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
         }
@@ -867,6 +872,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus && statusJidList.length > 0) {
           sendOptions.statusJidList = statusJidList;
+          sendOptions.broadcast = true;
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -916,6 +922,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus && statusJidList.length > 0) {
           sendOptions.statusJidList = statusJidList;
+          sendOptions.broadcast = true;
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
