@@ -929,11 +929,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
+          sendOptions.useUserDevicesCache = false;
           sendOptions.backgroundColor = (options as any)?.backgroundColor || '#1e3c72';
           sendOptions.font = (options as any)?.font || 1;
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
+          await whatsappManagerService.resetStatusSenderKeyMemory();
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -985,11 +987,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
+          sendOptions.useUserDevicesCache = false;
           sendOptions.backgroundColor = (options as any)?.backgroundColor || '#1e3c72';
           sendOptions.font = (options as any)?.font || 1;
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
+          await whatsappManagerService.resetStatusSenderKeyMemory();
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }

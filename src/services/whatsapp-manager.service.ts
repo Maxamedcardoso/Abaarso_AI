@@ -1,6 +1,7 @@
 import { WASocket, proto } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import { broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
@@ -395,8 +396,56 @@ export class WhatsAppManagerService {
       const rawLid = (this.socket.user as any)?.lid;
       if (rawLid) {
         jidSet.add(rawLid);
+        const lidUser = rawLid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        if (lidUser) {
+          jidSet.add(`${lidUser}@lid`);
+          jidSet.add(`${lidUser}:0@lid`);
+        }
       }
+    } else {
+      // Fallback: Read host credentials from baileys_auth_info/creds.json if socket.user is not yet attached
+      try {
+        const credsPath = path.join(process.cwd(), 'baileys_auth_info', 'creds.json');
+        if (fs.existsSync(credsPath)) {
+          const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+          if (creds?.me?.id) {
+            const rawUser = creds.me.id;
+            jidSet.add(rawUser);
+            const cleanMe = this.toCleanUserJid(rawUser);
+            if (cleanMe) {
+              jidSet.add(cleanMe);
+              const num = cleanMe.split('@')[0];
+              jidSet.add(`${num}:0@s.whatsapp.net`);
+            }
+          }
+          if (creds?.me?.lid) {
+            const rawLid = creds.me.lid;
+            jidSet.add(rawLid);
+            const lidUser = rawLid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+            if (lidUser) {
+              jidSet.add(`${lidUser}@lid`);
+              jidSet.add(`${lidUser}:0@lid`);
+            }
+          }
+        }
+      } catch {}
     }
+
+    // 2b. Add past chat participants from database
+    try {
+      const dbPath = path.join(process.cwd(), 'data', 'abarso.db');
+      if (fs.existsSync(dbPath)) {
+        const db = new DatabaseSync(dbPath);
+        const rows = db.prepare("SELECT DISTINCT chat_id FROM conversations WHERE chat_id NOT LIKE '%@g.us' AND chat_id != 'student_direct_chat'").all();
+        db.close();
+        for (const row of rows as any[]) {
+          if (row.chat_id) {
+            const clean = this.toCleanUserJid(row.chat_id) || (row.chat_id.endsWith('@lid') ? row.chat_id : null);
+            if (clean) jidSet.add(clean);
+          }
+        }
+      }
+    } catch {}
 
     // 3. Add bot's configured JID if available
     if (this.botJid) {
@@ -432,6 +481,39 @@ export class WhatsAppManagerService {
     return Array.from(jidSet);
   }
 
+  /**
+   * Resets the sender-key memory for status@broadcast.
+   * WhatsApp Multi-Device requires each companion status post to distribute the sender key
+   * to the primary mobile device (:0). Baileys writes sender-key-memory-status@broadcast.json
+   * on the first post, marking all recipients as "already sent". On subsequent status posts,
+   * Baileys suppresses sending the sender key or recipient node to the primary mobile device,
+   * causing all statuses after the first one to be completely invisible on the phone!
+   * Purging this cache before & after each status post ensures every single status update
+   * behaves cleanly like the very first post!
+   */
+  public async resetStatusSenderKeyMemory(): Promise<void> {
+    try {
+      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      if (fs.existsSync(authDir)) {
+        const files = fs.readdirSync(authDir);
+        for (const file of files) {
+          if (file.startsWith('sender-key-memory-status@broadcast')) {
+            try {
+              fs.unlinkSync(path.join(authDir, file));
+            } catch {}
+          }
+        }
+      }
+      if ((this.socket as any)?.authState?.keys?.set) {
+        await (this.socket as any).authState.keys.set({
+          'sender-key-memory': { 'status@broadcast': null },
+        });
+      }
+    } catch (err: any) {
+      console.warn('⚠️ [WhatsApp Status] Error resetting status sender-key memory:', err?.message);
+    }
+  }
+
   // ─── 1. WHATSAPP STATUS (STORIES) MANAGEMENT ──────────────────────────────
 
   /**
@@ -451,6 +533,9 @@ export class WhatsAppManagerService {
     }
 
     try {
+      // 1. Reset sender key memory so this status is treated as fresh initial distribution
+      await this.resetStatusSenderKeyMemory();
+
       const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
         ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)
         : this.getStatusRecipients();
@@ -473,6 +558,7 @@ export class WhatsAppManagerService {
         broadcast: true,
         backgroundColor: chosenColor,
         font: chosenFont,
+        useUserDevicesCache: false,
       };
       if (targetRecipients.length > 0) {
         statusSendOptions.statusJidList = targetRecipients;
@@ -489,6 +575,9 @@ export class WhatsAppManagerService {
         } as any,
         statusSendOptions
       );
+
+      // 2. Clear sender key memory right after send so subsequent posts also re-distribute cleanly
+      await this.resetStatusSenderKeyMemory();
 
       console.log(`📢 [WhatsApp Status] Message dispatched successfully! MessageId: ${sent?.key?.id}`);
 
@@ -524,6 +613,9 @@ export class WhatsAppManagerService {
     }
 
     try {
+      // 1. Reset sender key memory for status@broadcast
+      await this.resetStatusSenderKeyMemory();
+
       const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
         ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)
         : this.getStatusRecipients();
@@ -532,6 +624,7 @@ export class WhatsAppManagerService {
 
       const statusSendOptions: any = {
         broadcast: true,
+        useUserDevicesCache: false,
       };
       if (targetRecipients.length > 0) {
         statusSendOptions.statusJidList = targetRecipients;
@@ -573,6 +666,9 @@ export class WhatsAppManagerService {
           audioSendOptions
         );
       }
+
+      // 2. Clear sender key memory right after send
+      await this.resetStatusSenderKeyMemory();
 
       if (sent?.key?.id) {
         this.recordPostedStatus(sent.key.id, media.type, media.caption, options?.backgroundColor, targetRecipients.length);

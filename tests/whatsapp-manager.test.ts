@@ -88,6 +88,7 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertEqual(sentPayload.text, 'Guushu waxay timaadaa dadaal ka dib!');
   assertEqual(sentPayload.backgroundColor, '#0f5132');
   assertTrue(sentOptions.broadcast, 'Must set broadcast: true');
+  assertFalse(sentOptions.useUserDevicesCache, 'Must bypass stale user devices cache');
   assertEqual(sentOptions.backgroundColor, '#0f5132', 'Must pass backgroundColor in sendOptions for Baileys assertColor');
   assertEqual(sentOptions.font, 1, 'Must pass font in sendOptions for Baileys');
   assertTrue(Array.isArray(sentOptions.statusJidList), 'Must provide statusJidList');
