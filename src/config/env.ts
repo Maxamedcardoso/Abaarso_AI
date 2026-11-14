@@ -55,17 +55,20 @@ function parseAllowedGroups(raw?: string): string[] {
     .filter(g => g.length > 0);
 }
 
+const geminiKeyPool = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
+  .split(',')
+  .map(k => k.trim())
+  .filter(Boolean);
+const totalKeysCount = Math.max(1, geminiKeyPool.length);
+
 export const config: AppConfig = {
   nodeEnv: process.env.NODE_ENV || 'development',
   gemini: {
-    apiKey: process.env.GEMINI_API_KEY || (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',')[0].trim() : ''),
-    apiKeys: (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
-      .split(',')
-      .map(k => k.trim())
-      .filter(Boolean),
+    apiKey: geminiKeyPool[0] || '',
+    apiKeys: geminiKeyPool,
     model: process.env.GEMINI_MODEL || SUPPORTED_MODELS.GEMINI_FLASH_LITE_LATEST,
-    dailyLimit: (parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS) * Math.max(1, (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',').filter(Boolean).length : 1)),
-    rpmLimit: (parseInt(process.env.REQUESTS_PER_MINUTE_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_RPM) * Math.max(1, (process.env.GEMINI_API_KEYS ? process.env.GEMINI_API_KEYS.split(',').filter(Boolean).length : 1)),
+    dailyLimit: (parseInt(process.env.DAILY_REQUEST_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_DAILY_REQUESTS) * totalKeysCount,
+    rpmLimit: (parseInt(process.env.REQUESTS_PER_MINUTE_LIMIT || '', 10) || FREE_TIER_LIMITS.MAX_RPM) * totalKeysCount,
   },
   llamaFallback: {
     enabled: process.env.ENABLE_LOCAL_FALLBACK === 'true',
