@@ -571,7 +571,17 @@ SHURUUCDA DUGSIIYA:
         return { handled: true, reason: 'Status content missing' };
       }
 
-      const res = await whatsappManagerService.postTextStatus(statusContent);
+      let customColor: string | undefined;
+      let textToPost = statusContent;
+      const colorMatch = statusContent.match(/^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})\s+([\s\S]+)$/);
+      if (colorMatch) {
+        customColor = colorMatch[1];
+        textToPost = colorMatch[2].trim();
+      }
+
+      const res = await whatsappManagerService.postTextStatus(textToPost, {
+        backgroundColor: customColor,
+      });
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'Text status posted' };
     }

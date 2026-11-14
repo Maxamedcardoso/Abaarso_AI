@@ -907,11 +907,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
         const isStatus = chatId === 'status@broadcast';
-        const customStatusJids = (options as any)?.statusJidList?.length ? (options as any).statusJidList : undefined;
+        const customStatusJids = (options as any)?.statusJidList?.length
+          ? (options as any).statusJidList
+          : (isStatus ? whatsappManagerService.getStatusRecipients() : undefined);
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
-          if (customStatusJids) {
+          if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
         } else if (rawQuoted) {
@@ -959,11 +961,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       try {
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
         const isStatus = chatId === 'status@broadcast';
-        const customStatusJids = (options as any)?.statusJidList?.length ? (options as any).statusJidList : undefined;
+        const customStatusJids = (options as any)?.statusJidList?.length
+          ? (options as any).statusJidList
+          : (isStatus ? whatsappManagerService.getStatusRecipients() : undefined);
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
-          if (customStatusJids) {
+          if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
         } else if (rawQuoted) {

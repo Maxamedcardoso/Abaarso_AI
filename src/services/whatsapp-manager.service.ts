@@ -47,7 +47,12 @@ export class WhatsAppManagerService {
         id: cleanId,
         fromMe: true,
       };
-      await this.socket.sendMessage('status@broadcast', { delete: key });
+      const recipients = this.getStatusRecipients();
+      const sendOpts: any = { broadcast: true };
+      if (recipients.length > 0) {
+        sendOpts.statusJidList = recipients;
+      }
+      await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
       console.log(`🗑️ [WhatsApp Status] Status-kii (${cleanId}) waa la tirtiray dhammaan (Delete for everyone)!`);
       return {
         success: true,
@@ -102,46 +107,74 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Builds the recipient JID list for status posts (Stories).
-   * WhatsApp requires statusJidList to know which contacts can decrypt the status.
+   * Normalizes any raw phone number or JID to a clean WhatsApp user JID (e.g. 252634949642@s.whatsapp.net).
+   * Strictly excludes device suffixes (:0, :24), LIDs, group JIDs, and non-numeric JIDs.
+   */
+  public toCleanUserJid(raw?: string): string | null {
+    if (!raw) return null;
+    const clean = raw.trim();
+    if (!clean || clean.includes('@g.us') || clean.includes('@broadcast') || clean.includes('@newsletter') || clean.includes('@lid')) {
+      return null;
+    }
+    // Extract purely the user phone digits before '@' and ':'
+    const userPart = clean.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    let normalizedDigits = userPart;
+    // Local Somali format: 063... or 061... -> 252...
+    if (/^0[69]\d{8}$/.test(userPart)) {
+      normalizedDigits = '252' + userPart.slice(1);
+    } else if (/^[69]\d{8}$/.test(userPart)) {
+      normalizedDigits = '252' + userPart;
+    }
+    if (normalizedDigits.length >= 7 && normalizedDigits.length <= 15) {
+      return `${normalizedDigits}@s.whatsapp.net`;
+    }
+    return null;
+  }
+
+  /**
+   * Builds the recipient JID list for status posts and status deletions (Stories).
+   * WhatsApp Multi-Device strictly requires statusJidList so that:
+   * 1. The owner's primary mobile phone receives the status in "My Status" (decrypts sender key).
+   * 2. Contacts receive the status in their "Updates" tab.
+   * 3. Deletion requests broadcast the revocation key to all recipients.
    */
   public getStatusRecipients(): string[] {
     const jidSet = new Set<string>();
+
+    // 1. Add all synchronized contacts from broadcast service
     const contacts = broadcastService.getContacts();
-
     for (const c of contacts) {
-      if (c.jid && c.jid.endsWith('@s.whatsapp.net')) {
-        jidSet.add(c.jid);
-      }
+      const clean = this.toCleanUserJid(c.jid);
+      if (clean) jidSet.add(clean);
     }
 
-    if (this.botJid) {
-      const cleanBot = this.botJid.replace(/[^0-9]/g, '');
-      if (cleanBot) {
-        jidSet.add(`${cleanBot}@s.whatsapp.net`);
-        jidSet.add(`${cleanBot}:0@s.whatsapp.net`);
-      }
-    }
-
+    // 2. Add host account's own primary number (from socket.user)
     if (this.socket?.user?.id) {
-      jidSet.add(this.socket.user.id);
-      const cleanMe = this.socket.user.id.split(':')[0].split('@')[0];
-      if (cleanMe) {
-        jidSet.add(`${cleanMe}@s.whatsapp.net`);
-        jidSet.add(`${cleanMe}:0@s.whatsapp.net`);
-      }
-      if ((this.socket.user as any).lid) {
-        jidSet.add((this.socket.user as any).lid);
-      }
+      const cleanMe = this.toCleanUserJid(this.socket.user.id);
+      if (cleanMe) jidSet.add(cleanMe);
     }
 
-    const envAdmins = (process.env.ADMIN_PHONE_NUMBERS || '')
+    // 3. Add bot's configured JID if available
+    if (this.botJid) {
+      const cleanBot = this.toCleanUserJid(this.botJid);
+      if (cleanBot) jidSet.add(cleanBot);
+    }
+
+    // 4. Add admin phone numbers from environment
+    const envAdmins = [
+      process.env.ADMIN_PHONE_NUMBERS,
+      process.env.SUPER_ADMIN_PHONE,
+      process.env.ALLOWED_PHONE_NUMBERS,
+    ]
+      .filter(Boolean)
+      .join(',')
       .split(',')
-      .map(n => n.trim().replace(/[^0-9]/g, ''))
+      .map(n => n.trim())
       .filter(Boolean);
+
     for (const a of envAdmins) {
-      jidSet.add(`${a}@s.whatsapp.net`);
-      jidSet.add(`${a}:0@s.whatsapp.net`);
+      const cleanAdmin = this.toCleanUserJid(a);
+      if (cleanAdmin) jidSet.add(cleanAdmin);
     }
 
     return Array.from(jidSet);
@@ -166,9 +199,9 @@ export class WhatsAppManagerService {
     }
 
     try {
-      const customJids = options?.statusJidList && options.statusJidList.length > 0
-        ? options.statusJidList
-        : undefined;
+      const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
+        ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)
+        : this.getStatusRecipients();
 
       const vibrantColors = [
         '#1e3c72', // Royal Navy Blue
@@ -187,8 +220,8 @@ export class WhatsAppManagerService {
       const statusSendOptions: any = {
         broadcast: true,
       };
-      if (customJids) {
-        statusSendOptions.statusJidList = customJids;
+      if (targetRecipients.length > 0) {
+        statusSendOptions.statusJidList = targetRecipients;
       }
 
       const sent = await this.socket.sendMessage(
@@ -205,10 +238,14 @@ export class WhatsAppManagerService {
         this.recordPostedStatus(sent.key.id);
       }
 
-      console.log(`📢 [WhatsApp Status] Status text posted successfully! (${cleanText.slice(0, 45)}...)`);
+      const visibilityNote = targetRecipients.length > 0
+        ? `${targetRecipients.length} qof (Contacts + Milkiilaha)`
+        : 'Dhammaan contacts-ka';
+
+      console.log(`📢 [WhatsApp Status] Status text posted successfully to ${targetRecipients.length} recipients! (${cleanText.slice(0, 45)}...)`);
       return {
         success: true,
-        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• U muuqashada: ${customJids ? `${customJids.length} qof oo gaar ah` : 'Dhammaan contacts-ka (My Status)'}`,
+        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• U muuqashada: ${visibilityNote}`,
         messageId: sent?.key?.id || undefined,
       };
     } catch (err: any) {
@@ -229,17 +266,17 @@ export class WhatsAppManagerService {
     }
 
     try {
-      const customJids = options?.statusJidList && options.statusJidList.length > 0
-        ? options.statusJidList
-        : undefined;
+      const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
+        ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)
+        : this.getStatusRecipients();
 
       let sent: any = undefined;
 
       const statusSendOptions: any = {
         broadcast: true,
       };
-      if (customJids) {
-        statusSendOptions.statusJidList = customJids;
+      if (targetRecipients.length > 0) {
+        statusSendOptions.statusJidList = targetRecipients;
       }
 
       if (media.type === 'image') {
@@ -279,10 +316,14 @@ export class WhatsAppManagerService {
         this.recordPostedStatus(sent.key.id);
       }
 
-      console.log(`📢 [WhatsApp Status] Media status (${media.type}) posted successfully!`);
+      const visibilityNote = targetRecipients.length > 0
+        ? `${targetRecipients.length} qof (Contacts + Milkiilaha)`
+        : 'Dhammaan contacts-ka';
+
+      console.log(`📢 [WhatsApp Status] Media status (${media.type}) posted successfully to ${targetRecipients.length} recipients!`);
       return {
         success: true,
-        message: `✅ Sawirka/Codka/Muuqaalka si guul leh ayaa loogu soo dhigay WhatsApp Status!`,
+        message: `✅ Sawirka/Codka/Muuqaalka si guul leh ayaa loogu soo dhigay WhatsApp Status!\n• U muuqashada: ${visibilityNote}`,
         messageId: sent?.key?.id || undefined,
       };
     } catch (err: any) {
@@ -791,7 +832,16 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     try {
-      await this.socket.sendMessage(chatId, { delete: messageKey });
+      const isStatus = chatId === 'status@broadcast';
+      const sendOptions: any = {};
+      if (isStatus) {
+        sendOptions.broadcast = true;
+        const recipients = this.getStatusRecipients();
+        if (recipients.length > 0) {
+          sendOptions.statusJidList = recipients;
+        }
+      }
+      await this.socket.sendMessage(chatId, { delete: messageKey }, sendOptions);
       return { success: true, message: '🗑️ Fariintii waa la tirtiray dhammaan (Delete for everyone).' };
     } catch (err: any) {
       return { success: false, message: `Cilad tirtiridda fariinta: ${err.message}` };

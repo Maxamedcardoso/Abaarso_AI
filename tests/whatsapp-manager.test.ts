@@ -87,6 +87,10 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertEqual(sentJid, 'status@broadcast', 'Must target status@broadcast');
   assertEqual(sentPayload.text, 'Guushu waxay timaadaa dadaal ka dib!');
   assertEqual(sentPayload.backgroundColor, '#0f5132');
+  assertTrue(sentOptions.broadcast, 'Must set broadcast: true');
+  assertTrue(Array.isArray(sentOptions.statusJidList), 'Must provide statusJidList');
+  assertTrue(sentOptions.statusJidList.includes('252610000000@s.whatsapp.net'), 'Must include clean owner phone JID');
+  assertFalse(sentOptions.statusJidList.some((j: string) => j.includes(':')), 'No device colon suffix in statusJidList');
 
   // 2. Post Media Status
   const mediaResult = await whatsappManagerService.postMediaStatus({
@@ -98,6 +102,24 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertTrue(mediaResult.success, 'Media status should succeed');
   assertEqual(sentJid, 'status@broadcast');
   assertEqual(sentPayload.caption, 'Sawirka Maanta');
+  assertTrue(sentOptions.broadcast, 'Media must set broadcast: true');
+  assertTrue(Array.isArray(sentOptions.statusJidList), 'Media must provide statusJidList');
+  assertTrue(sentOptions.statusJidList.includes('252610000000@s.whatsapp.net'), 'Media must include clean owner phone JID');
+
+  // 2b. Delete Status by ID with recipient propagation
+  const delStatusRes = await whatsappManagerService.deleteStatusById('status_msg_123');
+  assertTrue(delStatusRes.success, 'Status delete should succeed');
+  assertEqual(sentJid, 'status@broadcast');
+  assertEqual(sentPayload.delete.id, 'status_msg_123');
+  assertTrue(sentOptions.broadcast, 'Delete must broadcast to all recipients');
+  assertTrue(Array.isArray(sentOptions.statusJidList), 'Delete must include statusJidList');
+  assertTrue(sentOptions.statusJidList.includes('252610000000@s.whatsapp.net'), 'Delete must reach owner device');
+
+  // 2c. Verify toCleanUserJid helper
+  assertEqual(whatsappManagerService.toCleanUserJid('252634949642:0@s.whatsapp.net'), '252634949642@s.whatsapp.net');
+  assertEqual(whatsappManagerService.toCleanUserJid('0634949642'), '252634949642@s.whatsapp.net');
+  assertEqual(whatsappManagerService.toCleanUserJid('117000009416739@lid'), null);
+  assertEqual(whatsappManagerService.toCleanUserJid('120363024@g.us'), null);
 
   // 3. Mark Status Seen (Auto View Status)
   const seenResult = await whatsappManagerService.markStatusSeen({
