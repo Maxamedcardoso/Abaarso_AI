@@ -405,11 +405,13 @@ export class MessageRouter {
       const res = await whatsappManagerService.addMember(message.chatId, target);
       if (res.success && res.jid) {
         const targetNum = res.jid.split('@')[0];
-        // Beautiful welcome message with @mention tag
+        const contactName = res.name || whatsappManagerService.getContactName(res.jid);
+        const nameDisplay = contactName ? `${contactName} (@${targetNum})` : `@${targetNum}`;
+
         const welcomeMessage =
-          `🎉✨ *SOO DHAWAADA WALAAL @${targetNum}!* ✨🎉\n\n` +
-          `Ku soo dhawow kooxda rasmiga ah! Waxaan kuu rajaynaynaa waqti waxbarasho, horumar, iyo faa'iido buuxda leh. 📚🎓\n\n` +
-          `Haddii aad qabto su'aal ku saabsan jaamacadda, casharrada ama adeegyada, bot-ka ayaad weydiin kartaa mar kasta. Ku soo dhawow gacmo furan! 🤝💫`;
+          `🎉✨ *Soo dhawoow walaal ${nameDisplay}!* ✨🎉\n\n` +
+          `Ku soo dhawow group\n` +
+          `Haddii aad qabto su'aal bot-ka ayaad weydiin kartaa mar kasta. Ku soo dhawow mar labaad gacmo furan! 🤝💫`;
         await transport.sendMessage(message.chatId, welcomeMessage, {
           mentions: [res.jid],
         });

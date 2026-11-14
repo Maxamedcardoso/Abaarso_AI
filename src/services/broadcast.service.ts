@@ -197,6 +197,18 @@ export class BroadcastService {
     }
   }
 
+  public getContact(jidOrPhone: string): BroadcastContact | undefined {
+    const clean = (jidOrPhone || '').trim();
+    if (!clean) return undefined;
+    const normalized = clean.includes('@') ? clean : `${clean.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+    return this.contactsMap.get(normalized);
+  }
+
+  public getContactName(jidOrPhone: string): string | undefined {
+    const contact = this.getContact(jidOrPhone);
+    return contact?.name || contact?.firstName;
+  }
+
   public isValidIndividualJid(jid: string): boolean {
     if (!jid || typeof jid !== 'string') return false;
     if (jid.endsWith('@g.us')) return false; // groups

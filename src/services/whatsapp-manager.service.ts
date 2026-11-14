@@ -393,13 +393,21 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   }
 
   /**
+   * Resolves a contact's saved name if available.
+   */
+  public getContactName(jidOrPhone: string): string | undefined {
+    const jid = this.normalizeToJid(jidOrPhone);
+    return broadcastService.getContactName(jid);
+  }
+
+  /**
    * Removes (kicks) a participant from the group.
    * Supports @mention, raw number, local 061/063 format, or JID.
    */
   public async kickMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string; jid?: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string; name?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
@@ -410,10 +418,13 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     try {
       await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'remove');
       const num = participantJid.split('@')[0];
+      const contactName = this.getContactName(participantJid);
+      const nameDisplay = contactName ? `${contactName} (@${num})` : `@${num}`;
       return {
         success: true,
-        message: `👞 Qofka (@${num}) si guul leh ayaa looga saaray kooxda.`,
+        message: `👋 *Macasalaama ${nameDisplay}!*`,
         jid: participantJid,
+        name: contactName,
       };
     } catch (err: any) {
       const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;
@@ -431,7 +442,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   public async addMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string; jid?: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string; name?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
@@ -443,25 +454,30 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       const res: any = await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'add');
       const status = res?.[0]?.status;
       const num = participantJid.split('@')[0];
+      const contactName = this.getContactName(participantJid);
+      const nameDisplay = contactName ? `${contactName} (@${num})` : `@${num}`;
 
       if (status === '403') {
         return {
           success: false,
-          message: `⚠️ Qofka (@${num}) wuxuu xidhay Privacy-ga ku-darista kooxaha (Direct Add). Fadlan u dir link-ga kooxda si uu isagu u soo galo.`,
+          message: `⚠️ Qofka (${nameDisplay}) wuxuu xidhay Privacy-ga ku-darista kooxaha (Direct Add). Fadlan u dir link-ga kooxda si uu isagu u soo galo.`,
           jid: participantJid,
+          name: contactName,
         };
       } else if (status === '409') {
         return {
           success: false,
-          message: `ℹ️ Qofka (@${num}) durba wuxuu ku jiraa kooxda!`,
+          message: `ℹ️ Qofka (${nameDisplay}) durba wuxuu ku jiraa kooxda!`,
           jid: participantJid,
+          name: contactName,
         };
       }
 
       return {
         success: true,
-        message: `✅ Qofka (@${num}) waxaa lagu daray kooxda.`,
+        message: `✅ Qofka (${nameDisplay}) waxaa lagu daray kooxda.`,
         jid: participantJid,
+        name: contactName,
       };
     } catch (err: any) {
       const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;

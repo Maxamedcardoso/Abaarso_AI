@@ -118,10 +118,12 @@ suite.test('Mock socket executes status posting and group actions successfully',
   // 5. Kick and Promote (handles both raw number and @mention)
   const kickRes = await whatsappManagerService.kickMember('12345@g.us', '252612222222');
   assertTrue(kickRes.success, 'Kick with raw number should succeed');
+  assertTrue(kickRes.message.includes('Macasalaama'), 'Kick message should say Macasalaama');
   assertEqual(groupUpdateAction, 'remove');
 
   const kickMentionRes = await whatsappManagerService.kickMember('12345@g.us', '@252612222222');
   assertTrue(kickMentionRes.success, 'Kick with @mention should succeed');
+  assertTrue(kickMentionRes.message.includes('Macasalaama'), 'Kick with @mention should say Macasalaama');
   assertEqual(kickMentionRes.jid, '252612222222@s.whatsapp.net');
 
   const addRes = await whatsappManagerService.addMember('12345@g.us', '0634999888');
