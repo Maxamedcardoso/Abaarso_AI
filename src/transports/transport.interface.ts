@@ -22,6 +22,8 @@ export interface IncomingMessage {
   replyToMessageId?: string;     // If message is a quoted reply
   quotedMessageId?: string;      // ID of the message quoted by this message (if any)
   quotedParticipant?: string;    // Sender of the message quoted by this message (if any)
+  quotedText?: string;           // Text/caption of the quoted message (if available)
+  isStoryReply?: boolean;        // True if message is a reply to a WhatsApp status/story
   mentionedJids?: string[];      // JIDs of participants @mentioned in this message
   media?: MessageMedia;          // Attached image, audio voice note, or PDF document
 }

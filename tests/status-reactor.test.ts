@@ -415,6 +415,237 @@ suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen
   } catch {}
 });
 
+suite.test('Ignores status posts from bot owner/admin and processes contacts with zero cooldown', async () => {
+  const service = new StatusReactorService('./data/test_sr_config.json');
+  service.setConfig({
+    enabled: true,
+    autoReact: true,
+    autoComment: true,
+    mode: 'both',
+    cooldownHours: 0, // Zero cooldown per user request
+    minDelaySeconds: 0,
+    maxDelaySeconds: 0,
+  });
+
+  const mockSocket: any = {
+    user: { id: '252634949642:0@s.whatsapp.net' },
+    sendMessage: async () => ({ key: { id: 'mock_sent_id' } }),
+    sendPresenceUpdate: async () => {},
+  };
+
+  // 1. Admin/Owner posts status -> MUST be ignored!
+  const adminStatusMsg: any = {
+    key: {
+      remoteJid: 'status@broadcast',
+      id: 'STATUS_ADMIN_1',
+      participant: '252634949642@s.whatsapp.net',
+      fromMe: false,
+    },
+    pushName: 'Bot Owner Mohamed',
+    message: { conversation: 'Status aan anigu soo dhigay...' },
+  };
+  const adminHandled = await service.handleIncomingStatus(adminStatusMsg, mockSocket);
+  assertFalse(adminHandled, 'Must NEVER react or comment on admin/owner status');
+
+  // 2. Regular contact posts status -> MUST be handled
+  const contactStatusMsg1: any = {
+    key: {
+      remoteJid: 'status@broadcast',
+      id: 'STATUS_CONTACT_1',
+      participant: '252618888999@s.whatsapp.net',
+      fromMe: false,
+    },
+    pushName: 'Farxaan Saaxiib',
+    message: { conversation: 'Alxamdulilah maanta shaqo cusub ayaan bilaabay!' },
+  };
+  const contactHandled1 = await service.handleIncomingStatus(contactStatusMsg1, mockSocket);
+  assertTrue(contactHandled1, 'Contact status must be handled');
+
+  // 3. Same contact posts a 2nd status immediately -> MUST NOT be blocked (zero cooldown active)
+  const contactStatusMsg2: any = {
+    key: {
+      remoteJid: 'status@broadcast',
+      id: 'STATUS_CONTACT_2',
+      participant: '252618888999@s.whatsapp.net',
+      fromMe: false,
+    },
+    pushName: 'Farxaan Saaxiib',
+    message: { conversation: 'Muuqaal qurux badan...' },
+  };
+  const contactHandled2 = await service.handleIncomingStatus(contactStatusMsg2, mockSocket);
+  assertTrue(contactHandled2, 'Contact consecutive status must NOT be blocked when cooldown is 0');
+});
+
+suite.test('Differentiates male vs female status comments with authentic Somali male persona', async () => {
+  const service = new StatusReactorService('./data/test_sr_config.json');
+
+  // Male contact (Farxaan)
+  const maleAnalysis = service.analyzeStatus('Maanta waan qalinjabiyey!', false, undefined, 'male');
+  assertEqual(maleAnalysis.category, 'graduation');
+  assertTrue(
+    maleAnalysis.suggestedComments.some(c => c.includes('sxb') || c.includes('bro') || c.includes('geesi')),
+    'Male comments must include masculine terms'
+  );
+  assertFalse(
+    maleAnalysis.suggestedComments.some(c => c.includes('abaayo')),
+    'Male comments must NEVER address a man as abaayo'
+  );
+
+  // Female contact (Fadumo / Ayaan)
+  const femaleAnalysis = service.analyzeStatus('Maanta waan qalinjabiyey!', false, undefined, 'female');
+  assertEqual(femaleAnalysis.category, 'graduation');
+  assertTrue(
+    femaleAnalysis.suggestedComments.some(c => c.includes('abaayo') || c.includes('walaashay')),
+    'Female comments must include courteous feminine terms'
+  );
+  assertFalse(
+    femaleAnalysis.suggestedComments.some(c => c.includes('ninyahow')),
+    'Female comments must NEVER address a woman as ninyahow'
+  );
+
+  // Video media status
+  const videoAnalysis = service.analyzeStatus('', true, 'video', 'male');
+  assertEqual(videoAnalysis.category, 'video', 'Should detect video status category');
+  assertTrue(
+    videoAnalysis.suggestedComments.some(c => c.includes('muuqaal')),
+    'Video comments should compliment the visual video/clip'
+  );
+});
+
+suite.test('Responds to status reply gratitude and story replies warmly without "Maxaan kaa caawiyaa?"', async () => {
+  try {
+    if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+  } catch {}
+
+  const memory = new SQLiteStudentMemory(testDb);
+  await memory.initialize();
+  const ai = new AIOrchestrator(config);
+  const engine = new StudentAdvisorEngine(memory, ai);
+
+  const testConfig = {
+    ...config,
+    security: {
+      ...config.security,
+      adminPhoneNumbers: ['252634949642'],
+    },
+  };
+
+  const router = new MessageRouter(engine, testConfig as any);
+  const transport = new ConsoleSimulatorTransport();
+  await transport.start();
+
+  let sentReply = '';
+  transport.sendMessage = async (chatId: string, text: string) => {
+    sentReply = text;
+    return true;
+  };
+
+  const contactJid = '252619111222@s.whatsapp.net';
+
+  // 1. Bot previously commented on Farxaan's status
+  statusReactorService.recordSentStatusComment({
+    senderJid: contactJid,
+    senderName: 'Farxaan Cali',
+    gender: 'male',
+    commentText: "Masha'Allah hambalyo sxb qaali! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
+    category: 'graduation',
+    statusText: 'Qalinjabin jaamacad',
+    timestamp: Date.now(),
+  });
+
+  // 2. Farxaan replies to the bot's comment in DM: "Mahadsanid sxb"
+  const resGratitude = await router.handleIncomingMessage(
+    {
+      id: 'msg_gratitude_1',
+      senderId: contactJid,
+      senderName: 'Farxaan Cali',
+      chatId: contactJid,
+      isGroup: false,
+      content: 'Mahadsanid sxb',
+      rawTimestamp: Date.now(),
+      isMentioned: false,
+    },
+    transport
+  );
+
+  assertTrue(resGratitude.handled, 'Status gratitude must be intercepted and handled');
+  assertTrue(
+    sentReply.includes('Adigaa mudan') || sentReply.includes('Waa waxba') || sentReply.includes('Aamiin'),
+    'Should respond with warm Somali brotherly gratitude'
+  );
+  assertFalse(
+    sentReply.includes('Maxaan kaa caawiyaa') || sentReply.includes('Sideen kuu caawin karaa'),
+    'Must NEVER say "Maxaan kaa caawiyaa?" in response to status gratitude'
+  );
+  assertFalse(
+    sentReply.includes('abaayo'),
+    'Must NEVER say "abaayo" to a male contact'
+  );
+
+  // 3. Female contact (Ayaan) replies with "Aamiin yaa rabbi"
+  const femaleJid = '252615333444@s.whatsapp.net';
+  statusReactorService.recordSentStatusComment({
+    senderJid: femaleJid,
+    senderName: 'Ayaan Maxamed',
+    gender: 'female',
+    commentText: 'Jimco barakaysan abaayo macaan! Rabi ducada ha aqbalo 🤲🌸',
+    category: 'islamic_friday',
+    statusText: 'Jimco wanaagsan',
+    timestamp: Date.now(),
+  });
+
+  const resFemale = await router.handleIncomingMessage(
+    {
+      id: 'msg_gratitude_female',
+      senderId: femaleJid,
+      senderName: 'Ayaan Maxamed',
+      chatId: femaleJid,
+      isGroup: false,
+      content: 'Aamiin yaa rabbi',
+      rawTimestamp: Date.now(),
+      isMentioned: false,
+    },
+    transport
+  );
+  assertTrue(resFemale.handled, 'Female gratitude reply must be handled');
+  assertTrue(
+    sentReply.includes('abaayo') || sentReply.includes('Adigaa mudan') || sentReply.includes('Aamiin'),
+    'Female response should use courteous feminine terms'
+  );
+  assertFalse(
+    sentReply.includes('Maxaan kaa caawiyaa'),
+    'Must NEVER say "Maxaan kaa caawiyaa?"'
+  );
+
+  // 4. Contact replies to a story/status posted by the bot
+  const storyReplyMsg = await router.handleIncomingMessage(
+    {
+      id: 'msg_story_reply_1',
+      senderId: contactJid,
+      senderName: 'Farxaan Cali',
+      chatId: contactJid,
+      isGroup: false,
+      content: 'Masha Allah meel qurux badan',
+      rawTimestamp: Date.now(),
+      isMentioned: false,
+      isStoryReply: true,
+      quotedText: 'Berbera beach sunset vibe',
+    },
+    transport
+  );
+  assertTrue(storyReplyMsg.handled, 'Story reply must be handled');
+  assertFalse(
+    sentReply.includes('Maxaan kaa caawiyaa') || sentReply.includes('Sideen kuu caawin karaa'),
+    'Story replies must NEVER say "Maxaan kaa caawiyaa?"'
+  );
+
+  await transport.stop();
+  await memory.close();
+  try {
+    if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+  } catch {}
+});
+
 suite.run().then(summary => {
   if (summary.failed > 0) {
     process.exit(1);

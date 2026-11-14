@@ -4,6 +4,8 @@ import { proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
 import { broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
+import { config } from '../config/env.js';
+import { UserProfiler } from './user-profiler.service.js';
 
 export type StatusReactorMode = 'reaction' | 'comment' | 'both';
 
@@ -30,6 +32,7 @@ export type StatusCategory =
   | 'travel'
   | 'style_selfie'
   | 'general_quote'
+  | 'video'
   | 'media_only';
 
 export interface StatusAnalysisResult {
@@ -38,6 +41,8 @@ export interface StatusAnalysisResult {
   suggestedComments: string[];
   extractedText: string;
   hasMedia: boolean;
+  mediaKind?: string;
+  gender?: 'male' | 'female' | 'unknown';
   confidence: number;
 }
 
@@ -52,6 +57,17 @@ export interface StatusInteractionLog {
   timestamp: number;
 }
 
+export interface SentStatusCommentContext {
+  senderJid: string;
+  senderName: string;
+  gender: 'male' | 'female' | 'unknown';
+  commentText: string;
+  category: StatusCategory;
+  statusText: string;
+  timestamp: number;
+  messageId?: string;
+}
+
 export class StatusReactorService {
   private configPath: string;
   private config: StatusReactorConfig;
@@ -59,6 +75,11 @@ export class StatusReactorService {
   private interactionLogs: StatusInteractionLog[] = [];
   private aiOrchestrator: AIOrchestrator | null = null;
   private pendingTimeouts: Map<string, NodeJS.Timeout> = new Map();
+
+  // Context tracking for conversational follow-ups and reply continuity
+  private recentCommentsByContact: Map<string, SentStatusCommentContext> = new Map();
+  private commentByMsgId: Map<string, SentStatusCommentContext> = new Map();
+  private recentCommentHistory: string[] = [];
 
   constructor(customConfigPath?: string) {
     this.configPath = customConfigPath || path.resolve(process.cwd(), 'data', 'status_reactor_config.json');
@@ -75,7 +96,7 @@ export class StatusReactorService {
       autoReact: true,
       autoComment: true,
       mode: 'both',
-      cooldownHours: 4,
+      cooldownHours: 0, // Cooldown removed per user request (0 = disabled)
       minDelaySeconds: 10,
       maxDelaySeconds: 30,
       aiEnhanced: true,
@@ -118,9 +139,40 @@ export class StatusReactorService {
   }
 
   /**
-   * Checks whether a contact is currently in cooldown to prevent spamming
+   * Determines if the status author is the bot owner or an admin.
+   * Per user requirement: "status waxaan soo dhigan bot yaanu wax jawaaba ka bixin dadka kale haka bixiyo"
+   */
+  public isAdminOrSelf(senderJid: string, isFromMe?: boolean, socket?: any): boolean {
+    if (isFromMe) return true;
+    if (!senderJid) return false;
+
+    const cleanSender = senderJid.replace(/[^0-9]/g, '');
+
+    // Check against connected bot user JID and LID
+    const socketOwnJid = socket?.user?.id ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
+    const socketOwnLid = (socket?.user as any)?.lid ? (socket.user as any).lid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
+    if (socketOwnJid && (cleanSender.endsWith(socketOwnJid) || socketOwnJid.endsWith(cleanSender))) {
+      return true;
+    }
+    if (socketOwnLid && (cleanSender.endsWith(socketOwnLid) || socketOwnLid.endsWith(cleanSender))) {
+      return true;
+    }
+
+    // Check configured admin phone numbers
+    const adminNumbers = config.security.adminPhoneNumbers || [];
+    if (adminNumbers.some(admin => cleanSender.endsWith(admin) || admin.endsWith(cleanSender))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Checks whether a contact is currently in cooldown to prevent spamming.
+   * If cooldownHours is 0, cooldown is disabled and returns false immediately.
    */
   public isCooldownActive(jid: string): boolean {
+    if (this.config.cooldownHours <= 0) return false;
     const last = this.lastContactInteraction.get(jid);
     if (!last) return false;
     const cooldownMs = this.config.cooldownHours * 3600 * 1000;
@@ -140,9 +192,47 @@ export class StatusReactorService {
   }
 
   /**
-   * Intelligently analyzes WhatsApp Status text & media to determine category, emojis, and comments.
+   * Context memory for status replies and gratitude continuity
    */
-  public analyzeStatus(text: string, hasMedia: boolean = false): StatusAnalysisResult {
+  public recordSentStatusComment(context: SentStatusCommentContext): void {
+    this.recentCommentsByContact.set(context.senderJid, context);
+    if (context.messageId) {
+      this.commentByMsgId.set(context.messageId, context);
+    }
+    this.recentCommentHistory.push(context.commentText);
+    if (this.recentCommentHistory.length > 50) {
+      this.recentCommentHistory.shift();
+    }
+  }
+
+  public getRecentCommentForContact(contactJid: string): SentStatusCommentContext | undefined {
+    const cleanJid = contactJid.split('@')[0].replace(/[^0-9]/g, '');
+    for (const [key, val] of this.recentCommentsByContact.entries()) {
+      const cleanKey = key.split('@')[0].replace(/[^0-9]/g, '');
+      if (cleanKey === cleanJid || cleanKey.endsWith(cleanJid) || cleanJid.endsWith(cleanKey)) {
+        // Valid within 45 minutes
+        if (Date.now() - val.timestamp < 45 * 60 * 1000) {
+          return val;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  public getCommentByMsgId(msgId: string): SentStatusCommentContext | undefined {
+    return this.commentByMsgId.get(msgId);
+  }
+
+  /**
+   * Intelligently analyzes WhatsApp Status text & media to determine category, emojis, and comments.
+   * Differentiates gender (raga vs dumarka) and media type (qoraal, sawir, video).
+   */
+  public analyzeStatus(
+    text: string,
+    hasMedia: boolean = false,
+    mediaKind?: string,
+    gender: 'male' | 'female' | 'unknown' = 'unknown'
+  ): StatusAnalysisResult {
     const clean = (text || '').trim();
     const lower = clean.toLowerCase();
 
@@ -152,15 +242,29 @@ export class StatusReactorService {
         lower
       )
     ) {
+      const maleList = [
+        'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha idinka siiyo sxb, marxuumkana jannadii fardowsa 🤲',
+        'Ilaahay ha u naxariisto sxb qaali, qabrigana ha u nuuro, samir iyo iimaanna Allaha idinka siiyo 🤲',
+        'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha kaa siiyo walaal 🤲',
+      ];
+      const femaleList = [
+        'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha idinka siiyo abaayo, marxuumkana jannadii fardowsa 🤲',
+        'Ilaahay ha u naxariisto abaayo macaan, samir iyo iimaanna Allaha kugu arzuqo 🤲',
+        'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Allaha kaa siiyo abaayo 🤲',
+      ];
+      const neutralList = [
+        'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Ilaahay ha idinka siiyo, marxuumkana jannadii fardowsa 🤲',
+        'Ilaahay ha u naxariisto, qabrigana ha u nuuro, samir iyo iimaanna ha idinka siiyo walaal 🤲',
+      ];
+
       return {
         category: 'condolence',
         suggestedEmojis: ['🤲'],
-        suggestedComments: [
-          'Innaa Lillaahi wa innaa Ilayhi Raajicuun. Samir iyo iimaan Ilaahay ha idinka siiyo, marxuumkana jannadii fardowsa 🤲',
-          'Ilaahay ha u naxariisto, qabrigana ha u nuuro, samir iyo iimaanna ha idinka siiyo walaal 🤲',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.99,
       };
     }
@@ -169,35 +273,67 @@ export class StatusReactorService {
     if (
       /\b(xanuunsan|isbitaal|hospital|caafimaad darro|shifa|ilaahay ha caafiyo|allaha caafiyo|bogsasho)\b/i.test(lower)
     ) {
+      const maleList = [
+        'Ilaahay shifa taam ah iyo caafimaad degdeg ah ha siiyo sxb, aamiin yaa rabbi 🤲',
+        'Rabi xanuunka ha ka qaado bro, caafimaad taam ahna ha ugu beddelo 🤲✨',
+        'Allaha caafiyo sxb qaali, shifa degdeg ah ayaan u rajaynayaa 🤲',
+      ];
+      const femaleList = [
+        'Ilaahay shifa degdeg ah iyo caafimaad taam ah ha siiyo abaayo macaan 🤲🌸',
+        'Rabi xanuunka ha ka fududeeyo abaayo, caafimaad khayr lehna ha ugu beddelo 🤲✨',
+        'Allaha caafiyo abaayo qaali, aamiin yaa rabbi 🤲',
+      ];
+      const neutralList = [
+        'Ilaahay shifa taam ah iyo caafimaad degdeg ah ha siiyo, aamiin yaa rabbi 🤲',
+        'Rabi xanuunka ha ka qaado, caafimaad degdeg ahna ha ugu beddelo 🤲✨',
+      ];
+
       return {
         category: 'illness',
         suggestedEmojis: ['🤲'],
-        suggestedComments: [
-          'Ilaahay shifa taam ah iyo caafimaad degdeg ah ha siiyo, aamiin yaa rabbi 🤲',
-          'Rabi xanuunka ha ka qaado, caafimaad degdeg ahna ha ugu beddelo 🤲✨',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.95,
       };
     }
 
     // 3. Graduation / Qalinjabin / Guul Waxbarasho
     if (
-      /\b(qalin|qalinjabin|graduation|bachelor|master|phd|shahaado|diploma|congrats|congratulations|hambalyo|jaamacad|jaamacadda|degree|alxamdulilah dhameeyay|graduated)\b/i.test(
+      /\b(qalin[\w-]*|graduation|bachelor|master|phd|shahaado|diploma|congrats|congratulations|hambalyo|jaamacad[\w-]*|degree|alxamdulilah dhameeyay|graduated)\b/i.test(
         lower
       )
     ) {
+      const maleList = [
+        "Masha'Allah hambalyo sxb qaali! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓👏",
+        "Hambalyo guusha weyn geesi! Waxaad tahay nin ku dayasho mudan bro! 🎓🔥",
+        "Masha'Allah hambalyo qalinjabinta sxb! Cilmigaaga Allaha kuu barakeeyo 🎓✨",
+        "Aad baad u dadaashay ninyahow, hambalyo guusha weyn! 👏🎉",
+        "Guul weyn weeye bro, hambalyo mar labaad iyo mar saddexaadba! 🎓🌟",
+      ];
+      const femaleList = [
+        "Masha'Allah hambalyo abaayo macaan! Guul iyo mustaqbal ifaya ayaan kuu rajaynayaa 🎓🌸",
+        "Hambalyo qalinjabinta abaayo! Allaha kuu barakeeyo shahaadada qaaliga ah 🎓✨",
+        "Masha'Allah aad baad u dadaashay walaashay, guul mar kasta! 👏💐",
+        "Hambalyo weyn abaayo qaali, waxaad tahay qof lagu faano! 🎓🎉",
+        "Masha'Allah bash-bash iyo guul joogto ah abaayo! 🎓❤️",
+      ];
+      const neutralList = [
+        "Masha'Allah, hambalyo walaal! Guul iyo mustaqbal wanaagsan ayaan kuu rajaynayaa 🎓🎉",
+        "Masha'Allah hambalyo guusha weyn, waxaad tahay qof ku dayasho mudan! 👏✨",
+        "Hambalyo qalinjabinta walaal, Rabi cilmigaaga ha kuu barakeeyo! 🎓✨",
+      ];
+
       return {
         category: 'graduation',
         suggestedEmojis: ['🎓', '👏', '🎉', '🌟'],
-        suggestedComments: [
-          "Masha'Allah, hambalyo walaal! Guul iyo mustaqbal wanaagsan ayaan kuu rajaynayaa 🎓🎉",
-          "Masha'Allah hambalyo guusha weyn, waxaad tahay qof ku dayasho mudan! 👏✨",
-          'Hambalyo qalinjabinta walaal, Rabi cilmigaaga ha kuu barakeeyo! 🎓✨',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.95,
       };
     }
@@ -208,30 +344,60 @@ export class StatusReactorService {
         lower
       )
     ) {
+      const maleList = [
+        "Barakallahu lakumaa sxb qaali! Guri nagi, nolol barako leh iyo ubad khayr qaba! 💍🤲",
+        "Masha'Allah hambalyo arooska bro! Bash-bash iyo barako Allaha idinku mannaysto! ❤️🔥",
+        "Hambalyo meherka ninyahow! Reerkii lagu nastee lagu nagaado Allaha idinka dhigo! 💍✨",
+        "Masha'Allah reer barakaysan iyo nolol macaan sxb! 💐🤲",
+      ];
+      const femaleList = [
+        "Barakallahu lakumaa abaayo macaan! Guri nagi iyo nolol farxad leh! 💍🌸",
+        "Masha'Allah hambalyo arooska qaali! Ubad khayr qaba iyo barako Allaha idin siiyo! ❤️💐",
+        "Hambalyo meherka abaayo! Farxad iyo barako joogto ah Allaha kugu arzuqo! 💍✨",
+        "Masha'Allah aroosad aad u qurux badan, guri nagi iyo bash-bash abaayo! 🌸🤲",
+      ];
+      const neutralList = [
+        "Barakallahu lakumaa wa baaraka calaykumaa, Masha'Allah guri nagi iyo bash-bash! 💍🤲",
+        "Masha'Allah hambalyo meherka/arooska qaali, nolol barako leh iyo ubad khayr qaba! ❤️✨",
+      ];
+
       return {
         category: 'wedding',
         suggestedEmojis: ['💍', '❤️', '💐', '🤲'],
-        suggestedComments: [
-          'Barakallahu lakumaa wa baaraka calaykumaa, Masha\'Allah guri nagi iyo bash-bash! 💍🤲',
-          'Masha\'Allah hambalyo meherka/arooska qaali, nolol barako leh iyo ubad khayr qaba! ❤️✨',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.95,
       };
     }
 
     // 5. Islamic Friday / Jimco
     if (/\b(jimce|jimco|jummah|jumah|juma)\b/i.test(lower)) {
+      const maleList = [
+        'Jimco barakaysan sxb qaali! Ducada iyo camalka wanaagsan Rabi ha inaga aqbalo 🤲✨',
+        'Jimco mubaarak bro! Naxariis iyo dambi-dhaaf Allaha inagu mannaysto 🤲🤍',
+        'Jimco wanaagsan ninyahow! Ducada ha iska illaawin maanta 🤲🕌',
+      ];
+      const femaleList = [
+        'Jimco barakaysan abaayo macaan! Rabi ducada iyo cibaadada ha inaga aqbalo 🤲🌸',
+        'Jimco mubaarak abaayo qaali! Dambi-dhaaf iyo naxariis Allaha inagu arzuqo 🤲🤍',
+        'Jimco wanaagsan abaayo! Barako iyo khayr Allaha kugu mannaysto 🤲✨',
+      ];
+      const neutralList = [
+        'Jimco barakaysan walaal, Rabi ducada iyo camalka wanaagsan ha inaga aqbalo 🤲✨',
+        'Jimco mubaarak, naxariis iyo dambi-dhaaf Rabi ha inagu mannaysto 🤲🤍',
+      ];
+
       return {
         category: 'islamic_friday',
         suggestedEmojis: ['🤲', '🕌', '🤍', '✨'],
-        suggestedComments: [
-          'Jimco barakaysan walaal, Rabi ducada iyo camalka wanaagsan ha inaga aqbalo 🤲✨',
-          'Jimco mubaarak, naxariis iyo dambi-dhaaf Rabi ha inagu mannaysto 🤲🤍',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.95,
       };
     }
@@ -242,15 +408,29 @@ export class StatusReactorService {
         lower
       )
     ) {
+      const maleList = [
+        'Aamiin yaa Rabbi sxb! Rabi ducada ha inaga aqbalo 🤲🤍',
+        'Aamiin yaa Hayyu yaa Qayuum! Khayr badan Allaha ku siiyo bro 🤲✨',
+        'Aamiin sxb qaali, ducadaada mid la ajiibo Allaha ka dhigo 🤲',
+      ];
+      const femaleList = [
+        'Aamiin yaa Rabbi abaayo macaan! Rabi ducada ha aqbalo 🤲🌸',
+        'Aamiin yaa kareem abaayo qaali! Khayr iyo caafimaad Allaha ku siiyo 🤲🤍',
+        'Aamiin abaayo, ducadaada mid la aqbalo Allaha ka dhigo 🤲✨',
+      ];
+      const neutralList = [
+        'Aamiin yaa Rabbi, aamiin yaa kareem 🤲🤍',
+        'Aamiin yaa Hayyu yaa Qayuum, Rabi ha inaga aqbalo 🤲✨',
+      ];
+
       return {
         category: 'islamic_duco',
         suggestedEmojis: ['🤲', '🤍', '✨'],
-        suggestedComments: [
-          'Aamiin yaa Rabbi, aamiin yaa kareem 🤲🤍',
-          'Aamiin yaa Hayyu yaa Qayuum, Rabi ha inaga aqbalo 🤲✨',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.9,
       };
     }
@@ -260,16 +440,33 @@ export class StatusReactorService {
       /\b(hahaha|kkkk|qosol|funny|lol|walaahi|kaftan|meeday|yaab|ciil|dhacdo|bashaal)\b/i.test(lower) ||
       /(🤣|😂|😭|😹)/.test(clean)
     ) {
+      const maleList = [
+        'Hahaha waar ninyahow yaabka kkkk 😂🤣',
+        'Hahaha xaqiiq weeye walaahi sxb, meeday kkkk 😭😂',
+        'Hahaha qosol badanaa bro, runti waad igu heshay 🤣🔥',
+        'Hahaha waar waxan maxaa keenay sxb 😂💀',
+        'Kkkk walaahi waa qosol dhab ah ninyahow! 🤣👏',
+      ];
+      const femaleList = [
+        'Hahaha yaabka walaahi abaayo kkkk 😂🤣',
+        'Hahaha aad baan ugu qoslay abaayo runti 😭😂',
+        'Hahaha xaqiiq weeye abaayo macaan kkkk 🤣✨',
+        'Kkkk qosol badanaa abaayo walaahi 😂❤️',
+      ];
+      const neutralList = [
+        'Hahaha xaqiiq weeye walaahi 😂🤣',
+        'Hahaha waar yaabka, meeday kkkk 😭😂',
+        'Hahaha qosol badanaa runti 🤣',
+      ];
+
       return {
         category: 'funny',
         suggestedEmojis: ['😂', '🤣', '🔥', '💀'],
-        suggestedComments: [
-          'Hahaha xaqiiq weeye walaahi 😂🤣',
-          'Hahaha waar yaabka, meeday kkkk 😭😂',
-          'Hahaha qosol badanaa runti 🤣',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.9,
       };
     }
@@ -280,15 +477,31 @@ export class StatusReactorService {
         lower
       )
     ) {
+      const maleList = [
+        "Masha'Allah sxb ganacsi barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🤲",
+        "Alaab aad u heer saraysa weeye bro! Macaamiil badan iyo barako Allaha kugu arzuqo! ✨🔥",
+        "Masha'Allah ganacsi horumar leh ninyahow, suuq wanaagsan! 👏💼",
+        "Dadaal fiican weeye sxb, Rabi shaqadaada iyo hantidaada ha kuu barakeeyo! 🤲💼",
+      ];
+      const femaleList = [
+        "Masha'Allah abaayo meherad barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🌸",
+        "Alaab aad u qurux badan weeye abaayo macaan! Macaamiil badan iyo barako! ✨💐",
+        "Masha'Allah horumar joogto ah abaayo qaali, suuq wanaagsan! 👏💼",
+        "Rabi ganacsigaaga iyo dadaalkaaga ha kuu barakeeyo abaayo! 🤲💼",
+      ];
+      const neutralList = [
+        "Masha'Allah, Rabi meheradda iyo ganacsigaaga ha kuu barakeeyo walaal! 🤲💼",
+        "Masha'Allah alaab aad u qurux badan, suuq khayr leh iyo macaamiil badan! ✨🔥",
+      ];
+
       return {
         category: 'business',
         suggestedEmojis: ['💼', '🔥', '🤲', '✨'],
-        suggestedComments: [
-          'Masha\'Allah, Rabi meheradda iyo ganacsigaaga ha kuu barakeeyo walaal! 🤲💼',
-          'Masha\'Allah alaab aad u qurux badan, suuq khayr leh iyo macaamiil badan! ✨🔥',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.88,
       };
     }
@@ -299,94 +512,205 @@ export class StatusReactorService {
         lower
       )
     ) {
+      const maleList = [
+        "Masha'Allah safar khayr iyo nabad qab leh sxb! Soo bashaal ✈️🌍",
+        "Safar nabad qab leh bro qaali! Meel aad u bilicsan weeye, soo raaxayso! 🌴✨",
+        "Masha'Allah ninyahow safar badhaadhe leh Allaha kaaga dhigo! ✈️🔥",
+      ];
+      const femaleList = [
+        "Masha'Allah safar nabad qab iyo farxad leh abaayo macaan! ✈️🌸",
+        "Safar khayr leh abaayo qaali! Soo bashaal oo nolosha ku raaxayso! 🌴✨",
+        "Masha'Allah meel aad u qurux badan, soo badhaadh abaayo! ✈️💖",
+      ];
+      const neutralList = [
+        "Masha'Allah safar khayr iyo nabad qab leh walaal! ✈️🌍",
+        "Masha'Allah meel aad u bilic san, soo bashaal! 🌴✨",
+      ];
+
       return {
         category: 'travel',
         suggestedEmojis: ['✈️', '🌍', '🌴', '✨'],
-        suggestedComments: [
-          'Masha\'Allah safar khayr iyo nabad qab leh walaal! ✈️🌍',
-          'Masha\'Allah meel aad u bilic san, soo bashaal! 🌴✨',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.88,
       };
     }
 
     // 10. Style / Selfie / Outfit
     if (/\b(style|outfit|fashion|dhar|shidan|vibe|mood|aniga|selfie|pose)\b/i.test(lower)) {
+      const maleList = [
+        "Masha'Allah aad baad u shidan tahay sxb qaali! Style aad u heer sarreeya 🔥👏",
+        "Nin rag ah oo shidan weeye ninyahow! Masha'Allah aad u xarrago badan! ✨🔥",
+        "Vibe aad u fiican bro! Style qurux badan mar kasta! 👏🕶️",
+      ];
+      const femaleList = [
+        "Masha'Allah aad baad u qurux badan tahay abaayo macaan! Style aad u shidan 🌸✨",
+        "Masha'Allah xarrago iyo qurux dabiici ah abaayo qaali! 💖👏",
+        "Masha'Allah style aad u bilic san abaayo, aad baad u shidan tahay! ✨💐",
+      ];
+      const neutralList = [
+        "Masha'Allah aad baad u shidan tahay walaal! 🔥✨",
+        "Masha'Allah style aad u qurux badan! 👏",
+      ];
+
       return {
         category: 'style_selfie',
         suggestedEmojis: ['🔥', '👏', '❤️', '✨'],
-        suggestedComments: [
-          'Masha\'Allah aad baad u shidan tahay walaal! 🔥✨',
-          'Masha\'Allah style aad u qurux badan! 👏',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.85,
       };
     }
 
-    // 11. General Quote / Deep thought
+    // 11. Video Status (Visual clips or recordings)
+    if (mediaKind === 'video') {
+      const maleList = [
+        "Masha'Allah muuqaal aad u qurux badan sxb! 🔥👏",
+        "Muuqaal aad u shidan weeye bro, heer sare! ✨🎥",
+        "Masha'Allah ninyahow vibe-ka muuqaalka aad buu u fiican yahay! 🔥👌",
+      ];
+      const femaleList = [
+        "Masha'Allah muuqaal aad u qurux badan abaayo macaan! 🌸✨",
+        "Muuqaal aad u bilic san abaayo qaali! 💖🎥",
+        "Masha'Allah vibe aad u macaan abaayo! ✨👏",
+      ];
+      const neutralList = [
+        "Masha'Allah muuqaal aad u qurux badan walaal! ✨🔥",
+        "Muuqaal aad u heer sarreeya! 🎥👏",
+      ];
+
+      return {
+        category: 'video',
+        suggestedEmojis: ['🔥', '🎥', '👏', '✨'],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 0.85,
+      };
+    }
+
+    // 12. General Quote / Deep thought (clean text > 20 chars)
     if (clean.length > 20) {
+      const maleList = [
+        "Masha'Allah xikmad aad u miisaan culus sxb qaali! Runti waa runtaa 👏✨",
+        "Hadal aad u qiimo badan weeye bro, xaqiiq! 💯🔥",
+        "Masha'Allah ninyahow aragti aad u qoto dheer! 👏💡",
+      ];
+      const femaleList = [
+        "Masha'Allah xikmad aad u qiimo badan abaayo macaan! Runti waa hadal miisaan leh 🌸✨",
+        "Aad baad ugu mahadsantahay hadalka qaaliga ah abaayo! 💖💡",
+        "Masha'Allah hadal aad u qurux badan abaayo! 👏✨",
+      ];
+      const neutralList = [
+        "Masha'Allah runti, xikmad aad u qiimo badan! ✨",
+        "Masha'Allah, hadal aad u miisaan culus walaal 👏",
+      ];
+
       return {
         category: 'general_quote',
         suggestedEmojis: ['❤️', '👏', '✨', '👍'],
-        suggestedComments: [
-          'Masha\'Allah runti, xikmad aad u qiimo badan! ✨',
-          'Masha\'Allah, hadal aad u miisaan culus walaal 👏',
-        ],
+        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
         extractedText: clean,
         hasMedia,
+        mediaKind,
+        gender,
         confidence: 0.8,
       };
     }
 
-    // 12. Media only (Photo or Video without specific caption)
+    // 13. Media only (Photo without specific caption)
+    const maleMedia = [
+      "Masha'Allah sawir aad u qurux badan sxb qaali! 🔥✨",
+      "Masha'Allah nin shidan bro, sawir aad u heer sarreeya! 👏📸",
+      "Masha'Allah ninyahow sawirkaagu waa mid aad u bilic san! 🔥👌",
+    ];
+    const femaleMedia = [
+      "Masha'Allah sawir aad u qurux badan abaayo macaan! 🌸✨",
+      "Masha'Allah sawir aad u bilic san abaayo qaali! 💖📸",
+      "Masha'Allah aad baad u shidan tahay abaayo! ✨👏",
+    ];
+    const neutralMedia = [
+      "Masha'Allah aad u qurux badan! ✨",
+      "Masha'Allah wax aad u heer sarreeya walaal 🔥",
+    ];
+
     return {
       category: 'media_only',
       suggestedEmojis: ['🔥', '❤️', '👏', '✨'],
-      suggestedComments: [
-        'Masha\'Allah aad u qurux badan! ✨',
-        'Masha\'Allah wax aad u heer sarreeya walaal 🔥',
-      ],
+      suggestedComments: gender === 'male' ? maleMedia : gender === 'female' ? femaleMedia : neutralMedia,
       extractedText: clean,
       hasMedia,
+      mediaKind,
+      gender,
       confidence: 0.7,
     };
   }
 
   /**
    * Generates a tailored comment, leveraging Gemini AI if available and quota allows.
+   * Adheres strictly to the authentic young Somali male friend persona.
    */
-  public async generateComment(analysis: StatusAnalysisResult, senderName: string = ''): Promise<string> {
+  public async generateComment(
+    analysis: StatusAnalysisResult,
+    senderName: string = '',
+    gender: 'male' | 'female' | 'unknown' = 'unknown',
+    mediaKind?: string
+  ): Promise<string> {
+    const effectiveGender = gender || analysis.gender || 'unknown';
+
     // If AI is available and enabled, try generating a nuanced short Somali comment
-    if (this.config.aiEnhanced && this.aiOrchestrator && analysis.extractedText.length > 10) {
+    if (this.config.aiEnhanced && this.aiOrchestrator && (analysis.extractedText.length > 5 || analysis.hasMedia)) {
       try {
-        const prompt = `Waxaad tahay saaxiib asluub badan oo WhatsApp ku arkaya status uu qof saaxiibka ahi soo dhigay.
+        const genderDirective =
+          effectiveGender === 'male'
+            ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib/walaal qaali ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo" ama erayo dheddig ah!'
+            : effectiveGender === 'female'
+            ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin dheddig leh: "abaayo", "walaashay", "huuno", "qaali". Weligaa ha ku odhan "ninyahow" ama "wiilka"!'
+            : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal", "qaali".';
+
+        const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku arkaya status uu saaxiibkii soo dhigay).
 Magaca qofka: "${senderName || 'Walaal'}"
-Qoraalka status-ka: "${analysis.extractedText}"
+${genderDirective}
+Nooca status-ka: ${mediaKind === 'video' ? 'Muuqaal/Video' : mediaKind === 'image' || analysis.hasMedia ? 'Sawir/Image' : 'Qoraal/Text'}
+Qoraalka status-ka: "${analysis.extractedText || (mediaKind === 'video' ? 'Muuqaal qurux badan' : 'Sawir qurux badan')}"
 Nooca/Dulucda: ${analysis.category}
 
-Qor hal weedh (fariin gaaban oo 5 ilaa 10 eray ah) oo aad ugu hambalyaynayso, ugu ducaynayso, ama kula qoslayso si dabiici ah oo qof caadi ah oo kale ah.
-Shuruucda:
-1. Ha u hadlin sidii robot ama AI.
-2. Ha dhihin wax dawo ah ama talo caafimaad ah.
-3. Luuqadda waa inay noqotaa Somali saafi ah, diirran, oo xushmad leh.
-4. Ha bilaabin "Asc" ama "Wcs", toos u qor faallada.`;
+Qor hal weedh oo faallo gaaban ah (3 ilaa 8 eray) oo aad ugu hambalyaynayso, ugu ducaynayso, u bogaadinayso, ama kula qoslayso si dabiici ah oo aad u heer saraysa.
+SHURUUCO ADAG:
+1. Ha u hadlin sidii robot, AI, ama shirkad ganacsi. Noqo qof dhab ah oo la nool asxaabtiisa.
+2. Weligaa ha bilaabin "Asc", "Wcs", "Kusoo dhawoow", ama "Maxaan kaa caawiyaa".
+3. Ha ku celin isla ereyadii uu qoray; u jawaab adoo dareenka ama dhacdada la qaybsanaya.
+4. Ha bixin wax talo caafimaad ama dawo ah.
+5. Luuqadda waa inay noqotaa Somali saafi ah, diirran, dhalinyaronimo leh oo asluubaysan.`;
 
         const res = await this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 50 });
         if (res && res.text && !res.text.includes('mashquulsan') && res.text.trim().length > 3) {
-          return res.text.trim();
+          const cleanComment = res.text.trim().replace(/^["']|["']$/g, '');
+          // Register in history to avoid repetition
+          this.recentCommentHistory.push(cleanComment);
+          return cleanComment;
         }
       } catch (err: any) {
         console.warn(`[StatusReactor] AI comment generation fallback to rule: ${err?.message}`);
       }
     }
 
-    // Reliable fallback from rule-based suggested comments
+    // Reliable non-repetitive fallback from rule-based suggested comments
     const list = analysis.suggestedComments;
-    return list[Math.floor(Math.random() * list.length)];
+    // Prefer comments not used in the last 15 interactions
+    const unusedList = list.filter(c => !this.recentCommentHistory.includes(c));
+    const finalList = unusedList.length > 0 ? unusedList : list;
+    const chosen = finalList[Math.floor(Math.random() * finalList.length)];
+    this.recentCommentHistory.push(chosen);
+    return chosen;
   }
 
   /**
@@ -401,8 +725,15 @@ Shuruucda:
       return false;
     }
 
-    // Enforce cooldown so we never spam someone uploading multiple stories in a row
-    if (this.isCooldownActive(senderJid)) {
+    // 1. Enforce owner / admin guard: never react or comment on admin's or self status!
+    // Per user requirement: "status waxaan soo dhigan bot yaanu wax jawaaba ka bixin dadka kale haka bixiyo"
+    if (this.isAdminOrSelf(senderJid, Boolean(msg.key?.fromMe), socket)) {
+      console.log(`🛡️ [StatusReactor] Ignored status from owner/admin (${senderJid}). Bot only interacts with other contacts.`);
+      return false;
+    }
+
+    // 2. Cooldown check (only active if cooldownHours is configured > 0):
+    if (this.config.cooldownHours > 0 && this.isCooldownActive(senderJid)) {
       console.log(`⏳ [StatusReactor] Skipped ${senderJid}: Cooldown active.`);
       return false;
     }
@@ -410,7 +741,8 @@ Shuruucda:
     // Unwrap message and extract content
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
-    const hasMedia = Boolean(unwrapped.mediaKind);
+    const mediaKind = unwrapped.mediaKind;
+    const hasMedia = Boolean(mediaKind);
     const text =
       innerMsg.conversation ||
       innerMsg.extendedTextMessage?.text ||
@@ -420,7 +752,8 @@ Shuruucda:
       '';
 
     const senderName = msg.pushName || '';
-    const analysis = this.analyzeStatus(text, hasMedia);
+    const gender = UserProfiler.detectGender(senderName);
+    const analysis = this.analyzeStatus(text, hasMedia, mediaKind, gender);
 
     // Calculate natural human delay (e.g. 10 to 30 seconds)
     const minDelay = Math.max(0, this.config.minDelaySeconds);
@@ -428,7 +761,7 @@ Shuruucda:
     const delayMs = Math.floor(Math.random() * ((maxDelay - minDelay) * 1000 + 1)) + minDelay * 1000;
 
     console.log(
-      `🎯 [StatusReactor] Scheduled interaction with ${senderName || senderJid} (${analysis.category}) in ${Math.round(
+      `🎯 [StatusReactor] Scheduled interaction with ${senderName || senderJid} (${gender}, ${analysis.category}) in ${Math.round(
         delayMs / 1000
       )}s...`
     );
@@ -436,7 +769,7 @@ Shuruucda:
     // Schedule the interaction
     const timer = setTimeout(async () => {
       try {
-        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text);
+        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind);
       } catch (err: any) {
         console.error(`[StatusReactor] Error executing interaction: ${err?.message}`);
       } finally {
@@ -460,7 +793,9 @@ Shuruucda:
     senderJid: string,
     senderName: string,
     analysis: StatusAnalysisResult,
-    rawText: string
+    rawText: string,
+    gender: 'male' | 'female' | 'unknown' = 'unknown',
+    mediaKind?: string
   ): Promise<void> {
     if (!socket) return;
 
@@ -509,7 +844,7 @@ Shuruucda:
           timestamp: Date.now(),
         });
 
-        console.log(`❤️ [StatusReactor] Reacted "${emoji}" to status of ${senderName || senderJid}`);
+        console.log(`❤️ [StatusReactor] Reacted "${emoji}" to status of ${senderName || senderJid} (${gender})`);
       } catch (err: any) {
         console.warn(`[StatusReactor] Failed to react to status: ${err?.message}`);
       }
@@ -518,7 +853,7 @@ Shuruucda:
     // 2. Send Smart Comment / Reply
     if (shouldComment) {
       try {
-        const comment = await this.generateComment(analysis, senderName);
+        const comment = await this.generateComment(analysis, senderName, gender, mediaKind);
 
         // Natural short typing indicator before delivering comment
         await socket.sendPresenceUpdate('composing', senderJid).catch(() => {});
@@ -526,13 +861,13 @@ Shuruucda:
         await socket.sendPresenceUpdate('paused', senderJid).catch(() => {});
 
         // Send direct reply quoting the status message
-        await socket.sendMessage(
+        const sentMsg = await socket.sendMessage(
           senderJid,
           { text: comment },
           { quoted: msg }
         );
 
-        this.recordInteraction({
+        const commentLog: StatusInteractionLog = {
           id: `comment_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           senderJid,
           senderName,
@@ -541,9 +876,22 @@ Shuruucda:
           category: analysis.category,
           statusText: rawText,
           timestamp: Date.now(),
+        };
+        this.recordInteraction(commentLog);
+
+        // Persist comment context for reply continuity and gratitude recognition
+        this.recordSentStatusComment({
+          senderJid,
+          senderName,
+          gender,
+          commentText: comment,
+          category: analysis.category,
+          statusText: rawText,
+          timestamp: Date.now(),
+          messageId: sentMsg?.key?.id,
         });
 
-        console.log(`💬 [StatusReactor] Commented on status of ${senderName || senderJid}: "${comment}"`);
+        console.log(`💬 [StatusReactor] Commented on status of ${senderName || senderJid} (${gender}): "${comment}"`);
       } catch (err: any) {
         console.warn(`[StatusReactor] Failed to send status comment: ${err?.message}`);
       }
@@ -552,4 +900,3 @@ Shuruucda:
 }
 
 export const statusReactorService = new StatusReactorService();
-

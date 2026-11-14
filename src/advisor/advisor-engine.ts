@@ -51,6 +51,10 @@ export class StudentAdvisorEngine {
     this.detector = new LanguageDetector();
   }
 
+  public getAIOrchestrator(): AIOrchestrator {
+    return this.ai;
+  }
+
   public async processMessage(input: ProcessMessageInput): Promise<ProcessMessageOutput> {
     const startTime = Date.now();
     const { rawSenderId, chatId, isGroup, content, timestamp = Date.now(), media } = input;

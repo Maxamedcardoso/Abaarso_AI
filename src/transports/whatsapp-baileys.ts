@@ -803,6 +803,19 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return;
     }
 
+    const isStoryReply = Boolean(
+      contextInfoRaw?.remoteJid === 'status@broadcast' ||
+      quotedSender === 'status@broadcast'
+    );
+    const quotedInner = quotedUnwrapped?.message;
+    const quotedText =
+      quotedInner?.conversation ||
+      quotedInner?.extendedTextMessage?.text ||
+      quotedInner?.imageMessage?.caption ||
+      quotedInner?.videoMessage?.caption ||
+      quotedInner?.documentMessage?.caption ||
+      '';
+
     const incoming: IncomingMessage = {
       id: msg.key.id || `baileys_${Date.now()}`,
       senderId,
@@ -816,6 +829,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       replyToMessageId: msg.key.id || undefined,
       quotedMessageId: quotedStanzaId || undefined,
       quotedParticipant: quotedSender || undefined,
+      quotedText: quotedText || undefined,
+      isStoryReply: isStoryReply || undefined,
       mentionedJids: mentionedJids.length > 0 ? mentionedJids : undefined,
       media: mediaAttachment,
     };

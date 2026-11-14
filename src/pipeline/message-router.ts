@@ -9,6 +9,7 @@ import { whatsappManagerService } from '../services/whatsapp-manager.service.js'
 import { statusReactorService } from '../services/status-reactor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { IStudentMemory } from '../memory/memory.interface.js';
+import { UserProfiler } from '../services/user-profiler.service.js';
 
 export class MessageRouter {
   private engine: StudentAdvisorEngine;
@@ -66,6 +67,171 @@ export class MessageRouter {
       return message.quotedParticipant;
     }
     return '';
+  }
+
+  /**
+   * Handles continuity when a contact replies to a status comment or WhatsApp story.
+   * Ensures the bot responds like a warm Somali male friend, and NEVER says "Maxaan kaa caawiyaa?".
+   */
+  private async handleStatusInteractionContinuity(
+    message: IncomingMessage,
+    transport: IMessagingTransport
+  ): Promise<boolean> {
+    if (message.isGroup || message.isFromMe) return false;
+
+    const lower = message.content.toLowerCase().trim();
+    const contactJid = message.chatId || message.senderId;
+    const recentComment = statusReactorService.getRecentCommentForContact(contactJid);
+    const quotedComment = message.quotedMessageId
+      ? statusReactorService.getCommentByMsgId(message.quotedMessageId)
+      : undefined;
+
+    const effectiveStatusContext = quotedComment || recentComment;
+    const isStoryReply = Boolean(message.isStoryReply || message.quotedParticipant === 'status@broadcast');
+
+    // If there is no recent status interaction and this is not a story reply, do not intercept
+    if (!effectiveStatusContext && !isStoryReply) {
+      return false;
+    }
+
+    // Never intercept explicit bot commands (e.g., "!maamul", "!status", "!view", "@cardoso", "!help")
+    if (
+      /^[!./#]/.test(lower) ||
+      lower.startsWith('@cardoso') ||
+      lower.startsWith('@abaarso') ||
+      lower.startsWith('!cardoso') ||
+      lower.startsWith('!abaarso')
+    ) {
+      return false;
+    }
+
+    // Never intercept formal university queries (e.g. asking about admission fees, faculties, courses)
+    if (
+      /\b(diiwaangelin|admission|kulliyad|faculties|kharashka|tuition|shuruudaha|requirements|course kee|shahaado)\b/i.test(
+        lower
+      )
+    ) {
+      return false;
+    }
+
+    const gender = UserProfiler.detectGender(message.senderName || effectiveStatusContext?.senderName);
+
+    // ── CASE 1: Gratitude / Thanks / Duco acknowledgement ("ku mahadnaqo") ──
+    const isGratitude =
+      /^(?:mahadsanid|waad\s+ku\s+mahadsantahay|waad\s+mahadsantahay|thanks|thx|thank\s+you|aamiin|amiin|aamiin\s+yaa\s+rabbi|shukran|shukran\s+jaziilan|jazaakallahu\s+khayr|jazakallah|adigaa\s+mudan|mar\s+kasta|haye\s+sxb|ok\s+sxb|khayr\s+allaha\s+ku\s+siiyo|ilaahay\s+haku\s+dhowro|walaahi\s+waad\s+mahadsantahay)[.!،\s]*$/i.test(
+        lower
+      ) || /^(?:aamiin|amiin|mahadsanid|thanks)\b/i.test(lower);
+
+    if (isGratitude) {
+      const maleGratitudeReplies = [
+        'Adigaa mudan sxb! Mar kasta guul iyo bash-bash ayaan kuu rajaynayaa 🙌✨',
+        'Waa waxba sxb qaali! Farxad ayaan kula qaybsanaynaa mar kasta! 💪',
+        'Aamiin yaa Rabbi sxb! Adna khayr iyo caafimaad Allaha ku siiyo! 🤲✨',
+        'Adigaa mudan bro! Iska waran see tahay xagaaga? 😊',
+      ];
+      const femaleGratitudeReplies = [
+        'Adigaa mudan abaayo! Mar kasta bash-bash iyo khayr baan kuu rajaynayaa 🌸✨',
+        'Aamiin yaa Rabbi abaayo macaan! Adigana Allaha ku dhowro! 🤲🤍',
+        'Waa waxba abaayo qaali, mar kasta nolosha ku farax! ✨',
+        'Adigaa mudan abaayo! See tahay xagaaga iyo caafimaadka? 🌸',
+      ];
+      const neutralGratitudeReplies = [
+        'Adigaa mudan walaal! Mar kasta guul iyo barako ayaan kuu rajaynayaa ✨',
+        'Waa waxba walaal, nolosha iyo mustaqbalka ku raaxayso! 🤲✨',
+      ];
+
+      const pool =
+        gender === 'male'
+          ? maleGratitudeReplies
+          : gender === 'female'
+          ? femaleGratitudeReplies
+          : neutralGratitudeReplies;
+      const reply = pool[Math.floor(Math.random() * pool.length)];
+
+      await transport.sendMessage(message.chatId, reply, { replyToMessageId: message.id });
+      console.log(`🤝 [Status Continuity] Responded with friendly gratitude to ${message.senderName || contactJid} (${gender})`);
+      return true;
+    }
+
+    // ── CASE 2: Story Reply to Bot's Own Status ──
+    if (isStoryReply && !effectiveStatusContext) {
+      const ai = this.engine.getAIOrchestrator();
+      if (ai) {
+        try {
+          const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah oo status soo dhigtay WhatsApp.
+Saaxiibkaaga (${message.senderName || 'Walaal'}, Jinsiga: ${gender === 'male' ? 'Wiil/Nin' : gender === 'female' ? 'Gabadh' : 'Lama hubo'}) ayaa reply kasoo bixiyay status-kaaga.
+Qoraalka status-kaaga: "${message.quotedText || 'Status'}"
+Fariinta uu qofku kusoo qoray: "${message.content}"
+
+Uga jawaab si dabiici ah oo saaxiibtinimo leh (1 ilaa 2 weedhood oo gaagaaban).
+SHURUUD ADAG: WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI". U hadal sidii nin dhab ah oo saaxiibkiis la hadlaya!`;
+
+          const res = await ai.generateResponse(prompt, [], { maxOutputTokens: 60 });
+          if (res && res.text && res.text.trim().length > 3) {
+            await transport.sendMessage(message.chatId, res.text.trim(), { replyToMessageId: message.id });
+            return true;
+          }
+        } catch (e: any) {
+          console.warn(`[Status Continuity] AI story reply fallback: ${e?.message}`);
+        }
+      }
+
+      const fallback =
+        gender === 'male'
+          ? "Masha'Allah sxb qaali! Waad ku mahadsantahay inaad status-ka soo booqatay 🙌"
+          : gender === 'female'
+          ? "Masha'Allah abaayo macaan! Waad ku mahadsantahay inaad status-ka soo booqatay 🌸"
+          : "Masha'Allah walaal! Waad ku mahadsantahay inaad status-ka soo booqatay ✨";
+      await transport.sendMessage(message.chatId, fallback, { replyToMessageId: message.id });
+      return true;
+    }
+
+    // ── CASE 3: Continuing Conversation / Question Following Status Comment ──
+    if (effectiveStatusContext) {
+      const ai = this.engine.getAIOrchestrator();
+      if (ai) {
+        try {
+          const genderDirective =
+            gender === 'male'
+              ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib/walaal qaali ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo"!'
+              : gender === 'female'
+              ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno", "qaali". Weligaa ha ku odhan "ninyahow"!'
+              : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal", "qaali".';
+
+          const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku sheekaysanaya).
+Dhowaan waxaad faallo (comment) ku dhigtay status uu soo dhigay: "${effectiveStatusContext.commentText}" (Dulucda status-ka: "${effectiveStatusContext.statusText || effectiveStatusContext.category}").
+Magaca saaxiibkaaga: "${message.senderName || effectiveStatusContext.senderName || 'Walaal'}"
+${genderDirective}
+Fariinta uu hadda kuusoo diray saaxiibkaagu: "${message.content}"
+
+Uga jawaab si dabiici ah oo saaxiibtinimo leh, fahan wuxuu ku yidhi oo si toos ah uga jawaab (1 ilaa 2 weedhood oo gaagaaban).
+SHURUUCDA DUGSIIYA:
+1. WELIGAA ha odhan "Maxaan kaa caawiyaa?", "Sideen kuu caawin karaa?", "Kusoo dhawoow", ama "Waxaan ahay AI".
+2. Ha u hadlin sidii bot ama shirkad, u hadal sidii nin dhab ah oo saaxiibkiis la hadlaya.
+3. Luuqad Soomaali saafi ah oo diirran.`;
+
+          const res = await ai.generateResponse(prompt, [], { maxOutputTokens: 60 });
+          if (res && res.text && res.text.trim().length > 3) {
+            await transport.sendMessage(message.chatId, res.text.trim(), { replyToMessageId: message.id });
+            console.log(`💬 [Status Continuity] Responded contextually to status follow-up from ${message.senderName || contactJid}`);
+            return true;
+          }
+        } catch (e: any) {
+          console.warn(`[Status Continuity] AI contextual continuity fallback: ${e?.message}`);
+        }
+      }
+
+      const fallback =
+        gender === 'male'
+          ? 'Waa caadi sxb qaali, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
+          : gender === 'female'
+          ? 'Waa caadi abaayo macaan, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
+          : 'Waa caadi walaal, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?';
+      await transport.sendMessage(message.chatId, fallback, { replyToMessageId: message.id });
+      return true;
+    }
+
+    return false;
   }
 
   private chatQueues: Map<string, Promise<any>> = new Map();
@@ -895,6 +1061,14 @@ export class MessageRouter {
     if (message.isGroup && !this.isGroupAllowed(message.chatId)) {
       console.log(`⚠️ [Router Ignored] Group-kan (${message.chatId}) kuma jiro ALLOWED_GROUPS. ALLOWED_GROUPS waa: ${this.config.security.allowedGroups.join(', ')}`);
       return { handled: false, reason: 'Group not in whitelist' };
+    }
+
+    // 4.5. WhatsApp Status Interaction Continuity & Gratitude Handling
+    // If the contact is thanking the bot or following up on a status interaction/story,
+    // reply naturally like an authentic Somali male friend and NEVER say "Maxaan kaa caawiyaa?".
+    const statusContinuityHandled = await this.handleStatusInteractionContinuity(message, transport);
+    if (statusContinuityHandled) {
+      return { handled: true, reason: 'Status interaction continuity handled' };
     }
 
     // 5. Group Mention / Prefix Filter

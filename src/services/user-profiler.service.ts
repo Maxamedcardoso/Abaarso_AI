@@ -142,39 +142,62 @@ export class UserProfiler {
 
     // 2. Check name if available
     if (name) {
-      const firstName = name.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, '');
-      if (!firstName) return 'unknown';
+      const cleanName = name.trim().toLowerCase().replace(/[^a-z\s]/g, ' ');
+      const words = cleanName.split(/\s+/).filter(Boolean);
+      if (words.length === 0) return 'unknown';
 
-      const femaleNames = new Set([
-        'fadumo', 'faadumo', 'fatima', 'fatuma', 'amina', 'aamina', 'sahra', 'zara', 'hodan', 'maryan',
-        'marian', 'xaawo', 'hawo', 'leyla', 'laila', 'layla', 'hani', 'deeqa', 'deqa', 'fardowsa',
-        'fardowso', 'asma', 'nimco', 'nimca', 'muna', 'safiya', 'safia', 'samsam', 'zamzam', 'nasra',
-        'ruun', 'raxma', 'rahma', 'khadra', 'ubax', 'canab', 'idil', 'hibaaq', 'hibo', 'fartuun',
-        'shukri', 'ikraan', 'ikran', 'sacdiyo', 'sadiya', 'suhuur', 'shamsi', 'yasmiin', 'yasmin',
-        'falxado', 'kaltuun', 'shankaroon', 'warsan', 'barni', 'barno', 'cibaado', 'saynab', 'zainab',
-        'xamdi', 'hamdi', 'naciimo', 'naima', 'najma', 'hinda', 'najax', 'rooda', 'rhoda', 'leylo',
-        'sharmuuke', 'sumaya', 'sumayo', 'samira', 'samiiro', 'hafsa', 'marwa', 'salma', 'asmaa'
-      ]);
+      // Check honorific prefixes
+      const maleTitles = new Set(['eng', 'dr', 'sheekh', 'sheikh', 'sh', 'ustad', 'ustaad', 'mr', 'bro', 'brother']);
+      const femaleTitles = new Set(['mrs', 'ms', 'miss', 'sister', 'marwo']);
 
-      const maleNames = new Set([
-        'maxamed', 'mohamed', 'muhamed', 'ahmed', 'axmed', 'cali', 'ali', 'xasan', 'hassan', 'cabdi',
-        'abdi', 'liibaan', 'liban', 'farxan', 'farhan', 'mustafe', 'mustafa', 'jaamac', 'jama', 'yuusuf',
-        'yusuf', 'khalid', 'khaalid', 'cumar', 'omar', 'sakariye', 'zakaria', 'zakariya', 'guuleed', 'guleed',
-        'sharmarke', 'sharmaarke', 'warsame', 'mahad', 'bile', 'daahir', 'dahir', 'hamse', 'xamze', 'faysal',
-        'feisal', 'ibraahim', 'ibrahim', 'ismaciil', 'ismail', 'rooble', 'roble', 'cabdiraxmaan', 'abdirahman',
-        'cabdirisaaq', 'abdirizak', 'ayaanle', 'ayanle', 'nasir', 'naasir', 'cabdillahi', 'abdullahi',
-        'cabdullaahi', 'khadar', 'muse', 'muuse', 'said', 'siciid', 'saacid', 'yaasiin', 'yasin', 'bashiir',
-        'bashir', 'xuseen', 'hussein', 'cusmaan', 'osman', 'cabdinaasir', 'abdinasir', 'cabdifataax',
-        'abdifatah', 'cabdishakuur', 'abdishakur', 'cabdiwali', 'abdiwali', 'nuur', 'nur', 'maxamuud',
-        'mohamud', 'mahamud', 'ridwaan', 'ridwan', 'mukhtaar', 'mukhtar', 'aadan', 'adan', 'illyaas',
-        'ilyas', 'haruun', 'harun', 'tariq', 'sayid', 'sayidcali'
-      ]);
+      if (maleTitles.has(words[0])) {
+        // If second word is explicitly a female name, respect it (e.g. Dr Fadumo)
+        if (words[1] && femaleNamesList.has(words[1])) return 'female';
+        return 'male';
+      }
+      if (femaleTitles.has(words[0])) {
+        return 'female';
+      }
 
-      if (femaleNames.has(firstName)) return 'female';
-      if (maleNames.has(firstName)) return 'male';
+      // Check first name or subsequent words against curated lists
+      for (const word of words.slice(0, 3)) {
+        if (femaleNamesList.has(word)) return 'female';
+        if (maleNamesList.has(word)) return 'male';
+      }
     }
 
     return 'unknown';
   }
 }
+
+const femaleNamesList = new Set([
+  'fadumo', 'faadumo', 'fatima', 'fatuma', 'amina', 'aamina', 'sahra', 'zara', 'zahra', 'hodan', 'maryan',
+  'marian', 'xaawo', 'hawo', 'leyla', 'laila', 'layla', 'hani', 'deeqa', 'deqa', 'fardowsa',
+  'fardowso', 'asma', 'asmaa', 'nimco', 'nimca', 'muna', 'safiya', 'safia', 'samsam', 'zamzam', 'nasra',
+  'ruun', 'raxma', 'rahma', 'khadra', 'ubax', 'canab', 'idil', 'hibaaq', 'hibo', 'fartuun', 'fartun',
+  'shukri', 'ikraan', 'ikran', 'sacdiyo', 'sadiya', 'suhuur', 'shamsi', 'yasmiin', 'yasmin',
+  'falxado', 'kaltuun', 'shankaroon', 'warsan', 'barni', 'barno', 'cibaado', 'saynab', 'zainab',
+  'xamdi', 'hamdi', 'xamda', 'naciimo', 'naima', 'najma', 'hinda', 'najax', 'rooda', 'rhoda', 'leylo',
+  'sharmuuke', 'sumaya', 'sumayo', 'samira', 'samiiro', 'hafsa', 'marwa', 'salma', 'ayaan', 'ayan',
+  'nasteexo', 'nasteha', 'sundus', 'jawaahir', 'dunia', 'dunya', 'luul', 'sabiriin', 'sabrin',
+  'malyuun', 'kinsi', 'shugri', 'ifraax', 'ifrah', 'sagal', 'bilane', 'bilan', 'farxiyo', 'farhiya',
+  'aniso', 'anisa', 'hoodo', 'huda', 'marwo', 'xaliimo', 'halimo', 'caasha', 'aisha', 'khadija'
+]);
+
+const maleNamesList = new Set([
+  'maxamed', 'mohamed', 'muhamed', 'ahmed', 'axmed', 'cali', 'ali', 'xasan', 'hassan', 'cabdi',
+  'abdi', 'liibaan', 'liban', 'farxan', 'farhan', 'farxaan', 'mustafe', 'mustafa', 'jaamac', 'jama', 'yuusuf',
+  'yusuf', 'khalid', 'khaalid', 'cumar', 'omar', 'sakariye', 'zakaria', 'zakariya', 'guuleed', 'guleed',
+  'sharmarke', 'sharmaarke', 'warsame', 'mahad', 'bile', 'daahir', 'dahir', 'hamse', 'xamze', 'xamza', 'faysal',
+  'feisal', 'ibraahim', 'ibrahim', 'ismaciil', 'ismail', 'rooble', 'roble', 'cabdiraxmaan', 'abdirahman',
+  'cabdirisaaq', 'abdirizak', 'ayaanle', 'ayanle', 'nasir', 'naasir', 'cabdillahi', 'abdullahi',
+  'cabdullaahi', 'khadar', 'muse', 'muuse', 'said', 'siciid', 'saacid', 'yaasiin', 'yasin', 'bashiir',
+  'bashir', 'xuseen', 'hussein', 'cusmaan', 'osman', 'cabdinaasir', 'abdinasir', 'cabdifataax',
+  'abdifatah', 'cabdishakuur', 'abdishakur', 'cabdiwali', 'abdiwali', 'nuur', 'nur', 'maxamuud',
+  'mohamud', 'mahamud', 'ridwaan', 'ridwan', 'mukhtaar', 'mukhtar', 'aadan', 'adan', 'illyaas',
+  'ilyas', 'haruun', 'harun', 'tariq', 'sayid', 'sayidcali', 'yoonis', 'yonis', 'saadaq', 'sadiq',
+  'caydaruus', 'aweys', 'shire', 'barre', 'raage', 'geelle', 'kayse', 'kaysar', 'suhayb', 'shuceyb',
+  'shucayb', 'jamaal', 'jamal', 'xaashi', 'hashi', 'calasow', 'geedi', 'cilmi', 'elmi', 'shariif',
+  'sharif', 'cabdulqaadir', 'abdulqadir', 'khalif', 'khaaliq', 'samatar', 'ayaanle'
+]);
 
