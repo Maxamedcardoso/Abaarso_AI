@@ -347,6 +347,7 @@ SHURUUCDA DUGSIIYA:
         `• \`!status <fariin>\` — Post garee status qoraal ah (midabbo qurxoon leh)\n` +
         `• \`!status\` (Sawir/Cod/Video la socdo) — Post garee sawir, muuqaal ama cod status ah\n` +
         `• \`!status-ai [mawduuc]\` — AI ayaa soo saaraya status dhiirigelin ah oo toos u dhigaya\n` +
+        `• \`!deletestatus [id]\` (ama \`!tirtirstatus\`) — Tirtir status-kaaga ugu dambeeyay ama mid gaar ah (Delete for everyone)\n` +
         `• \`!autoview on/off\` — Daaro ama dami in bot-ku si toos ah u daawado status-yada dadka (Auto Seen)\n` +
         `• \`!statusreact on/off\` — Daaro/dami falcelinta emoji-ga ee status-ka (❤️, 😂, 👏, 🔥, 🤲)\n` +
         `• \`!statuscomment on/off\` — Daaro/dami faallada tooska ah ee AI (Smart Human Comment)\n` +
@@ -832,7 +833,25 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'unblock executed' };
     }
 
+    // ─── Status Deletion (Delete for everyone) ───
+    if (/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i);
+      const targetId = match?.[1]?.trim() || message.quotedMessageId;
+      const res = targetId
+        ? await whatsappManagerService.deleteStatusById(targetId)
+        : await whatsappManagerService.deleteLastStatus();
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'delete status executed' };
+    }
+
     if (/^[!./#]?(?:delete|tirtir)$/i.test(lowerText.trim()) && isAdminUser && message.quotedMessageId) {
+      // If quoting a status story or message from status@broadcast
+      if (message.quotedParticipant === 'status@broadcast' || message.isStoryReply) {
+        const res = await whatsappManagerService.deleteStatusById(message.quotedMessageId);
+        await transport.sendMessage(message.chatId, res.message);
+        return { handled: true, reason: 'delete status executed' };
+      }
+
       if (transport.deleteMessage) {
         await transport.deleteMessage(message.chatId, message.quotedMessageId, message.quotedParticipant);
         await transport.sendMessage(message.chatId, '🗑️ Fariintii waa la tirtiray.');
@@ -853,7 +872,7 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletestatus|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

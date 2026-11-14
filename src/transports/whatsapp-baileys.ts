@@ -907,11 +907,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
         const isStatus = chatId === 'status@broadcast';
-        const statusJidList = isStatus ? whatsappManagerService.getStatusRecipients() : [];
+        const customStatusJids = (options as any)?.statusJidList?.length ? (options as any).statusJidList : undefined;
         const sendOptions: any = {};
-        if (isStatus && statusJidList.length > 0) {
-          sendOptions.statusJidList = statusJidList;
+        if (isStatus) {
           sendOptions.broadcast = true;
+          if (customStatusJids) {
+            sendOptions.statusJidList = customStatusJids;
+          }
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -957,11 +959,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       try {
         const rawQuoted = options?.replyToMessageId ? this.rawMessages.get(options.replyToMessageId) : undefined;
         const isStatus = chatId === 'status@broadcast';
-        const statusJidList = isStatus ? whatsappManagerService.getStatusRecipients() : [];
+        const customStatusJids = (options as any)?.statusJidList?.length ? (options as any).statusJidList : undefined;
         const sendOptions: any = {};
-        if (isStatus && statusJidList.length > 0) {
-          sendOptions.statusJidList = statusJidList;
+        if (isStatus) {
           sendOptions.broadcast = true;
+          if (customStatusJids) {
+            sendOptions.statusJidList = customStatusJids;
+          }
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -1052,6 +1056,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   public async deleteMessage(chatId: string, messageId: string, participant?: string): Promise<boolean> {
     if (!this.socket || !this.connected) return false;
     try {
+      const isStatus = chatId === 'status@broadcast' || messageId.startsWith('status_');
+      if (isStatus) {
+        const cleanId = messageId.replace(/^status_/, '');
+        const res = await whatsappManagerService.deleteStatusById(cleanId);
+        return res.success;
+      }
+
       const raw = this.rawMessages.get(messageId);
       const key = raw?.key || {
         remoteJid: chatId,

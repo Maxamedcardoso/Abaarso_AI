@@ -24,6 +24,54 @@ export class WhatsAppManagerService {
   private autoViewStatus: boolean = true;
   private botJid: string = '';
   private aiOrchestrator: AIOrchestrator | null = null;
+  private lastPostedStatusKeys: Array<{ id: string; timestamp: number }> = [];
+
+  public recordPostedStatus(id: string): void {
+    this.lastPostedStatusKeys.push({ id, timestamp: Date.now() });
+    if (this.lastPostedStatusKeys.length > 50) {
+      this.lastPostedStatusKeys.shift();
+    }
+  }
+
+  public async deleteStatusById(statusId: string): Promise<{ success: boolean; message: string }> {
+    if (!this.socket) {
+      return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).' };
+    }
+    const cleanId = (statusId || '').trim();
+    if (!cleanId) {
+      return { success: false, message: 'Fadlan bixi Message ID-ga status-ka aad rabto inaad tirtirto.' };
+    }
+    try {
+      const key: proto.IMessageKey = {
+        remoteJid: 'status@broadcast',
+        id: cleanId,
+        fromMe: true,
+      };
+      await this.socket.sendMessage('status@broadcast', { delete: key });
+      console.log(`🗑️ [WhatsApp Status] Status-kii (${cleanId}) waa la tirtiray dhammaan (Delete for everyone)!`);
+      return {
+        success: true,
+        message: `🗑️ Status-kaaga si guul leh ayaa looga tirtiray WhatsApp dhammaan dadka (Delete for everyone)! ✅`,
+      };
+    } catch (err: any) {
+      console.error(`❌ [WhatsApp Status] Error deleting status ${cleanId}:`, err);
+      return { success: false, message: `Cilad tirtiridda status-ka: ${err?.message}` };
+    }
+  }
+
+  public async deleteLastStatus(): Promise<{ success: boolean; message: string }> {
+    if (!this.socket) {
+      return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).' };
+    }
+    const last = this.lastPostedStatusKeys.pop();
+    if (!last) {
+      return {
+        success: false,
+        message: '⚠️ Ma jiro status dhowaan la soo dhigay oo la kaydiyay.\nHaddii aad haysato ID-ga status-ka, isticmaal: `!deletestatus <message_id>` ama fariinta status-ka reply ku dheh `!delete`.',
+      };
+    }
+    return await this.deleteStatusById(last.id);
+  }
 
   public setSocket(socket: WASocket | null): void {
     this.socket = socket;
@@ -118,9 +166,9 @@ export class WhatsAppManagerService {
     }
 
     try {
-      const statusJidList = options?.statusJidList && options.statusJidList.length > 0
+      const customJids = options?.statusJidList && options.statusJidList.length > 0
         ? options.statusJidList
-        : this.getStatusRecipients();
+        : undefined;
 
       const vibrantColors = [
         '#1e3c72', // Royal Navy Blue
@@ -136,6 +184,13 @@ export class WhatsAppManagerService {
       const chosenColor = options?.backgroundColor || vibrantColors[Math.floor(Math.random() * vibrantColors.length)];
       const chosenFont = options?.font || 1;
 
+      const statusSendOptions: any = {
+        broadcast: true,
+      };
+      if (customJids) {
+        statusSendOptions.statusJidList = customJids;
+      }
+
       const sent = await this.socket.sendMessage(
         'status@broadcast',
         {
@@ -143,16 +198,17 @@ export class WhatsAppManagerService {
           backgroundColor: chosenColor,
           font: chosenFont,
         } as any,
-        {
-          broadcast: true,
-          statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
-        }
+        statusSendOptions
       );
+
+      if (sent?.key?.id) {
+        this.recordPostedStatus(sent.key.id);
+      }
 
       console.log(`📢 [WhatsApp Status] Status text posted successfully! (${cleanText.slice(0, 45)}...)`);
       return {
         success: true,
-        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• Dadka u muuqanaya: ${statusJidList.length > 0 ? `${statusJidList.length} qof` : 'Dhammaan contacts-ka'}`,
+        message: `✅ Status-kaaga si guul leh ayaa loogu daabacay WhatsApp!\n• Fariinta: "${cleanText}"\n• Midabka: ${chosenColor}\n• U muuqashada: ${customJids ? `${customJids.length} qof oo gaar ah` : 'Dhammaan contacts-ka (My Status)'}`,
         messageId: sent?.key?.id || undefined,
       };
     } catch (err: any) {
@@ -173,16 +229,18 @@ export class WhatsAppManagerService {
     }
 
     try {
-      const statusJidList = options?.statusJidList && options.statusJidList.length > 0
+      const customJids = options?.statusJidList && options.statusJidList.length > 0
         ? options.statusJidList
-        : this.getStatusRecipients();
+        : undefined;
 
       let sent: any = undefined;
 
       const statusSendOptions: any = {
         broadcast: true,
-        statusJidList: statusJidList.length > 0 ? statusJidList : undefined,
       };
+      if (customJids) {
+        statusSendOptions.statusJidList = customJids;
+      }
 
       if (media.type === 'image') {
         sent = await this.socket.sendMessage(
@@ -215,6 +273,10 @@ export class WhatsAppManagerService {
           } as any,
           statusSendOptions
         );
+      }
+
+      if (sent?.key?.id) {
+        this.recordPostedStatus(sent.key.id);
       }
 
       console.log(`📢 [WhatsApp Status] Media status (${media.type}) posted successfully!`);
