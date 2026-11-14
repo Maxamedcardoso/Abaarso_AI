@@ -803,6 +803,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       replyToMessageId: msg.key.id || undefined,
       quotedMessageId: quotedStanzaId || undefined,
       quotedParticipant: quotedSender || undefined,
+      mentionedJids: mentionedJids.length > 0 ? mentionedJids : undefined,
       media: mediaAttachment,
     };
 
@@ -863,12 +864,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         let sentMsg: any = undefined;
+        const msgPayload: any = { text };
+        if (options?.mentions && options.mentions.length > 0) {
+          msgPayload.mentions = options.mentions;
+        }
+
         try {
-          sentMsg = await this.socket!.sendMessage(chatId, { text }, sendOptions);
+          sentMsg = await this.socket!.sendMessage(chatId, msgPayload, sendOptions);
         } catch (sendErr) {
           // Fallback: if sending with options fails, send directly
           console.warn('[WhatsAppBaileys] Send with options failed, falling back to direct send:', sendErr);
-          sentMsg = await this.socket!.sendMessage(chatId, { text });
+          sentMsg = await this.socket!.sendMessage(chatId, msgPayload);
         }
 
         if (sentMsg?.key?.id) {

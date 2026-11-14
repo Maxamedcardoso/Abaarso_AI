@@ -287,10 +287,19 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
 
   /**
    * Normalizes any raw phone number or JID to standard WhatsApp JID format.
+   * Seamlessly handles @252634949642, plain numbers, 061/063 local formats, and full JIDs.
    */
   public normalizeToJid(raw: string): string {
-    const clean = raw.trim();
-    if (clean.includes('@')) return clean;
+    const clean = (raw || '').trim();
+    if (!clean) return '';
+    // If it's already a full WhatsApp JID like 252634949642@s.whatsapp.net or 252634949642:5@s.whatsapp.net
+    if (clean.includes('@s.whatsapp.net') || clean.includes('@lid')) {
+      const parts = clean.split('@');
+      const user = parts[0].split(':')[0].replace(/[^0-9]/g, '');
+      const server = parts[1];
+      return `${user}@${server}`;
+    }
+    // Clean out all non-digits (handles leading @, +, spaces, hyphens, parentheses, etc.)
     const digits = clean.replace(/[^0-9]/g, '');
     let normalized = digits;
     if (/^0[69]\d{8}$/.test(digits)) {
@@ -298,7 +307,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     } else if (/^[69]\d{8}$/.test(digits)) {
       normalized = '252' + digits;
     }
-    return `${normalized}@s.whatsapp.net`;
+    return normalized ? `${normalized}@s.whatsapp.net` : '';
   }
 
   /**
@@ -385,36 +394,80 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
 
   /**
    * Removes (kicks) a participant from the group.
+   * Supports @mention, raw number, local 061/063 format, or JID.
    */
   public async kickMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
+    if (!participantJid) {
+      return { success: false, message: 'Lambar khaldan ama lama aqoonsan. Fadlan qor lambar sax ah ama @ mention.' };
+    }
+
     try {
       await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'remove');
-      return { success: true, message: `✅ Qofka (${participantJid}) waa laga saaray kooxda.` };
+      const num = participantJid.split('@')[0];
+      return {
+        success: true,
+        message: `👞 Qofka (@${num}) si guul leh ayaa looga saaray kooxda.`,
+        jid: participantJid,
+      };
     } catch (err: any) {
+      const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;
+      if (isForbidden) {
+        return { success: false, message: `⚠️ Bot-ku maaha Admin kooxdan! Fadlan marka hore bot-ka ka dhig Admin kooxda si uu dadka uga saari karo.` };
+      }
       return { success: false, message: `Cilad ka-saaridda xubinta: ${err.message}` };
     }
   }
 
   /**
    * Adds a new member to the group.
+   * Supports @mention, raw number, local 061/063 format, or JID.
    */
   public async addMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
+    if (!participantJid) {
+      return { success: false, message: 'Lambar khaldan ama lama aqoonsan. Fadlan qor lambar sax ah ama @ mention.' };
+    }
+
     try {
-      await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'add');
-      return { success: true, message: `✅ Qofka (${participantJid}) waxaa lagu daray kooxda.` };
+      const res: any = await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'add');
+      const status = res?.[0]?.status;
+      const num = participantJid.split('@')[0];
+
+      if (status === '403') {
+        return {
+          success: false,
+          message: `⚠️ Qofka (@${num}) wuxuu xidhay Privacy-ga ku-darista kooxaha (Direct Add). Fadlan u dir link-ga kooxda si uu isagu u soo galo.`,
+          jid: participantJid,
+        };
+      } else if (status === '409') {
+        return {
+          success: false,
+          message: `ℹ️ Qofka (@${num}) durba wuxuu ku jiraa kooxda!`,
+          jid: participantJid,
+        };
+      }
+
+      return {
+        success: true,
+        message: `✅ Qofka (@${num}) waxaa lagu daray kooxda.`,
+        jid: participantJid,
+      };
     } catch (err: any) {
+      const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;
+      if (isForbidden) {
+        return { success: false, message: `⚠️ Bot-ku maaha Admin kooxdan! Fadlan marka hore bot-ka ka dhig Admin kooxda si uu dadka ugu dari karo.` };
+      }
       return { success: false, message: `Cilad ku-daridda kooxda: ${err.message}` };
     }
   }
@@ -425,14 +478,23 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   public async promoteMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
+    if (!participantJid) {
+      return { success: false, message: 'Lambar khaldan ama lama aqoonsan.' };
+    }
+
     try {
       await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'promote');
-      return { success: true, message: `👑 Qofka (${participantJid}) waxaa laga dhigay Admin!` };
+      const num = participantJid.split('@')[0];
+      return { success: true, message: `👑 Qofka (@${num}) waxaa laga dhigay Admin!`, jid: participantJid };
     } catch (err: any) {
+      const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;
+      if (isForbidden) {
+        return { success: false, message: `⚠️ Bot-ku maaha Admin kooxdan! Fadlan marka hore bot-ka ka dhig Admin.` };
+      }
       return { success: false, message: `Cilad dalacsiinta Admin: ${err.message}` };
     }
   }
@@ -443,14 +505,23 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   public async demoteMember(
     groupJid: string,
     participantPhoneOrJid: string
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<{ success: boolean; message: string; jid?: string }> {
     if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
 
     const participantJid = this.normalizeToJid(participantPhoneOrJid);
+    if (!participantJid) {
+      return { success: false, message: 'Lambar khaldan ama lama aqoonsan.' };
+    }
+
     try {
       await this.socket.groupParticipantsUpdate(groupJid, [participantJid], 'demote');
-      return { success: true, message: `👤 Qofka (${participantJid}) maamulnimadii waa laga qaaday.` };
+      const num = participantJid.split('@')[0];
+      return { success: true, message: `👤 Qofka (@${num}) maamulnimadii waa laga qaaday.`, jid: participantJid };
     } catch (err: any) {
+      const isForbidden = err?.message?.includes('forbidden') || err?.message?.includes('403') || err?.output?.statusCode === 403;
+      if (isForbidden) {
+        return { success: false, message: `⚠️ Bot-ku maaha Admin kooxdan! Fadlan marka hore bot-ka ka dhig Admin.` };
+      }
       return { success: false, message: `Cilad hoos-u-dhigidda: ${err.message}` };
     }
   }

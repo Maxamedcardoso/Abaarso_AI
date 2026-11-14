@@ -48,6 +48,25 @@ export class MessageRouter {
     return this.config.security.allowedGroups.includes(groupJid);
   }
 
+  /**
+   * Resolves a target participant from mentions, text argument, or quoted message.
+   */
+  private extractTargetParticipant(message: IncomingMessage, rawArg?: string): string {
+    // 1. If an explicit WhatsApp @mention was captured in mentionedJids
+    if (message.mentionedJids && message.mentionedJids.length > 0) {
+      return message.mentionedJids[0];
+    }
+    // 2. If an argument was provided in the command text (e.g. "@252634949642", "252634949642", or "0634949642")
+    if (rawArg && rawArg.trim()) {
+      return rawArg.trim();
+    }
+    // 3. If the command was a reply/quote to another participant's message
+    if (message.quotedParticipant) {
+      return message.quotedParticipant;
+    }
+    return '';
+  }
+
   private chatQueues: Map<string, Promise<any>> = new Map();
 
   public async handleIncomingMessage(
@@ -358,45 +377,73 @@ export class MessageRouter {
 
     if (/^[!./#]?(?:kick|ka-saar)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
       const match = text.match(/^[!./#]?(?:kick|ka-saar)(?:\s+(.+))?$/i);
-      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      const target = this.extractTargetParticipant(message, match?.[1]);
       if (!target) {
-        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka fariintiisa ama lambar ku qor ka dib: `!kick @user`');
+        await transport.sendMessage(
+          message.chatId,
+          'ℹ️ *[CARDOSO AI — KICK]*: Fadlan sheeg qofka aad saarayso:\n• Mention dheh: `!kick @user`\n• Lambar qor: `!kick 252634949642` ama `!kick 0634949642`\n• Ama fariintooda quote ku qabo oo qor: `!kick`'
+        );
         return { handled: true, reason: 'kick target missing' };
       }
       const res = await whatsappManagerService.kickMember(message.chatId, target);
-      await transport.sendMessage(message.chatId, res.message);
+      await transport.sendMessage(message.chatId, res.message, {
+        mentions: res.jid ? [res.jid] : undefined,
+      });
       return { handled: true, reason: 'kick executed' };
     }
 
-    if (/^[!./#]?(?:add|soo-geli)\s+([0-9+]+)$/i.test(text) && isAdminUser && message.isGroup) {
-      const match = text.match(/^[!./#]?(?:add|soo-geli)\s+([0-9+]+)$/i);
-      const target = match![1].trim();
+    if (/^[!./#]?(?:add|soo-geli|kudar|ku-dar)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
+      const match = text.match(/^[!./#]?(?:add|soo-geli|kudar|ku-dar)(?:\s+(.+))?$/i);
+      const target = this.extractTargetParticipant(message, match?.[1]);
+      if (!target) {
+        await transport.sendMessage(
+          message.chatId,
+          'ℹ️ *[CARDOSO AI — ADD]*: Fadlan soo qor lambarka qofka aad ku darayso:\n• Tusaale: `!add 252634949642` ama `!add 0634949642` ama `!add @user`'
+        );
+        return { handled: true, reason: 'add member target missing' };
+      }
       const res = await whatsappManagerService.addMember(message.chatId, target);
-      await transport.sendMessage(message.chatId, res.message);
+      if (res.success && res.jid) {
+        const targetNum = res.jid.split('@')[0];
+        // Beautiful welcome message with @mention tag
+        const welcomeMessage =
+          `🎉✨ *SOO DHAWAADA WALAAL @${targetNum}!* ✨🎉\n\n` +
+          `Ku soo dhawow kooxda rasmiga ah! Waxaan kuu rajaynaynaa waqti waxbarasho, horumar, iyo faa'iido buuxda leh. 📚🎓\n\n` +
+          `Haddii aad qabto su'aal ku saabsan jaamacadda, casharrada ama adeegyada, bot-ka ayaad weydiin kartaa mar kasta. Ku soo dhawow gacmo furan! 🤝💫`;
+        await transport.sendMessage(message.chatId, welcomeMessage, {
+          mentions: [res.jid],
+        });
+      } else {
+        await transport.sendMessage(message.chatId, res.message);
+      }
       return { handled: true, reason: 'add member executed' };
     }
 
     if (/^[!./#]?(?:promote|dalacsii)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
       const match = text.match(/^[!./#]?(?:promote|dalacsii)(?:\s+(.+))?$/i);
-      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      const target = this.extractTargetParticipant(message, match?.[1]);
       if (!target) {
-        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!promote @user`');
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!promote @user` ama `!promote 252634949642`');
         return { handled: true, reason: 'promote target missing' };
       }
       const res = await whatsappManagerService.promoteMember(message.chatId, target);
-      await transport.sendMessage(message.chatId, res.message);
+      await transport.sendMessage(message.chatId, res.message, {
+        mentions: res.jid ? [res.jid] : undefined,
+      });
       return { handled: true, reason: 'promote executed' };
     }
 
     if (/^[!./#]?(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser && message.isGroup) {
       const match = text.match(/^[!./#]?(?:demote|hoos-u-dhig)(?:\s+(.+))?$/i);
-      const target = (match?.[1] || '').trim() || message.quotedParticipant || '';
+      const target = this.extractTargetParticipant(message, match?.[1]);
       if (!target) {
-        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!demote @user`');
+        await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!demote @user` ama `!demote 252634949642`');
         return { handled: true, reason: 'demote target missing' };
       }
       const res = await whatsappManagerService.demoteMember(message.chatId, target);
-      await transport.sendMessage(message.chatId, res.message);
+      await transport.sendMessage(message.chatId, res.message, {
+        mentions: res.jid ? [res.jid] : undefined,
+      });
       return { handled: true, reason: 'demote executed' };
     }
 

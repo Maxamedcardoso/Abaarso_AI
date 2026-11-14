@@ -66,8 +66,8 @@ Bot-kan waxaa lagu dhisay nidaam ammaan oo heer sare ah (**Strict Role-Based Acc
 | Amarka | Sida Loo Isticmaalo | Waxa Uu Qabanayo | Cidda Isticmaalaysa |
 | :--- | :--- | :--- | :--- |
 | `!tagall <fariin>` | `!tagall Ogeysiis shir degdeg ah` | Wuxuu wada tag-gareeyaa (mention) dhammaan xubnaha group-ka ku jira fariintaada. | **Admin Only** |
-| `!kick @qofka` | `!kick @252634949642` ama reply fariintooda | Qofka group-ka laga saarayo (Kick member). | **Admin Only** |
-| `!add <taleefan>` | `!add 252634949642` | Ku darista qof cusub group-ka adigoo adeegsanaya lambarkiisa. | **Admin Only** |
+| `!kick @qofka / <lambar>` | `!kick @252634949642` ama `!kick 252634949642` ama reply | Qofka group-ka laga saarayo (Kick member) — Waxaa lagu qori karaa @mention, lambar toos ah, ama quote. | **Admin Only** |
+| `!add <taleefan> / @qofka` | `!add 252634949642` ama `!add @252634949642` | Ku darista qof cusub group-ka, wuxuuna isla markiiba group-ka dhexdiisa ugu soo dhawaynayaa fariin qurux badan oo lagu tag-gareeyay. | **Admin Only** |
 | `!promote @qofka` | `!promote @252634949642` | Qofka oo laga dhigo Admin group-ka. | **Admin Only** |
 | `!demote @qofka` | `!demote @252634949642` | Ka qaadista xilka Admin-nimo ee qof group-ka ku jira. | **Admin Only** |
 | `!mute` | `!mute` | Group-ka oo la xidho si kaliya Admins-ku wax ugu qori karaan. | **Admin Only** |

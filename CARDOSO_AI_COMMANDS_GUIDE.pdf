@@ -301,7 +301,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 8 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 10 0 obj
-<< /Length 7459 >>
+<< /Length 7645 >>
 stream
 0.059 0.090 0.165 rg
 36.00 781.89 523.28 24.00 re f
@@ -347,7 +347,7 @@ BT /F1 7.5 Tf 48.00 688.89 Td (Xog: Bot-ku wuxuu soo saarayaa liiska xubnaha oo 
 0.059 0.090 0.165 rg
 44.00 656.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 660.89 Td (!kick @user / !ka-saar) Tj ET
+BT /F2 8.5 Tf 50.00 660.89 Td (!kick @user / !kick <lambar>) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
@@ -355,9 +355,9 @@ BT /F2 8.5 Tf 50.00 660.89 Td (!kick @user / !ka-saar) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7.5 Tf 487.28 660.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 642.89 Td (Xubin ka saar kooxda WhatsApp-ka \(adigoo qoraaya lambarkiisa ama quote ku qabanaya fariintiisa\).) Tj ET
+BT /F1 8.5 Tf 48.00 642.89 Td (Xubin ka saar kooxda WhatsApp-ka. Waxaad isticmaali kartaa @mention, lambar toos ah, ama quote.) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 630.89 Td (Tusaale: !kick @252615123456   ama   \(Quote fariinta\) !kick) Tj ET
+BT /F3 8 Tf 48.00 630.89 Td (Tusaale: !kick @252615123456   ama   !kick 252615123456   ama   quote fariintooda) Tj ET
 0.706 0.325 0.035 rg
 BT /F1 7.5 Tf 48.00 618.89 Td (Xog: Bot-ku waa inuu Admin ka yahay kooxda si uu qofka uga saaro.) Tj ET
 0.886 0.910 0.941 RG
@@ -367,7 +367,7 @@ BT /F1 7.5 Tf 48.00 618.89 Td (Xog: Bot-ku waa inuu Admin ka yahay kooxda si uu 
 0.059 0.090 0.165 rg
 44.00 586.89 140.00 14.00 re f
 0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 590.89 Td (!add <lambar> / !soo-geli) Tj ET
+BT /F2 8.5 Tf 50.00 590.89 Td (!add <lambar> / !add @user) Tj ET
 0.063 0.725 0.506 RG
 1 w
 0.925 0.992 0.961 rg
@@ -375,11 +375,11 @@ BT /F2 8.5 Tf 50.00 590.89 Td (!add <lambar> / !soo-geli) Tj ET
 0.063 0.725 0.506 rg
 BT /F2 7.5 Tf 487.28 590.89 Td ([ADMIN KALIYA]) Tj ET
 0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 572.89 Td (Xubin cusub ku dar kooxda adigoo isticmaalaya lambarkiisa taleefanka.) Tj ET
+BT /F1 8.5 Tf 48.00 572.89 Td (Xubin cusub ku dar kooxda adigoo isticmaalaya lambarkiisa taleefanka ama @mention, wuxuuna u dirayaa fariin soo dhawayn leh oo lagu xusayo magaciisa.) Tj ET
 0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 560.89 Td (Tusaale: !add 252615123456) Tj ET
+BT /F3 8 Tf 48.00 560.89 Td (Tusaale: !add 252615123456   ama   !add @252615123456) Tj ET
 0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 548.89 Td (Xog: Qofka si toos ah ayaa loogu darayaa kooxda.) Tj ET
+BT /F1 7.5 Tf 48.00 548.89 Td (Xog: Qofka waxaa lagu darayaa kooxda waxaana loogu soo dhawaynayaa fariin qurxoon oo lagu tag-gareeyay.) Tj ET
 0.886 0.910 0.941 RG
 1 w
 0.973 0.980 0.988 rg
@@ -1161,15 +1161,15 @@ xref
 0000004550 00000 n 
 0000012170 00000 n 
 0000012322 00000 n 
-0000019844 00000 n 
-0000019998 00000 n 
-0000022281 00000 n 
-0000022435 00000 n 
-0000030231 00000 n 
-0000030385 00000 n 
-0000042979 00000 n 
+0000020030 00000 n 
+0000020184 00000 n 
+0000022467 00000 n 
+0000022621 00000 n 
+0000030417 00000 n 
+0000030571 00000 n 
+0000043165 00000 n 
 trailer
 << /Size 18 /Root 1 0 R >>
 startxref
-43133
+43319
 %%EOF

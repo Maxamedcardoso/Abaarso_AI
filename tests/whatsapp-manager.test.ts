@@ -17,6 +17,8 @@ suite.test('normalizeToJid formats Somali phone numbers correctly', () => {
   assertEqual(whatsappManagerService.normalizeToJid('0634123456'), '252634123456@s.whatsapp.net');
   assertEqual(whatsappManagerService.normalizeToJid('+252615123456'), '252615123456@s.whatsapp.net');
   assertEqual(whatsappManagerService.normalizeToJid('252615123456@s.whatsapp.net'), '252615123456@s.whatsapp.net');
+  assertEqual(whatsappManagerService.normalizeToJid('@252615123456'), '252615123456@s.whatsapp.net');
+  assertEqual(whatsappManagerService.normalizeToJid('@0634123456'), '252634123456@s.whatsapp.net');
 });
 
 suite.test('Auto-View Status toggles properly', () => {
@@ -113,10 +115,18 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertEqual(sentJid, '12345@g.us');
   assertTrue(sentPayload.text.includes('@252611111111'), 'Mentions should contain participant numbers');
 
-  // 5. Kick and Promote
+  // 5. Kick and Promote (handles both raw number and @mention)
   const kickRes = await whatsappManagerService.kickMember('12345@g.us', '252612222222');
-  assertTrue(kickRes.success, 'Kick should succeed');
+  assertTrue(kickRes.success, 'Kick with raw number should succeed');
   assertEqual(groupUpdateAction, 'remove');
+
+  const kickMentionRes = await whatsappManagerService.kickMember('12345@g.us', '@252612222222');
+  assertTrue(kickMentionRes.success, 'Kick with @mention should succeed');
+  assertEqual(kickMentionRes.jid, '252612222222@s.whatsapp.net');
+
+  const addRes = await whatsappManagerService.addMember('12345@g.us', '0634999888');
+  assertTrue(addRes.success, 'Add member should succeed');
+  assertEqual(addRes.jid, '252634999888@s.whatsapp.net');
 
   const promoteRes = await whatsappManagerService.promoteMember('12345@g.us', '252612222222');
   assertTrue(promoteRes.success, 'Promote should succeed');
@@ -266,6 +276,46 @@ suite.test('MessageRouter processes status commands, replies, and group actions'
 
   const matchNew = await memory.findMatchingAutoReply('Aaway goobta aad ku taallaan?');
   assertTrue(matchNew !== null && matchNew.includes('Suuqa Hoose'), 'New auto-reply should match');
+
+  // 7. Group Kick with @mention
+  const kickGroupRes = await router.handleIncomingMessage({
+    id: 'msg_kick_1',
+    senderId: '252634949642',
+    chatId: 'group_test@g.us',
+    isGroup: true,
+    content: '!kick @252612222222',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+    mentionedJids: ['252612222222@s.whatsapp.net'],
+  }, mockTransport);
+  assertTrue(kickGroupRes.handled, 'Group kick with @mention should be handled');
+
+  // 8. Group Kick with raw phone number
+  const kickGroupRawRes = await router.handleIncomingMessage({
+    id: 'msg_kick_2',
+    senderId: '252634949642',
+    chatId: 'group_test@g.us',
+    isGroup: true,
+    content: '!kick 252612222222',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(kickGroupRawRes.handled, 'Group kick with raw number should be handled');
+
+  // 9. Group Add with welcome message
+  const addGroupRes = await router.handleIncomingMessage({
+    id: 'msg_add_1',
+    senderId: '252634949642',
+    chatId: 'group_test@g.us',
+    isGroup: true,
+    content: '!add 252634999888',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(addGroupRes.handled, 'Group add member should be handled with welcoming message');
 
   await mockTransport.stop();
   await memory.close();

@@ -22,6 +22,7 @@ export interface IncomingMessage {
   replyToMessageId?: string;     // If message is a quoted reply
   quotedMessageId?: string;      // ID of the message quoted by this message (if any)
   quotedParticipant?: string;    // Sender of the message quoted by this message (if any)
+  mentionedJids?: string[];      // JIDs of participants @mentioned in this message
   media?: MessageMedia;          // Attached image, audio voice note, or PDF document
 }
 
@@ -31,6 +32,7 @@ export interface IncomingMessage {
 export interface OutgoingMessageOptions {
   replyToMessageId?: string;
   isEphemeral?: boolean;
+  mentions?: string[];          // Participants to explicitly @mention/tag in the message
 }
 
 export interface OutgoingMedia {

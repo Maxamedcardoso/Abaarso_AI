@@ -462,19 +462,19 @@ export function generateCommandsPDF() {
   );
 
   doc.addCommandCard(
-    '!kick @user / !ka-saar',
+    '!kick @user / !kick <lambar>',
     '[ADMIN KALIYA]',
-    'Xubin ka saar kooxda WhatsApp-ka (adigoo qoraaya lambarkiisa ama quote ku qabanaya fariintiisa).',
-    '!kick @252615123456   ama   (Quote fariinta) !kick',
+    'Xubin ka saar kooxda WhatsApp-ka. Waxaad isticmaali kartaa @mention, lambar toos ah, ama quote.',
+    '!kick @252615123456   ama   !kick 252615123456   ama   quote fariintooda',
     'Bot-ku waa inuu Admin ka yahay kooxda si uu qofka uga saaro.'
   );
 
   doc.addCommandCard(
-    '!add <lambar> / !soo-geli',
+    '!add <lambar> / !add @user',
     '[ADMIN KALIYA]',
-    'Xubin cusub ku dar kooxda adigoo isticmaalaya lambarkiisa taleefanka.',
-    '!add 252615123456',
-    'Qofka si toos ah ayaa loogu darayaa kooxda.'
+    'Xubin cusub ku dar kooxda adigoo isticmaalaya lambarkiisa taleefanka ama @mention, wuxuuna u dirayaa fariin soo dhawayn leh oo lagu xusayo magaciisa.',
+    '!add 252615123456   ama   !add @252615123456',
+    'Qofka waxaa lagu darayaa kooxda waxaana loogu soo dhawaynayaa fariin qurxoon oo lagu tag-gareeyay.'
   );
 
   doc.addCommandCard(
