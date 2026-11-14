@@ -38,9 +38,38 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   /** View-Once stubs waiting for the retry / phone resend to deliver real content. */
   private pendingViewOnce: Map<string, NodeJS.Timeout> = new Map();
   private viewOnceFallbackSent: Set<string> = new Set();
+  private badMacHookInstalled: boolean = false;
+
+  private setupBadMacAutoHeal(): void {
+    if (this.badMacHookInstalled) return;
+    this.badMacHookInstalled = true;
+
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      try {
+        const fullText = args
+          .map(a => (a?.stack || a?.message || (typeof a === 'object' ? JSON.stringify(a) : String(a))))
+          .join(' ');
+
+        if (fullText.includes('Bad MAC') && (fullText.includes('session_cipher') || fullText.includes('verifyMAC'))) {
+          const match = fullText.match(/async\s+([0-9a-zA-Z_.-]+)\s+\[as awaitable\]/);
+          const targetSession = match?.[1];
+          if (targetSession) {
+            const sessionPath = path.join(this.authDir, `session-${targetSession}.json`);
+            if (fs.existsSync(sessionPath)) {
+              fs.unlinkSync(sessionPath);
+              console.log(`🛡️ [Auto-Heal Signal] Bad MAC session ${targetSession} automatically purged from disk to force clean re-handshake.`);
+            }
+          }
+        }
+      } catch {}
+      originalConsoleError.apply(console, args);
+    };
+  }
 
   constructor(authDir: string = './baileys_auth_info') {
     this.authDir = authDir;
+    this.setupBadMacAutoHeal();
   }
 
   public get isConnected(): boolean {
@@ -309,6 +338,29 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
+        // Auto-heal messages that could not be decrypted (CIPHERTEXT stub / Bad MAC)
+        if ((msg as any).messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
+          const senderJid = msg.key?.participant || msg.key?.remoteJid;
+          const stubParams = (msg as any).messageStubParameters || [];
+          const paramStr = stubParams.join(' ');
+          if (senderJid && (paramStr.includes('Bad MAC') || paramStr.includes('Session') || paramStr.includes('decrypt') || paramStr.includes('matching'))) {
+            const userNum = senderJid.split('@')[0].split(':')[0];
+            try {
+              if (fs.existsSync(this.authDir)) {
+                const files = fs.readdirSync(this.authDir);
+                for (const file of files) {
+                  if (file.startsWith(`session-${userNum}`) || file.startsWith(`session-${senderJid}`)) {
+                    try {
+                      fs.unlinkSync(path.join(this.authDir, file));
+                      console.log(`🛡️ [Auto-Heal] Purged corrupt session file for ${senderJid}: ${file}`);
+                    } catch {}
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+
         // 1. Primary phone answered our placeholder-resend (PDO) request → decode the real message(s)
         const resent = this.extractPdoResendMessages(msg);
         for (const recovered of resent) {
