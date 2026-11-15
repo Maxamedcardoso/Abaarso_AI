@@ -863,10 +863,15 @@ SHURUUCDA DUGSIIYA:
     // ─── Status Deletion (Delete for everyone) ───
     if (/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
       const match = text.match(/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i);
-      const targetId = match?.[1]?.trim() || message.quotedMessageId;
-      const res = targetId
-        ? await whatsappManagerService.deleteStatusById(targetId)
-        : await whatsappManagerService.deleteLastStatus();
+      const rawTarget = match?.[1]?.trim() || message.quotedMessageId;
+      let res: { success: boolean; message: string };
+      if (rawTarget && /^(?:all|dhammaan|kulligood|dhamman)$/i.test(rawTarget)) {
+        res = await whatsappManagerService.deleteAllStatuses();
+      } else if (rawTarget) {
+        res = await whatsappManagerService.deleteStatusById(rawTarget);
+      } else {
+        res = await whatsappManagerService.deleteLastStatus();
+      }
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'delete status executed' };
     }

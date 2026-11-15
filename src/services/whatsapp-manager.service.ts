@@ -323,6 +323,64 @@ export class WhatsAppManagerService {
     return await this.deleteStatusById(lastId);
   }
 
+  /**
+   * Deletes ALL recorded statuses for everyone from WhatsApp.
+   */
+  public async deleteAllStatuses(): Promise<{ success: boolean; message: string; count: number }> {
+    if (!this.socket) {
+      return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).', count: 0 };
+    }
+
+    const allKeys = Array.from(this.postedStatuses.keys());
+    const combined = Array.from(new Set([...allKeys, ...this.lastPostedStatusKeys.map(k => k.id)])).filter(
+      id => id && !id.startsWith('test_') && id !== 'status_msg_123'
+    );
+
+    if (combined.length === 0) {
+      return {
+        success: false,
+        message: '⚠️ Ma jiraan status-yo hore oo hadda diiwaangashan oo la tirtiri karo.',
+        count: 0,
+      };
+    }
+
+    let deletedCount = 0;
+    const recipients = this.getStatusRecipients();
+    const sendOpts: any = { broadcast: true };
+    if (recipients.length > 0) {
+      sendOpts.statusJidList = recipients;
+    }
+
+    for (const statusId of combined) {
+      try {
+        const key: proto.IMessageKey = {
+          remoteJid: 'status@broadcast',
+          id: statusId,
+          fromMe: true,
+        };
+        try {
+          await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
+        } catch {
+          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true });
+        }
+        this.postedStatuses.delete(statusId);
+        deletedCount++;
+        await new Promise(r => setTimeout(r, 200));
+      } catch (e: any) {
+        console.warn(`[WhatsApp Status] Could not delete status ${statusId}:`, e?.message);
+      }
+    }
+
+    this.lastPostedStatusKeys = [];
+    this.savePersistedStatuses();
+
+    return {
+      success: true,
+      message: `🗑️ Waxaa si guul leh loo tirtiray dhammaan (${deletedCount}) status-yadii hore ee WhatsApp yaallay (Delete for everyone)! ✅`,
+      count: deletedCount,
+    };
+  }
+
   public setSocket(socket: WASocket | null): void {
     this.socket = socket;
     if (socket?.user?.id) {
