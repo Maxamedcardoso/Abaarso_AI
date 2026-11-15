@@ -258,12 +258,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
                 const seenJids = new Set<string>();
                 child.content = child.content.filter((toNode: any) => {
                   if (!toNode || toNode.tag !== 'to' || !Array.isArray(toNode.content)) return false;
-                  // Normalize any device suffix like :0 to clean @s.whatsapp.net user JID and deduplicate
+                  // Deduplicate identical participant stanzas while preserving authentic device targeting (e.g. :0 for phone)
                   if (toNode.attrs?.jid) {
-                    const cleanJid = toNode.attrs.jid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-                    if (seenJids.has(cleanJid)) return false;
-                    seenJids.add(cleanJid);
-                    toNode.attrs.jid = cleanJid;
+                    if (seenJids.has(toNode.attrs.jid)) return false;
+                    seenJids.add(toNode.attrs.jid);
                   }
                   const encNode = toNode.content.find((c: any) => c?.tag === 'enc');
                   if (encNode && (!encNode.content || encNode.content.length === 0)) {
