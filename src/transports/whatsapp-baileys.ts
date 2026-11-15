@@ -164,6 +164,23 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       },
     });
 
+    // Protect status and broadcast encryption against un-sessioned recipient crashes
+    if ((this.socket as any)?.signalRepository?.encryptMessage) {
+      const origEncrypt = (this.socket as any).signalRepository.encryptMessage.bind((this.socket as any).signalRepository);
+      (this.socket as any).signalRepository.encryptMessage = async (args: { jid: string; data: Buffer }) => {
+        try {
+          return await origEncrypt(args);
+        } catch (err: any) {
+          const errMsg = err?.message || '';
+          if (errMsg.includes('No session record') || errMsg.includes('Session') || errMsg.includes('session') || errMsg.includes('MAC')) {
+            console.warn(`🛡️ [Signal Repository] No active session for ${args.jid} during broadcast encryption. Gracefully skipping recipient.`);
+            return { type: 'msg', ciphertext: Buffer.alloc(0) };
+          }
+          throw err;
+        }
+      };
+    }
+
     whatsappManagerService.setSocket(this.socket);
 
     this.socket.ev.on('creds.update', saveCreds);

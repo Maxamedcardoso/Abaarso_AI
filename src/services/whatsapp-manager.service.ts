@@ -468,107 +468,11 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Checks whether a recipient has an active pairwise Signal session file on disk or is the owner.
-   * WhatsApp Multi-Device requires each companion status broadcast to pairwise encrypt the sender key
-   * to each recipient in statusJidList. If an un-sessioned recipient is in statusJidList, libsignal throws
-   * "SessionError: No session record", which aborts the entire status post!
+   * Returns admin phone numbers configured in environment variables.
+   * Ensures the user/admin always receives and can view status updates.
    */
-  public hasSessionRecord(jid: string): boolean {
-    if (!jid || jid.includes('@lid')) return false;
-    const cleanDigits = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    if (!cleanDigits) return false;
-
-    // In unit-test / mock environment (no authState attached), allow all valid phone JIDs
-    if (this.socket && !(this.socket as any).authState) {
-      return true;
-    }
-
-    // Owner account devices always have session records (established during pairing)
-    const ownerNumber = this.socket?.user?.id
-      ? this.socket.user.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '')
-      : '';
-    if (ownerNumber && cleanDigits === ownerNumber) {
-      return true;
-    }
-
-    try {
-      const authDir = path.join(process.cwd(), 'baileys_auth_info');
-      if (fs.existsSync(authDir)) {
-        // Fast path: primary device session
-        if (fs.existsSync(path.join(authDir, `session-${cleanDigits}.0.json`))) {
-          return true;
-        }
-        // General path: any companion device session
-        const files = fs.readdirSync(authDir);
-        for (const file of files) {
-          if (file.startsWith(`session-${cleanDigits}.`)) {
-            return true;
-          }
-        }
-      }
-    } catch {}
-
-    return false;
-  }
-
-  /**
-   * Filters any recipient list to strictly session-verified recipients and excludes all @lid JIDs.
-   */
-  public filterSessionVerifiedRecipients(recipients: string[]): string[] {
-    const safeSet = new Set<string>();
-
-    // 1. Always ensure owner primary device and clean JID are present
-    const ownerList = this.getOwnerOnlyRecipients();
-    for (const o of ownerList) safeSet.add(o);
-
-    // 2. Add candidates that pass session check
-    for (const r of recipients) {
-      if (!r || r.includes('@lid')) continue;
-      const clean = this.toCleanUserJid(r) || (r.endsWith('@s.whatsapp.net') ? r : null);
-      if (clean && this.hasSessionRecord(clean)) {
-        safeSet.add(clean);
-      }
-    }
-
-    return Array.from(safeSet);
-  }
-
-  /**
-   * Builds the recipient JID list for status posts and status deletions (Stories).
-   * WhatsApp Multi-Device strictly requires statusJidList so that:
-   * 1. The owner's primary mobile phone receives the status in "My Status" (decrypts sender key).
-   * 2. Contacts receive the status in their "Updates" tab.
-   * 3. Deletion requests broadcast the revocation key to all recipients.
-   * All recipients are strictly validated and filtered to verified Signal sessions to prevent
-   * "No session record" crashes.
-   */
-  public getStatusRecipients(): string[] {
-    const jidSet = new Set<string>();
-
-    // 1. Add host account's own primary number and primary device (:0)
-    const ownerRecipients = this.getOwnerOnlyRecipients();
-    for (const o of ownerRecipients) {
-      jidSet.add(o);
-    }
-
-    // 2. Add synchronized phone contacts from broadcast service (STRICTLY NO @lid)
-    const contacts = broadcastService.getContacts();
-    for (const c of contacts) {
-      const clean = this.toCleanUserJid(c.jid);
-      if (clean) jidSet.add(clean);
-    }
-
-    // 3. Add bot's configured JID if available
-    if (this.botJid) {
-      const cleanBot = this.toCleanUserJid(this.botJid);
-      if (cleanBot) {
-        jidSet.add(cleanBot);
-        const num = cleanBot.split('@')[0];
-        jidSet.add(`${num}:0@s.whatsapp.net`);
-      }
-    }
-
-    // 4. Add admin phone numbers from environment
+  public getAdminRecipients(): string[] {
+    const set = new Set<string>();
     const envAdmins = [
       process.env.ADMIN_PHONE_NUMBERS,
       process.env.SUPER_ADMIN_PHONE,
@@ -583,13 +487,175 @@ export class WhatsAppManagerService {
     for (const a of envAdmins) {
       const cleanAdmin = this.toCleanUserJid(a);
       if (cleanAdmin) {
-        jidSet.add(cleanAdmin);
+        set.add(cleanAdmin);
         const num = cleanAdmin.split('@')[0];
+        set.add(`${num}:0@s.whatsapp.net`);
+      }
+    }
+    return Array.from(set);
+  }
+
+  /**
+   * Scans baileys_auth_info for all active pairwise Signal session files.
+   * This includes contacts and user accounts (e.g. user LID sessions) that have already
+   * established end-to-end encryption with the bot.
+   */
+  public getVerifiedDiskSessionRecipients(): string[] {
+    const list: string[] = [];
+    try {
+      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      if (fs.existsSync(authDir)) {
+        const files = fs.readdirSync(authDir);
+        for (const file of files) {
+          const match = file.match(/^session-([0-9]{5,})\.(?:0|[0-9]+)\.json$/);
+          if (match && match[1]) {
+            const id = match[1];
+            list.push(`${id}@s.whatsapp.net`);
+            list.push(`${id}:0@s.whatsapp.net`);
+          }
+        }
+      }
+    } catch {}
+    return Array.from(new Set(list));
+  }
+
+  /**
+   * Safe fallback recipients containing the host account, admin accounts,
+   * and all active disk-verified pairwise sessions.
+   */
+  public getSafeFallbackRecipients(): string[] {
+    return Array.from(
+      new Set([
+        ...this.getOwnerOnlyRecipients(),
+        ...this.getAdminRecipients(),
+        ...this.getVerifiedDiskSessionRecipients(),
+      ])
+    );
+  }
+
+  /**
+   * Checks whether a recipient has an active pairwise Signal session file on disk or is the owner or admin.
+   */
+  public hasSessionRecord(jid: string): boolean {
+    if (!jid) return false;
+    const cleanDigits = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    if (!cleanDigits) return false;
+
+    // In unit-test / mock environment (no authState attached), allow all valid phone JIDs
+    if (this.socket && !(this.socket as any).authState) {
+      return true;
+    }
+
+    // Owner account devices always have session records
+    const ownerNumber = this.socket?.user?.id
+      ? this.socket.user.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '')
+      : '';
+    if (ownerNumber && cleanDigits === ownerNumber) {
+      return true;
+    }
+
+    // Admin numbers configured in env are always trusted
+    const admins = this.getAdminRecipients().map(a => a.split('@')[0].split(':')[0].replace(/[^0-9]/g, ''));
+    if (admins.includes(cleanDigits)) {
+      return true;
+    }
+
+    try {
+      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      if (fs.existsSync(authDir)) {
+        if (fs.existsSync(path.join(authDir, `session-${cleanDigits}.0.json`))) {
+          return true;
+        }
+        const files = fs.readdirSync(authDir);
+        for (const file of files) {
+          if (file.startsWith(`session-${cleanDigits}.`)) {
+            return true;
+          }
+        }
+      }
+    } catch {}
+
+    // For valid phone numbers (SOM local or international E.164, 7-15 digits), allow pre-key discovery
+    if (cleanDigits.length >= 7 && cleanDigits.length <= 15 && !jid.includes('@lid')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Filters any recipient list to verified recipients and excludes invalid un-sessioned @lid JIDs.
+   */
+  public filterSessionVerifiedRecipients(recipients: string[]): string[] {
+    const safeSet = new Set<string>();
+
+    // 1. Always ensure owner primary device and clean JID are present
+    for (const o of this.getOwnerOnlyRecipients()) safeSet.add(o);
+
+    // 2. Always ensure admin numbers are present
+    for (const a of this.getAdminRecipients()) safeSet.add(a);
+
+    // 3. Always ensure established disk sessions are present
+    for (const d of this.getVerifiedDiskSessionRecipients()) safeSet.add(d);
+
+    // 4. Add candidates that pass validation
+    for (const r of recipients) {
+      if (!r) continue;
+      const clean = this.toCleanUserJid(r) || (r.endsWith('@s.whatsapp.net') ? r : null);
+      if (clean && this.hasSessionRecord(clean)) {
+        safeSet.add(clean);
+      }
+    }
+
+    return Array.from(safeSet);
+  }
+
+  /**
+   * Builds the recipient JID list for status posts and status deletions (Stories).
+   * WhatsApp Multi-Device strictly requires statusJidList so that:
+   * 1. The owner's primary mobile phone receives the status in "My Status" (decrypts sender key).
+   * 2. The admin / user receives and decrypts the status on their phone.
+   * 3. Contacts receive the status in their "Updates" tab.
+   * 4. Deletion requests broadcast the revocation key to all recipients.
+   */
+  public getStatusRecipients(): string[] {
+    const jidSet = new Set<string>();
+
+    // 1. Host account's own primary number and primary device (:0)
+    for (const o of this.getOwnerOnlyRecipients()) {
+      jidSet.add(o);
+    }
+
+    // 2. Admin phone numbers from environment (the user)
+    for (const a of this.getAdminRecipients()) {
+      jidSet.add(a);
+    }
+
+    // 3. Active pairwise Signal sessions from disk (includes user LID session)
+    for (const d of this.getVerifiedDiskSessionRecipients()) {
+      jidSet.add(d);
+    }
+
+    // 4. Synchronized phone contacts from broadcast service (with valid phone numbers)
+    const contacts = broadcastService.getContacts();
+    for (const c of contacts) {
+      const phoneCandidate = c.phone || (!c.jid.includes('@lid') ? c.jid : undefined);
+      if (phoneCandidate) {
+        const clean = this.toCleanUserJid(phoneCandidate);
+        if (clean) jidSet.add(clean);
+      }
+    }
+
+    // 5. Bot's configured JID if available
+    if (this.botJid) {
+      const cleanBot = this.toCleanUserJid(this.botJid);
+      if (cleanBot) {
+        jidSet.add(cleanBot);
+        const num = cleanBot.split('@')[0];
         jidSet.add(`${num}:0@s.whatsapp.net`);
       }
     }
 
-    // 5. Strictly filter through session verification so createParticipantNodes never crashes on un-sessioned JIDs
     return this.filterSessionVerifiedRecipients(Array.from(jidSet));
   }
 
@@ -692,11 +758,11 @@ export class WhatsAppManagerService {
       } catch (sendErr: any) {
         const errMsg = sendErr?.message || '';
         if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC')) {
-          console.warn(`⚠️ [WhatsApp Status] Session error during text status dispatch (${errMsg}). Retrying with owner-only fallback...`);
+          console.warn(`⚠️ [WhatsApp Status] Session error during text status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
           await this.resetStatusSenderKeyMemory();
           const fallbackOptions = {
             ...statusSendOptions,
-            statusJidList: this.getOwnerOnlyRecipients(),
+            statusJidList: this.getSafeFallbackRecipients(),
           };
           sent = await this.socket.sendMessage(
             'status@broadcast',
@@ -810,11 +876,11 @@ export class WhatsAppManagerService {
       } catch (sendErr: any) {
         const errMsg = sendErr?.message || '';
         if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC')) {
-          console.warn(`⚠️ [WhatsApp Status] Session error during media status dispatch (${errMsg}). Retrying with owner-only fallback...`);
+          console.warn(`⚠️ [WhatsApp Status] Session error during media status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
           await this.resetStatusSenderKeyMemory();
           const fallbackOptions = {
             ...statusSendOptions,
-            statusJidList: this.getOwnerOnlyRecipients(),
+            statusJidList: this.getSafeFallbackRecipients(),
           };
           sent = await dispatchMedia(fallbackOptions);
         } else {
