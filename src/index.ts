@@ -134,6 +134,14 @@ async function bootstrap() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // Process-level guards against unexpected socket or async rejections
+  process.on('uncaughtException', (err) => {
+    console.error('🛡️ [Process Guard] Uncaught Exception caught safely:', err?.message || err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('🛡️ [Process Guard] Unhandled Rejection caught safely:', (reason as any)?.message || reason);
+  });
 }
 
 bootstrap().catch(err => {

@@ -861,11 +861,12 @@ SHURUUCDA DUGSIIYA:
     }
 
     // ─── Status Deletion (Delete for everyone) ───
-    if (/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^[!./#]?(?:deletestatus|tirtirstatus|statusdelete)(?:\s+(.+))?$/i);
+    const statusDeletePattern = /^[!./#]?(?:deletet?status|delete[-_\s]+status|tirtir[-_\s]*status|status[-_\s]*delete)(?:\s+(.+))?$/i;
+    if (statusDeletePattern.test(lowerText) && isAdminUser) {
+      const match = text.match(statusDeletePattern);
       const rawTarget = match?.[1]?.trim() || message.quotedMessageId;
       let res: { success: boolean; message: string };
-      if (rawTarget && /^(?:all|dhammaan|kulligood|dhamman)$/i.test(rawTarget)) {
+      if (rawTarget && /^(?:all|dhammaan|dhamaan|kulligood|dhamman)$/i.test(rawTarget)) {
         res = await whatsappManagerService.deleteAllStatuses();
       } else if (rawTarget) {
         res = await whatsappManagerService.deleteStatusById(rawTarget);
@@ -904,7 +905,7 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletestatus|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletet?status|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

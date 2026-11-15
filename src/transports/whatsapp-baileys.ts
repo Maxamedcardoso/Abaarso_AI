@@ -469,6 +469,38 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
+    // ─── Listen for Phone-Side Status & Message Deletions ────────────────────
+    this.socket.ev.on('messages.delete', async (item: any) => {
+      try {
+        const keys = Array.isArray(item?.keys) ? item.keys : [item?.key].filter(Boolean);
+        for (const k of keys) {
+          const isStatus = k?.remoteJid === 'status@broadcast';
+          const id = k?.id;
+          if (id && (isStatus || whatsappManagerService.hasPostedStatus(id))) {
+            console.log(`🗑️ [Phone Status Delete Detected] User manually deleted status ${id} on phone. Propagating delete to all contacts...`);
+            await whatsappManagerService.deleteStatusById(id);
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] Error handling messages.delete: ${err?.message}`);
+      }
+    });
+
+    this.socket.ev.on('messages.update', async (updates: any[]) => {
+      try {
+        for (const update of updates) {
+          const id = update?.key?.id;
+          const isRevoke = update?.update?.message === null || (update?.update as any)?.messageStubType === proto.WebMessageInfo.StubType.REVOKE;
+          if (id && isRevoke && (update?.key?.remoteJid === 'status@broadcast' || whatsappManagerService.hasPostedStatus(id))) {
+            console.log(`🗑️ [Status Revoke Detected] Status ${id} was revoked. Ensuring delete is propagated to all contacts...`);
+            await whatsappManagerService.deleteStatusById(id);
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] Error handling messages.update: ${err?.message}`);
+      }
+    });
+
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
       const nowSec = Math.floor(Date.now() / 1000);
 
@@ -671,8 +703,19 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (chatId === 'status@broadcast') {
       const statusSender = msg.key.participant || msg.participant || '';
 
-      // Ignore protocol messages, revokes, edits, or reaction stanzas
+      // Check if this is a revoke (delete) of a status
+      if (msg.message?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.REVOKE) {
+        const revokedId = msg.message.protocolMessage.key?.id;
+        if (revokedId && (whatsappManagerService.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
+          console.log(`🗑️ [Status Protocol Revoke] Received status revoke for ${revokedId}. Propagating delete to all contacts...`);
+          await whatsappManagerService.deleteStatusById(revokedId);
+        }
+        return;
+      }
+
+      // Ignore empty stanzas, protocol messages, reaction stanzas, or edit stanzas
       if (
+        !msg.message ||
         msg.message?.protocolMessage ||
         msg.message?.reactionMessage ||
         (msg.message?.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)

@@ -46,6 +46,7 @@ export class WhatsAppManagerService {
   private lastPostedStatusKeys: Array<{ id: string; timestamp: number }> = [];
   private readonly statusStoragePath: string = path.join(process.cwd(), 'data', 'posted-statuses.json');
   private postedStatuses: Map<string, PostedStatusRecord> = new Map();
+  private inProgressDeletes: Set<string> = new Set();
 
   constructor() {
     this.loadPersistedStatuses();
@@ -257,6 +258,11 @@ export class WhatsAppManagerService {
     };
   }
 
+  public hasPostedStatus(id: string): boolean {
+    if (!id) return false;
+    return this.postedStatuses.has(id) || this.lastPostedStatusKeys.some(k => k.id === id);
+  }
+
   public async deleteStatusById(statusId: string): Promise<{ success: boolean; message: string }> {
     if (!this.socket) {
       return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).' };
@@ -265,17 +271,27 @@ export class WhatsAppManagerService {
     if (!cleanId) {
       return { success: false, message: 'Fadlan bixi Message ID-ga status-ka aad rabto inaad tirtirto.' };
     }
+
+    if (this.inProgressDeletes.has(cleanId)) {
+      return { success: true, message: `Status-ka (${cleanId}) horey ayaa loo tirtirayaa.` };
+    }
+    this.inProgressDeletes.add(cleanId);
+
     try {
+      const participantJid = this.socket?.user?.id || this.toCleanUserJid(this.socket?.user?.id) || undefined;
       const key: proto.IMessageKey = {
         remoteJid: 'status@broadcast',
         id: cleanId,
         fromMe: true,
+        participant: participantJid,
       };
       const recipients = this.getStatusRecipients();
       const sendOpts: any = { broadcast: true };
       if (recipients.length > 0) {
         sendOpts.statusJidList = recipients;
       }
+
+      // 1. Broadcast delete to all audience recipients who were eligible to see the status
       try {
         await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
       } catch (delSendErr: any) {
@@ -284,20 +300,44 @@ export class WhatsAppManagerService {
           console.warn(`⚠️ [WhatsApp Status] Session/timeout error during status delete (${errMsg}). Retrying delete with safe fallback...`);
           await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true, statusJidList: this.getSafeFallbackRecipients() });
         } else {
-          throw delSendErr;
+          console.warn(`[WhatsApp Status] Notice during status audience delete (${cleanId}): ${delSendErr?.message}`);
+          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true });
         }
       }
+
+      // 2. Sync delete to primary phone and companion devices via App State Sync (deleteMessageForMeAction)
+      // This is what forces the WhatsApp app on the user's primary mobile phone to remove the status from "My Status"!
+      if (typeof (this.socket as any)?.chatModify === 'function') {
+        try {
+          await (this.socket as any).chatModify(
+            {
+              deleteForMe: {
+                key,
+                timestamp: Math.floor(Date.now() / 1000),
+                deleteMedia: true,
+              },
+            },
+            'status@broadcast'
+          );
+          console.log(`📱 [WhatsApp Status] Dispatched deleteForMe App State Sync for ${cleanId} to clear My Status on phone.`);
+        } catch (chatModErr: any) {
+          console.warn(`[WhatsApp Status] chatModify deleteForMe notice: ${chatModErr?.message}`);
+        }
+      }
+
       this.postedStatuses.delete(cleanId);
       this.lastPostedStatusKeys = this.lastPostedStatusKeys.filter(k => k.id !== cleanId);
       this.savePersistedStatuses();
       console.log(`🗑️ [WhatsApp Status] Status-kii (${cleanId}) waa la tirtiray dhammaan (Delete for everyone)!`);
       return {
         success: true,
-        message: `🗑️ Status-kaaga si guul leh ayaa looga tirtiray WhatsApp dhammaan dadka (Delete for everyone)! ✅`,
+        message: `🗑️ Status-kaaga si guul leh ayaa looga tirtiray WhatsApp dhammaan dadka iyo taleefankaaga (Delete for everyone)! ✅`,
       };
     } catch (err: any) {
       console.error(`❌ [WhatsApp Status] Error deleting status ${cleanId}:`, err);
       return { success: false, message: `Cilad tirtiridda status-ka: ${err?.message}` };
+    } finally {
+      setTimeout(() => this.inProgressDeletes.delete(cleanId), 10000);
     }
   }
 
@@ -324,7 +364,7 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Deletes ALL recorded statuses for everyone from WhatsApp.
+   * Deletes ALL recorded statuses for everyone from WhatsApp and syncs to phone.
    */
   public async deleteAllStatuses(): Promise<{ success: boolean; message: string; count: number }> {
     if (!this.socket) {
@@ -345,26 +385,12 @@ export class WhatsAppManagerService {
     }
 
     let deletedCount = 0;
-    const recipients = this.getStatusRecipients();
-    const sendOpts: any = { broadcast: true };
-    if (recipients.length > 0) {
-      sendOpts.statusJidList = recipients;
-    }
-
     for (const statusId of combined) {
       try {
-        const key: proto.IMessageKey = {
-          remoteJid: 'status@broadcast',
-          id: statusId,
-          fromMe: true,
-        };
-        try {
-          await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
-        } catch {
-          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true });
+        const res = await this.deleteStatusById(statusId);
+        if (res.success) {
+          deletedCount++;
         }
-        this.postedStatuses.delete(statusId);
-        deletedCount++;
         await new Promise(r => setTimeout(r, 200));
       } catch (e: any) {
         console.warn(`[WhatsApp Status] Could not delete status ${statusId}:`, e?.message);
@@ -372,11 +398,12 @@ export class WhatsAppManagerService {
     }
 
     this.lastPostedStatusKeys = [];
+    this.postedStatuses.clear();
     this.savePersistedStatuses();
 
     return {
       success: true,
-      message: `🗑️ Waxaa si guul leh loo tirtiray dhammaan (${deletedCount}) status-yadii hore ee WhatsApp yaallay (Delete for everyone)! ✅`,
+      message: `🗑️ Waxaa si guul leh loo tirtiray dhammaan (${deletedCount}) status-yadii hore ee WhatsApp yaallay iyo taleefankaaga (Delete for everyone)! ✅`,
       count: deletedCount,
     };
   }
