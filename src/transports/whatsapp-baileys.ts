@@ -123,6 +123,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
         const bundle = JSON.parse(jsonStr);
         for (const [filename, content] of Object.entries(bundle)) {
+          if (filename.startsWith('sender-key-status@broadcast') || filename.startsWith('sender-key-memory-status@broadcast')) {
+            continue;
+          }
           fs.writeFileSync(path.join(this.authDir, filename), content as string, 'utf8');
         }
         console.log(`✅ [WhatsAppBaileys] Si guul leh ayaa loo soo celiyay ${Object.keys(bundle).length} auth files oo buuxa!`);
@@ -145,6 +148,19 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         console.error('⚠️ [WhatsAppBaileys] Failed to restore SESSION_CREDS_BASE64:', err.message);
       }
     }
+
+    // Purge any stale status sender-key files on startup so status #1 and #2+ always start at iteration 0
+    try {
+      if (fs.existsSync(this.authDir)) {
+        for (const f of fs.readdirSync(this.authDir)) {
+          if (f.startsWith('sender-key-status@broadcast') || f.startsWith('sender-key-memory-status@broadcast')) {
+            try {
+              fs.unlinkSync(path.join(this.authDir, f));
+            } catch {}
+          }
+        }
+      }
+    } catch {}
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
@@ -178,6 +194,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
           throw err;
         }
+      };
+    }
+
+    // Force fresh SenderKey (iteration 0) on every status@broadcast encryption to prevent Baileys GroupCipher iteration skip bug
+    if ((this.socket as any)?.signalRepository?.encryptGroupMessage) {
+      const origEncryptGroup = (this.socket as any).signalRepository.encryptGroupMessage.bind((this.socket as any).signalRepository);
+      (this.socket as any).signalRepository.encryptGroupMessage = async (args: { group: string; meId: string; data: Buffer }) => {
+        if (args?.group === 'status@broadcast') {
+          await whatsappManagerService.resetStatusSenderKeyMemory();
+        }
+        return await origEncryptGroup(args);
       };
     }
 
@@ -362,6 +389,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
+        // Cache all messages (including outgoing fromMe status broadcasts) so getMessage(key) can fulfill retry receipts
+        if (msg?.key?.id && msg?.message) {
+          this.rawMessages.set(msg.key.id, msg);
+          if (this.rawMessages.size > 1000) {
+            const oldest = this.rawMessages.keys().next().value;
+            if (oldest) this.rawMessages.delete(oldest);
+          }
+        }
+
         // Auto-heal messages that could not be decrypted (CIPHERTEXT stub / Bad MAC)
         if ((msg as any).messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
           const senderJid = msg.key?.participant || msg.key?.remoteJid;

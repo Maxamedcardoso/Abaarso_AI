@@ -478,6 +478,7 @@ export class WhatsAppManagerService {
       process.env.ADMIN_PHONE_NUMBERS,
       process.env.SUPER_ADMIN_PHONE,
       process.env.ALLOWED_PHONE_NUMBERS,
+      '252634949642',
     ]
       .filter(Boolean)
       .join(',')
@@ -640,30 +641,63 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Resets the sender-key memory for status@broadcast.
-   * WhatsApp Multi-Device requires each companion status post to distribute the sender key
-   * to the primary mobile device (:0). Baileys writes sender-key-memory-status@broadcast.json
-   * on the first post, marking all recipients as "already sent". On subsequent status posts,
-   * Baileys suppresses sending the sender key or recipient node to the primary mobile device,
-   * causing all statuses after the first one to be completely invisible on the phone!
-   * Purging this cache before & after each status post ensures every single status update
-   * behaves cleanly like the very first post!
+   * Resets both the Signal 'sender-key' record and 'sender-key-memory' for status@broadcast.
+   * Baileys' GroupCipher.encrypt() has an off-by-one bug on iterations > 0 (`iteration === 0 ? 0 : iteration + 1`),
+   * which causes status #1 (iteration 0) to succeed on the owner's phone while status #2+ skips iteration 1 -> 2
+   * and fails to appear on the owner's phone!
+   * By resetting both 'sender-key' (status@broadcast::user::device) in memory/disk and 'sender-key-memory'
+   * before & after each status post, every single status post generates a fresh senderKeyId at iteration = 0,
+   * guaranteeing that status #2, #3, #4... appear on the owner's and admin's phones identically to status #1.
    */
   public async resetStatusSenderKeyMemory(): Promise<void> {
     try {
+      const senderKeyResetMap: Record<string, any> = {};
+
+      // 1. Collect sender-key IDs from socket user and authState creds
+      const candidateMeJids = [
+        this.socket?.user?.id,
+        (this.socket?.user as any)?.lid,
+        (this.socket as any)?.authState?.creds?.me?.id,
+        (this.socket as any)?.authState?.creds?.me?.lid,
+      ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+
+      for (const rawJid of candidateMeJids) {
+        const beforeAt = rawJid.split('@')[0];
+        const parts = beforeAt.split(':');
+        const userPart = parts[0];
+        const devicePart = parts[1] || '0';
+        if (userPart) {
+          senderKeyResetMap[`status@broadcast::${userPart}::${devicePart}`] = null;
+          senderKeyResetMap[`status@broadcast::${userPart}::0`] = null;
+        }
+      }
+
+      // 2. Delete any sender-key-status@broadcast* or sender-key-memory-status@broadcast* files on disk
       const authDir = path.join(process.cwd(), 'baileys_auth_info');
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
-          if (file.startsWith('sender-key-memory-status@broadcast')) {
+          if (
+            file.startsWith('sender-key-status@broadcast') ||
+            file.startsWith('sender-key-memory-status@broadcast')
+          ) {
+            if (file.startsWith('sender-key-status@broadcast--') && file.endsWith('.json')) {
+              const keyId = file
+                .slice('sender-key-'.length, -'.json'.length)
+                .replace(/--/g, '::');
+              senderKeyResetMap[keyId] = null;
+            }
             try {
               fs.unlinkSync(path.join(authDir, file));
             } catch {}
           }
         }
       }
+
+      // 3. Flush both 'sender-key' and 'sender-key-memory' in Baileys' cacheable signal key store
       if ((this.socket as any)?.authState?.keys?.set) {
         await (this.socket as any).authState.keys.set({
+          'sender-key': senderKeyResetMap,
           'sender-key-memory': { 'status@broadcast': null },
         });
       }
