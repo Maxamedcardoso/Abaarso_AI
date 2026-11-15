@@ -446,8 +446,6 @@ export class WhatsAppManagerService {
       const cleanMe = this.toCleanUserJid(this.socket.user.id);
       if (cleanMe) {
         list.push(cleanMe);
-        const num = cleanMe.split('@')[0];
-        list.push(`${num}:0@s.whatsapp.net`);
       }
     } else {
       try {
@@ -458,8 +456,6 @@ export class WhatsAppManagerService {
             const cleanMe = this.toCleanUserJid(creds.me.id);
             if (cleanMe) {
               list.push(cleanMe);
-              const num = cleanMe.split('@')[0];
-              list.push(`${num}:0@s.whatsapp.net`);
             }
           }
         }
@@ -491,8 +487,6 @@ export class WhatsAppManagerService {
       const cleanAdmin = this.toCleanUserJid(a);
       if (cleanAdmin) {
         set.add(cleanAdmin);
-        const num = cleanAdmin.split('@')[0];
-        set.add(`${num}:0@s.whatsapp.net`);
       }
     }
     return Array.from(set);
@@ -513,7 +507,6 @@ export class WhatsAppManagerService {
           if (match && match[1]) {
             const digits = match[1];
             if (digits.startsWith('1800')) continue;
-            if (broadcastService.getContact(`${digits}@lid`)) continue;
             const clean = this.toCleanUserJid(digits);
             if (clean) {
               list.push(clean);
@@ -542,7 +535,7 @@ export class WhatsAppManagerService {
    * Strictly rejects @lid or 14-15 digit LID numbers.
    */
   public hasSessionRecord(jid: string): boolean {
-    if (!jid || jid.includes('@lid')) return false;
+    if (!jid || jid.includes('@lid') || jid.includes(':')) return false;
     const cleanDigits = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
     if (!cleanDigits || cleanDigits.length < 7 || cleanDigits.length > 13) return false;
 
@@ -570,15 +563,15 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Filters any recipient list to verified phone recipients and strictly excludes all @lid JIDs.
+   * Filters any recipient list to verified phone recipients and strictly excludes all @lid JIDs and colon device suffixes.
    * Caps total status recipients at 50 (matching WhatsApp's encrypt IQ prekey batch limit) with
-   * owner and admin devices guaranteed first so WhatsApp never drops oversized broadcast stanzas.
+   * owner and admin accounts guaranteed first so WhatsApp never drops oversized broadcast stanzas.
    */
   public filterSessionVerifiedRecipients(recipients: string[]): string[] {
     const MAX_STATUS_RECIPIENTS = 50;
     const safeSet = new Set<string>();
 
-    // 1. Always ensure owner primary device and clean JID are first
+    // 1. Always ensure owner clean JID is first
     for (const o of this.getOwnerOnlyRecipients()) safeSet.add(o);
 
     // 2. Always ensure admin numbers are next
@@ -587,10 +580,9 @@ export class WhatsAppManagerService {
     // 3. Add candidates that pass validation up to MAX_STATUS_RECIPIENTS
     for (const r of recipients) {
       if (safeSet.size >= MAX_STATUS_RECIPIENTS) break;
-      if (!r || r.includes('@lid')) continue;
+      if (!r || r.includes('@lid') || r.includes(':')) continue;
       const digits = r.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
       if (!digits || digits.startsWith('1800')) continue;
-      if (broadcastService.getContact(`${digits}@lid`)) continue;
       const clean = this.toCleanUserJid(r);
       if (clean && this.hasSessionRecord(clean)) {
         safeSet.add(clean);
@@ -601,7 +593,9 @@ export class WhatsAppManagerService {
     if (safeSet.size < MAX_STATUS_RECIPIENTS) {
       for (const d of this.getVerifiedDiskSessionRecipients()) {
         if (safeSet.size >= MAX_STATUS_RECIPIENTS) break;
-        safeSet.add(d);
+        if (d && !d.includes(':')) {
+          safeSet.add(d);
+        }
       }
     }
 
@@ -620,7 +614,7 @@ export class WhatsAppManagerService {
   public getStatusRecipients(): string[] {
     const jidSet = new Set<string>();
 
-    // 1. Host account's own primary number and primary device (:0)
+    // 1. Host account's own primary number
     for (const o of this.getOwnerOnlyRecipients()) {
       jidSet.add(o);
     }
@@ -635,19 +629,17 @@ export class WhatsAppManagerService {
       const cleanBot = this.toCleanUserJid(this.botJid);
       if (cleanBot) {
         jidSet.add(cleanBot);
-        const num = cleanBot.split('@')[0];
-        jidSet.add(`${num}:0@s.whatsapp.net`);
       }
     }
 
     // 4. Synchronized phone contacts from broadcast service (most recently active first, strictly @s.whatsapp.net only)
     const contacts = [...broadcastService.getContacts()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
     for (const c of contacts) {
-      if (!c.jid || c.jid.includes('@lid')) continue;
-      const digits = c.jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+      const phoneCandidate = c.phone || (!c.jid?.includes('@lid') ? c.jid : undefined);
+      if (!phoneCandidate) continue;
+      const digits = phoneCandidate.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
       if (!digits || digits.startsWith('1800')) continue;
-      if (broadcastService.getContact(`${digits}@lid`)) continue;
-      const clean = this.toCleanUserJid(c.jid);
+      const clean = this.toCleanUserJid(phoneCandidate);
       if (clean) jidSet.add(clean);
     }
 

@@ -241,16 +241,30 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       };
     }
 
-    // Strip any 0-byte <enc> participant nodes (from skipped un-sessioned recipients) so WhatsApp server never drops the stanza
+    // Guarantee addressing_mode="pn" on status@broadcast and strip 0-byte or malformed participant nodes
     if ((this.socket as any)?.sendNode) {
       const origSendNode = (this.socket as any).sendNode.bind(this.socket);
       (this.socket as any).sendNode = async (frame: any) => {
         try {
+          if (frame?.tag === 'message' && frame?.attrs?.to === 'status@broadcast') {
+            // WhatsApp server on LID-migrated accounts strictly requires addressing_mode="pn" on status stanzas
+            // to avoid rejecting with <ack error="479"/> (smax-invalid)
+            frame.attrs.addressing_mode = 'pn';
+          }
+
           if (frame?.tag === 'message' && Array.isArray(frame.content)) {
             for (const child of frame.content) {
               if (child?.tag === 'participants' && Array.isArray(child.content)) {
+                const seenJids = new Set<string>();
                 child.content = child.content.filter((toNode: any) => {
                   if (!toNode || toNode.tag !== 'to' || !Array.isArray(toNode.content)) return false;
+                  // Normalize any device suffix like :0 to clean @s.whatsapp.net user JID and deduplicate
+                  if (toNode.attrs?.jid) {
+                    const cleanJid = toNode.attrs.jid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+                    if (seenJids.has(cleanJid)) return false;
+                    seenJids.add(cleanJid);
+                    toNode.attrs.jid = cleanJid;
+                  }
                   const encNode = toNode.content.find((c: any) => c?.tag === 'enc');
                   if (encNode && (!encNode.content || encNode.content.length === 0)) {
                     return false;
@@ -263,6 +277,19 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         } catch {}
         return await origSendNode(frame);
       };
+    }
+
+    // Monitor server ACKs for instant detection of server-side delivery confirmations or 479 rejections
+    if ((this.socket as any)?.ws) {
+      (this.socket.ws as any).on('CB:ack', (node: any) => {
+        try {
+          if (node?.attrs?.class === 'message' && node?.attrs?.error) {
+            console.error(`🚨 [WhatsApp Server Error ACK] Message ID ${node.attrs.id} was REJECTED by WhatsApp server with error code ${node.attrs.error}!`);
+          } else if (node?.attrs?.class === 'message' && node?.attrs?.from === 'status@broadcast') {
+            console.log(`✅ [WhatsApp Server ACK] Status broadcast ${node.attrs.id} was successfully accepted by WhatsApp server!`);
+          }
+        } catch {}
+      });
     }
 
     whatsappManagerService.setSocket(this.socket);
