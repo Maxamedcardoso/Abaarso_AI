@@ -479,6 +479,7 @@ export class WhatsAppManagerService {
       process.env.SUPER_ADMIN_PHONE,
       process.env.ALLOWED_PHONE_NUMBERS,
       '252634949642',
+      '252633171649',
     ]
       .filter(Boolean)
       .join(',')
@@ -499,7 +500,7 @@ export class WhatsAppManagerService {
 
   /**
    * Scans baileys_auth_info for active pairwise Signal session files that belong to real E.164 phone numbers.
-   * Strictly excludes 14-15 digit internal WhatsApp LID sessions so USync never times out on fake @s.whatsapp.net JIDs.
+   * Strictly excludes internal WhatsApp LID sessions so USync never times out on fake @s.whatsapp.net JIDs.
    */
   public getVerifiedDiskSessionRecipients(): string[] {
     const list: string[] = [];
@@ -508,9 +509,12 @@ export class WhatsAppManagerService {
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
-          const match = file.match(/^session-([0-9]{7,13})\.(?:0|[0-9]+)\.json$/);
+          const match = file.match(/^session-([0-9]{7,13})\.0\.json$/);
           if (match && match[1]) {
-            const clean = this.toCleanUserJid(match[1]);
+            const digits = match[1];
+            if (digits.startsWith('1800')) continue;
+            if (broadcastService.getContact(`${digits}@lid`)) continue;
+            const clean = this.toCleanUserJid(digits);
             if (clean) {
               list.push(clean);
             }
@@ -567,25 +571,37 @@ export class WhatsAppManagerService {
 
   /**
    * Filters any recipient list to verified phone recipients and strictly excludes all @lid JIDs.
+   * Caps total status recipients at 50 (matching WhatsApp's encrypt IQ prekey batch limit) with
+   * owner and admin devices guaranteed first so WhatsApp never drops oversized broadcast stanzas.
    */
   public filterSessionVerifiedRecipients(recipients: string[]): string[] {
+    const MAX_STATUS_RECIPIENTS = 50;
     const safeSet = new Set<string>();
 
-    // 1. Always ensure owner primary device and clean JID are present
+    // 1. Always ensure owner primary device and clean JID are first
     for (const o of this.getOwnerOnlyRecipients()) safeSet.add(o);
 
-    // 2. Always ensure admin numbers are present
+    // 2. Always ensure admin numbers are next
     for (const a of this.getAdminRecipients()) safeSet.add(a);
 
-    // 3. Always ensure established phone disk sessions are present
-    for (const d of this.getVerifiedDiskSessionRecipients()) safeSet.add(d);
-
-    // 4. Add candidates that pass validation
+    // 3. Add candidates that pass validation up to MAX_STATUS_RECIPIENTS
     for (const r of recipients) {
+      if (safeSet.size >= MAX_STATUS_RECIPIENTS) break;
       if (!r || r.includes('@lid')) continue;
+      const digits = r.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+      if (!digits || digits.startsWith('1800')) continue;
+      if (broadcastService.getContact(`${digits}@lid`)) continue;
       const clean = this.toCleanUserJid(r);
       if (clean && this.hasSessionRecord(clean)) {
         safeSet.add(clean);
+      }
+    }
+
+    // 4. Fill remaining slots from established phone disk sessions
+    if (safeSet.size < MAX_STATUS_RECIPIENTS) {
+      for (const d of this.getVerifiedDiskSessionRecipients()) {
+        if (safeSet.size >= MAX_STATUS_RECIPIENTS) break;
+        safeSet.add(d);
       }
     }
 
@@ -599,7 +615,7 @@ export class WhatsAppManagerService {
    * 2. The admin / user receives and decrypts the status on their phone.
    * 3. Real phone contacts receive the status in their "Updates" tab.
    * 4. Deletion requests broadcast the revocation key to all recipients.
-   * Strictly excludes @lid contacts (which are 14-15 digit internal IDs that cause USync Timed Out).
+   * Strictly excludes @lid contacts and caps at 50 active recipients so USync/encrypt IQ never times out or drops.
    */
   public getStatusRecipients(): string[] {
     const jidSet = new Set<string>();
@@ -614,20 +630,7 @@ export class WhatsAppManagerService {
       jidSet.add(a);
     }
 
-    // 3. Active pairwise phone Signal sessions from disk
-    for (const d of this.getVerifiedDiskSessionRecipients()) {
-      jidSet.add(d);
-    }
-
-    // 4. Synchronized phone contacts from broadcast service (STRICTLY @s.whatsapp.net only, never @lid)
-    const contacts = broadcastService.getContacts();
-    for (const c of contacts) {
-      if (!c.jid || c.jid.includes('@lid')) continue;
-      const clean = this.toCleanUserJid(c.jid);
-      if (clean) jidSet.add(clean);
-    }
-
-    // 5. Bot's configured JID if available
+    // 3. Bot's configured JID if available
     if (this.botJid) {
       const cleanBot = this.toCleanUserJid(this.botJid);
       if (cleanBot) {
@@ -637,56 +640,36 @@ export class WhatsAppManagerService {
       }
     }
 
+    // 4. Synchronized phone contacts from broadcast service (most recently active first, strictly @s.whatsapp.net only)
+    const contacts = [...broadcastService.getContacts()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    for (const c of contacts) {
+      if (!c.jid || c.jid.includes('@lid')) continue;
+      const digits = c.jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+      if (!digits || digits.startsWith('1800')) continue;
+      if (broadcastService.getContact(`${digits}@lid`)) continue;
+      const clean = this.toCleanUserJid(c.jid);
+      if (clean) jidSet.add(clean);
+    }
+
+    // 5. Active pairwise phone Signal sessions from disk
+    for (const d of this.getVerifiedDiskSessionRecipients()) {
+      jidSet.add(d);
+    }
+
     return this.filterSessionVerifiedRecipients(Array.from(jidSet));
   }
 
   /**
-   * Resets both the Signal 'sender-key' record and 'sender-key-memory' for status@broadcast.
-   * Baileys' GroupCipher.encrypt() has an off-by-one bug on iterations > 0 (`iteration === 0 ? 0 : iteration + 1`),
-   * which causes status #1 (iteration 0) to succeed on the owner's phone while status #2+ skips iteration 1 -> 2
-   * and fails to appear on the owner's phone!
-   * By resetting both 'sender-key' (status@broadcast::user::device) in memory/disk and 'sender-key-memory'
-   * before & after each status post, every single status post generates a fresh senderKeyId at iteration = 0,
-   * guaranteeing that status #2, #3, #4... appear on the owner's and admin's phones identically to status #1.
+   * Resets only the recipient delivery map ('sender-key-memory') for status@broadcast,
+   * while preserving the active Signal 'sender-key' chain state.
    */
   public async resetStatusSenderKeyMemory(): Promise<void> {
     try {
-      const senderKeyResetMap: Record<string, any> = {};
-
-      // 1. Collect sender-key IDs from socket user and authState creds
-      const candidateMeJids = [
-        this.socket?.user?.id,
-        (this.socket?.user as any)?.lid,
-        (this.socket as any)?.authState?.creds?.me?.id,
-        (this.socket as any)?.authState?.creds?.me?.lid,
-      ].filter((v): v is string => typeof v === 'string' && v.length > 0);
-
-      for (const rawJid of candidateMeJids) {
-        const beforeAt = rawJid.split('@')[0];
-        const parts = beforeAt.split(':');
-        const userPart = parts[0];
-        const devicePart = parts[1] || '0';
-        if (userPart) {
-          senderKeyResetMap[`status@broadcast::${userPart}::${devicePart}`] = null;
-          senderKeyResetMap[`status@broadcast::${userPart}::0`] = null;
-        }
-      }
-
-      // 2. Delete any sender-key-status@broadcast* or sender-key-memory-status@broadcast* files on disk
       const authDir = path.join(process.cwd(), 'baileys_auth_info');
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
-          if (
-            file.startsWith('sender-key-status@broadcast') ||
-            file.startsWith('sender-key-memory-status@broadcast')
-          ) {
-            if (file.startsWith('sender-key-status@broadcast--') && file.endsWith('.json')) {
-              const keyId = file
-                .slice('sender-key-'.length, -'.json'.length)
-                .replace(/--/g, '::');
-              senderKeyResetMap[keyId] = null;
-            }
+          if (file.startsWith('sender-key-memory-status@broadcast')) {
             try {
               fs.unlinkSync(path.join(authDir, file));
             } catch {}
@@ -694,10 +677,8 @@ export class WhatsAppManagerService {
         }
       }
 
-      // 3. Flush both 'sender-key' and 'sender-key-memory' in Baileys' cacheable signal key store
       if ((this.socket as any)?.authState?.keys?.set) {
         await (this.socket as any).authState.keys.set({
-          'sender-key': senderKeyResetMap,
           'sender-key-memory': { 'status@broadcast': null },
         });
       }
