@@ -280,9 +280,9 @@ export class WhatsAppManagerService {
         await this.socket.sendMessage('status@broadcast', { delete: key }, sendOpts);
       } catch (delSendErr: any) {
         const errMsg = delSendErr?.message || '';
-        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC')) {
-          console.warn(`⚠️ [WhatsApp Status] Session error during status delete (${errMsg}). Retrying delete without statusJidList...`);
-          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true });
+        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC') || errMsg.includes('Timed Out') || errMsg.includes('timed out')) {
+          console.warn(`⚠️ [WhatsApp Status] Session/timeout error during status delete (${errMsg}). Retrying delete with safe fallback...`);
+          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true, statusJidList: this.getSafeFallbackRecipients() });
         } else {
           throw delSendErr;
         }
@@ -428,7 +428,8 @@ export class WhatsAppManagerService {
     } else if (/^[69]\d{8}$/.test(userPart)) {
       normalizedDigits = '252' + userPart;
     }
-    if (normalizedDigits.length >= 7 && normalizedDigits.length <= 15) {
+    // Real E.164 phone numbers are 7 to 13 digits (14-15 digit numbers in WhatsApp are internal LIDs)
+    if (normalizedDigits.length >= 7 && normalizedDigits.length <= 13) {
       return `${normalizedDigits}@s.whatsapp.net`;
     }
     return null;
@@ -496,9 +497,8 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Scans baileys_auth_info for all active pairwise Signal session files.
-   * This includes contacts and user accounts (e.g. user LID sessions) that have already
-   * established end-to-end encryption with the bot.
+   * Scans baileys_auth_info for active pairwise Signal session files that belong to real E.164 phone numbers.
+   * Strictly excludes 14-15 digit internal WhatsApp LID sessions so USync never times out on fake @s.whatsapp.net JIDs.
    */
   public getVerifiedDiskSessionRecipients(): string[] {
     const list: string[] = [];
@@ -507,11 +507,12 @@ export class WhatsAppManagerService {
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
-          const match = file.match(/^session-([0-9]{5,})\.(?:0|[0-9]+)\.json$/);
+          const match = file.match(/^session-([0-9]{7,13})\.(?:0|[0-9]+)\.json$/);
           if (match && match[1]) {
-            const id = match[1];
-            list.push(`${id}@s.whatsapp.net`);
-            list.push(`${id}:0@s.whatsapp.net`);
+            const clean = this.toCleanUserJid(match[1]);
+            if (clean) {
+              list.push(clean);
+            }
           }
         }
       }
@@ -520,26 +521,25 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Safe fallback recipients containing the host account, admin accounts,
-   * and all active disk-verified pairwise sessions.
+   * Safe fallback recipients containing the host account and admin accounts.
    */
   public getSafeFallbackRecipients(): string[] {
     return Array.from(
       new Set([
         ...this.getOwnerOnlyRecipients(),
         ...this.getAdminRecipients(),
-        ...this.getVerifiedDiskSessionRecipients(),
       ])
     );
   }
 
   /**
-   * Checks whether a recipient has an active pairwise Signal session file on disk or is the owner or admin.
+   * Checks whether a recipient is a valid phone JID (owner, admin, or valid 7-13 digit E.164 phone number).
+   * Strictly rejects @lid or 14-15 digit LID numbers.
    */
   public hasSessionRecord(jid: string): boolean {
-    if (!jid) return false;
+    if (!jid || jid.includes('@lid')) return false;
     const cleanDigits = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    if (!cleanDigits) return false;
+    if (!cleanDigits || cleanDigits.length < 7 || cleanDigits.length > 13) return false;
 
     // In unit-test / mock environment (no authState attached), allow all valid phone JIDs
     if (this.socket && !(this.socket as any).authState) {
@@ -560,31 +560,12 @@ export class WhatsAppManagerService {
       return true;
     }
 
-    try {
-      const authDir = path.join(process.cwd(), 'baileys_auth_info');
-      if (fs.existsSync(authDir)) {
-        if (fs.existsSync(path.join(authDir, `session-${cleanDigits}.0.json`))) {
-          return true;
-        }
-        const files = fs.readdirSync(authDir);
-        for (const file of files) {
-          if (file.startsWith(`session-${cleanDigits}.`)) {
-            return true;
-          }
-        }
-      }
-    } catch {}
-
-    // For valid phone numbers (SOM local or international E.164, 7-15 digits), allow pre-key discovery
-    if (cleanDigits.length >= 7 && cleanDigits.length <= 15 && !jid.includes('@lid')) {
-      return true;
-    }
-
-    return false;
+    // Valid E.164 phone numbers (7-13 digits, non-LID) are valid WhatsApp phone recipients
+    return true;
   }
 
   /**
-   * Filters any recipient list to verified recipients and excludes invalid un-sessioned @lid JIDs.
+   * Filters any recipient list to verified phone recipients and strictly excludes all @lid JIDs.
    */
   public filterSessionVerifiedRecipients(recipients: string[]): string[] {
     const safeSet = new Set<string>();
@@ -595,13 +576,13 @@ export class WhatsAppManagerService {
     // 2. Always ensure admin numbers are present
     for (const a of this.getAdminRecipients()) safeSet.add(a);
 
-    // 3. Always ensure established disk sessions are present
+    // 3. Always ensure established phone disk sessions are present
     for (const d of this.getVerifiedDiskSessionRecipients()) safeSet.add(d);
 
     // 4. Add candidates that pass validation
     for (const r of recipients) {
-      if (!r) continue;
-      const clean = this.toCleanUserJid(r) || (r.endsWith('@s.whatsapp.net') ? r : null);
+      if (!r || r.includes('@lid')) continue;
+      const clean = this.toCleanUserJid(r);
       if (clean && this.hasSessionRecord(clean)) {
         safeSet.add(clean);
       }
@@ -615,8 +596,9 @@ export class WhatsAppManagerService {
    * WhatsApp Multi-Device strictly requires statusJidList so that:
    * 1. The owner's primary mobile phone receives the status in "My Status" (decrypts sender key).
    * 2. The admin / user receives and decrypts the status on their phone.
-   * 3. Contacts receive the status in their "Updates" tab.
+   * 3. Real phone contacts receive the status in their "Updates" tab.
    * 4. Deletion requests broadcast the revocation key to all recipients.
+   * Strictly excludes @lid contacts (which are 14-15 digit internal IDs that cause USync Timed Out).
    */
   public getStatusRecipients(): string[] {
     const jidSet = new Set<string>();
@@ -631,19 +613,17 @@ export class WhatsAppManagerService {
       jidSet.add(a);
     }
 
-    // 3. Active pairwise Signal sessions from disk (includes user LID session)
+    // 3. Active pairwise phone Signal sessions from disk
     for (const d of this.getVerifiedDiskSessionRecipients()) {
       jidSet.add(d);
     }
 
-    // 4. Synchronized phone contacts from broadcast service (with valid phone numbers)
+    // 4. Synchronized phone contacts from broadcast service (STRICTLY @s.whatsapp.net only, never @lid)
     const contacts = broadcastService.getContacts();
     for (const c of contacts) {
-      const phoneCandidate = c.phone || (!c.jid.includes('@lid') ? c.jid : undefined);
-      if (phoneCandidate) {
-        const clean = this.toCleanUserJid(phoneCandidate);
-        if (clean) jidSet.add(clean);
-      }
+      if (!c.jid || c.jid.includes('@lid')) continue;
+      const clean = this.toCleanUserJid(c.jid);
+      if (clean) jidSet.add(clean);
     }
 
     // 5. Bot's configured JID if available
@@ -757,8 +737,8 @@ export class WhatsAppManagerService {
         );
       } catch (sendErr: any) {
         const errMsg = sendErr?.message || '';
-        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC')) {
-          console.warn(`⚠️ [WhatsApp Status] Session error during text status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
+        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC') || errMsg.includes('Timed Out') || errMsg.includes('timed out')) {
+          console.warn(`⚠️ [WhatsApp Status] Session/timeout error during text status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
           await this.resetStatusSenderKeyMemory();
           const fallbackOptions = {
             ...statusSendOptions,
@@ -875,8 +855,8 @@ export class WhatsAppManagerService {
         sent = await dispatchMedia(statusSendOptions);
       } catch (sendErr: any) {
         const errMsg = sendErr?.message || '';
-        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC')) {
-          console.warn(`⚠️ [WhatsApp Status] Session error during media status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
+        if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC') || errMsg.includes('Timed Out') || errMsg.includes('timed out')) {
+          console.warn(`⚠️ [WhatsApp Status] Session/timeout error during media status dispatch (${errMsg}). Retrying with safe fallback recipients...`);
           await this.resetStatusSenderKeyMemory();
           const fallbackOptions = {
             ...statusSendOptions,

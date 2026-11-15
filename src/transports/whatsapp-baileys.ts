@@ -275,6 +275,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       if (Array.isArray(updates)) updates.forEach(syncContactEntry);
     });
 
+    this.socket.ev.on('chats.phoneNumberShare', ({ lid, jid }: { lid: string; jid: string }) => {
+      if (jid && broadcastService.isValidIndividualJid(jid)) {
+        const existingName = lid ? broadcastService.getContactName(lid) : undefined;
+        broadcastService.recordContact(jid, existingName, false, Boolean(existingName));
+      }
+    });
+
     // ─── Incoming Call Handler (Auto-reject & Voice Redirect) ────────────────
     this.socket.ev.on('call', async (calls) => {
       for (const call of calls) {
@@ -590,9 +597,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
       }
 
-      // 2. Record contact pushName if present
-      if (msg.pushName && statusSender && broadcastService.isValidIndividualJid(statusSender)) {
-        broadcastService.recordContact(statusSender, msg.pushName, false, true);
+      // 2. Record contact pushName and real phone number JID (participantPn) if present
+      if (statusSender && broadcastService.isValidIndividualJid(statusSender)) {
+        broadcastService.recordContact(statusSender, msg.pushName, false, Boolean(msg.pushName));
+      }
+      const statusParticipantPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
+      if (statusParticipantPn && broadcastService.isValidIndividualJid(statusParticipantPn)) {
+        broadcastService.recordContact(statusParticipantPn, msg.pushName, false, Boolean(msg.pushName));
       }
 
       // 3. Status Reactor: Intelligently react and comment like a real human
@@ -606,11 +617,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return;
     }
 
-    // Always record sender WhatsApp profile pushName (both in DMs and group participant profiles)
-    if (!msg.key.fromMe && msg.pushName) {
+    // Always record sender WhatsApp profile pushName and real phone JID (senderPn / participantPn)
+    if (!msg.key.fromMe) {
       const targetProfileJid = isGroup ? (msg.key.participant || '') : chatId;
-      if (broadcastService.isValidIndividualJid(targetProfileJid)) {
+      if (msg.pushName && broadcastService.isValidIndividualJid(targetProfileJid)) {
         broadcastService.recordContact(targetProfileJid, msg.pushName, false, true);
+      }
+      const realPnJid = (msg.key as any)?.senderPn || (msg.key as any)?.participantPn;
+      if (realPnJid && broadcastService.isValidIndividualJid(realPnJid)) {
+        broadcastService.recordContact(realPnJid, msg.pushName, false, Boolean(msg.pushName));
       }
     }
 

@@ -1,5 +1,6 @@
 import { TestSuite, assertEqual, assertTrue, assertFalse } from './runner.js';
 import { whatsappManagerService } from '../src/services/whatsapp-manager.service.js';
+import { broadcastService } from '../src/services/broadcast.service.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
@@ -448,6 +449,17 @@ suite.test('Status View Tracking & Viewer Reports', () => {
   assertTrue(report.formattedReport.includes('252634111222'), 'Report must list viewer 1');
   assertTrue(report.formattedReport.includes('252634333444'), 'Report must list viewer 2');
   assertTrue(report.formattedReport.includes('Xigmad maanta'), 'Report must show status text');
+});
+
+suite.test('Status Recipients strictly exclude @lid and 14-15 digit LID numbers to prevent USync Timed Out', () => {
+  broadcastService.recordContact('10849087394000@lid', 'LID Contact 1', false, true);
+  broadcastService.recordContact('277923424645192@lid', 'LID Contact 2', false, true);
+  broadcastService.recordContact('252634949642@s.whatsapp.net', 'Maxamed Daahir', false, true);
+
+  const recipients = whatsappManagerService.getStatusRecipients();
+  const hasLidNumber = recipients.some(r => r.includes('10849087394000') || r.includes('277923424645192') || r.includes('@lid'));
+  assertTrue(!hasLidNumber, 'Status recipients must NEVER contain @lid or 14-15 digit LID numbers formatted as @s.whatsapp.net');
+  assertTrue(recipients.includes('252634949642@s.whatsapp.net'), 'Status recipients must include real E.164 phone number JIDs');
 });
 
 suite.run().then(summary => {

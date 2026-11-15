@@ -227,11 +227,14 @@ export class BroadcastService {
       const persisted = await this.memory.getBroadcastContacts();
       for (const c of persisted) {
         if (c.jid && this.isValidIndividualJid(c.jid)) {
+          const validPhone = (!c.jid.includes('@lid') && c.phone && c.phone.length >= 7 && c.phone.length <= 13)
+            ? c.phone
+            : undefined;
           this.contactsMap.set(c.jid, {
             jid: c.jid,
             name: c.name,
             firstName: c.firstName || this.extractCleanFirstName(c.name),
-            phone: c.phone,
+            phone: validPhone,
             lastSeen: Date.now(),
           });
         }
@@ -331,13 +334,16 @@ export class BroadcastService {
       return;
     }
 
-    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
-    if (this.botJid && (phone === this.botJid || jid.includes(this.botJid))) {
+    const rawDigits = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    if (this.botJid && (rawDigits === this.botJid || jid.includes(this.botJid))) {
       return;
     }
-    if (this.botLid && (phone === this.botLid || jid.includes(this.botLid))) {
+    if (this.botLid && (rawDigits === this.botLid || jid.includes(this.botLid))) {
       return;
     }
+    const phone = (!jid.includes('@lid') && rawDigits.length >= 7 && rawDigits.length <= 13)
+      ? rawDigits
+      : undefined;
 
     const cleanName = (name && name.trim().length > 0) ? name.trim() : undefined;
     const firstName = this.extractCleanFirstName(cleanName);
