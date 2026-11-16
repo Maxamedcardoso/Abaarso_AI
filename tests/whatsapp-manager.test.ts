@@ -7,7 +7,11 @@ import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { AIOrchestrator } from '../src/ai/ai-orchestrator.js';
 import { config } from '../src/config/env.js';
 import { ConsoleSimulatorTransport } from '../src/transports/console-simulator.js';
+import { WhatsAppBaileysTransport } from '../src/transports/whatsapp-baileys.js';
+import { EventEmitter } from 'events';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const suite = new TestSuite('WhatsApp 100% Management & Status Intelligence');
 const testDb = './data/test_whatsapp_manager.db';
@@ -179,7 +183,7 @@ suite.test('Mock socket executes status posting and group actions successfully',
 suite.test('Custom Auto-Replies in SQLiteMemory store and match instant answers', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -350,7 +354,7 @@ suite.test('MessageRouter processes status commands, replies, and group actions'
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Unauthorized users are strictly blocked from executing admin/management commands', async () => {
@@ -422,7 +426,7 @@ suite.test('Unauthorized users are strictly blocked from executing admin/managem
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Status View Tracking & Viewer Reports', () => {
@@ -461,6 +465,205 @@ suite.test('Status Recipients strictly exclude @lid and 14-15 digit LID numbers 
   const hasLidNumber = recipients.some(r => r.includes('10849087394000') || r.includes('277923424645192') || r.includes('@lid'));
   assertTrue(!hasLidNumber, 'Status recipients must NEVER contain @lid or 14-15 digit LID numbers formatted as @s.whatsapp.net');
   assertTrue(recipients.includes('252634949642@s.whatsapp.net'), 'Status recipients must include real E.164 phone number JIDs');
+});
+
+suite.test('ensureOwnerSessionHealthy heals stale unacked PN sessions and preserves healthy ones', async () => {
+  const tempAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-owner-sess-'));
+  try {
+    const storeSessions: Record<string, any> = {};
+    const deletedKeys: any[] = [];
+    const assertedCalls: Array<{ jids: string[]; force: boolean }> = [];
+
+    const mockSocket: any = {
+      user: { id: '252633171649:6@s.whatsapp.net', lid: '117000009416739:6@lid' },
+      authState: {
+        keys: {
+          get: async (type: string, ids: string[]) => {
+            if (type !== 'session') return {};
+            const out: Record<string, any> = {};
+            for (const id of ids) {
+              if (storeSessions[id]) out[id] = storeSessions[id];
+            }
+            return out;
+          },
+          set: async (data: any) => {
+            deletedKeys.push(data);
+            if (data?.session) {
+              for (const [k, v] of Object.entries(data.session)) {
+                if (v === null) delete storeSessions[k];
+                else storeSessions[k] = v;
+              }
+            }
+          },
+        },
+      },
+      assertSessions: async (jids: string[], force: boolean) => {
+        assertedCalls.push({ jids, force });
+        return true;
+      },
+    };
+
+    whatsappManagerService.setBotJid('252633171649:6@s.whatsapp.net');
+    whatsappManagerService.setSocket(mockSocket);
+
+    const sessionFile = path.join(tempAuthDir, 'session-252633171649.0.json');
+    const healthyRecord = {
+      _sessions: {
+        base1: {
+          indexInfo: { closed: -1 },
+          _chains: {
+            send1: { chainKey: { counter: 12 } },
+            recv1: { chainKey: { counter: 3 } },
+          },
+        },
+      },
+    };
+    fs.writeFileSync(sessionFile, JSON.stringify(healthyRecord));
+
+    const healthyRefresh = await whatsappManagerService.ensureOwnerSessionHealthy(false, tempAuthDir);
+    assertFalse(healthyRefresh, 'Healthy two-way session must NOT be deleted');
+    assertTrue(fs.existsSync(sessionFile), 'Healthy session file must remain intact on disk');
+    assertEqual(assertedCalls.length, 0, 'assertSessions must not run for healthy session');
+
+    const staleRecord = {
+      _sessions: {
+        base2: {
+          indexInfo: { closed: -1 },
+          pendingPreKey: { preKeyId: 12892953, signedKeyId: 9156460 },
+          _chains: {
+            send1: { chainKey: { counter: 86 } },
+          },
+        },
+      },
+    };
+    fs.writeFileSync(sessionFile, JSON.stringify(staleRecord));
+    const skMemFile = path.join(tempAuthDir, 'sender-key-memory-status@broadcast.json');
+    fs.writeFileSync(skMemFile, '{}');
+
+    const staleRefresh = await whatsappManagerService.ensureOwnerSessionHealthy(false, tempAuthDir);
+    assertTrue(staleRefresh, 'Stale unacknowledged PreKey session (counter >= 5, single chain) must be healed');
+    assertFalse(fs.existsSync(sessionFile), 'Stale session file must be removed before re-assert');
+    assertFalse(fs.existsSync(skMemFile), 'Status sender-key-memory file must be cleared when healing owner session');
+    assertEqual(assertedCalls.length, 1, 'assertSessions should run once to fetch fresh PreKey');
+    assertEqual(assertedCalls[0].jids[0], '252633171649:0@s.whatsapp.net');
+    assertTrue(assertedCalls[0].force, 'assertSessions should force=true after clearing stale session');
+    assertTrue(deletedKeys.some(d => d?.session?.['252633171649.0'] === null), 'Should clear session from keystore');
+    assertTrue(deletedKeys.some(d => d?.['sender-key-memory']?.['status@broadcast'] === null), 'Should reset sender-key-memory');
+  } finally {
+    fs.rmSync(tempAuthDir, { recursive: true, force: true });
+  }
+});
+
+suite.test('deleteStatusById resets status sender-key memory and disables device cache', async () => {
+  const keySets: any[] = [];
+  const sendCalls: Array<{ jid: string; payload: any; options: any }> = [];
+
+  const mockSocket: any = {
+    user: { id: '252633171649:6@s.whatsapp.net' },
+    authState: {
+      keys: {
+        set: async (data: any) => {
+          keySets.push(data);
+        },
+      },
+    },
+    sendMessage: async (jid: string, payload: any, options: any) => {
+      sendCalls.push({ jid, payload, options });
+      return { key: { id: 'del_ack_1' } };
+    },
+    chatModify: async () => { },
+  };
+
+  whatsappManagerService.setBotJid('252633171649:6@s.whatsapp.net');
+  whatsappManagerService.setSocket(mockSocket);
+  whatsappManagerService.recordPostedStatus('del_mem_test_1', 'text', 'Test delete memory reset');
+
+  const res = await whatsappManagerService.deleteStatusById('del_mem_test_1');
+  assertTrue(res.success, 'deleteStatusById should succeed');
+  assertTrue(sendCalls.length >= 1, 'deleteStatusById should broadcast revoke message');
+  assertEqual(sendCalls[0].jid, 'status@broadcast');
+  assertFalse(Boolean(sendCalls[0].options?.useUserDevicesCache), 'deleteStatusById should pass useUserDevicesCache: false');
+
+  const skResets = keySets.filter(d => d?.['sender-key-memory']?.['status@broadcast'] === null);
+  assertTrue(skResets.length >= 2, 'deleteStatusById should reset status sender-key-memory before and after revoke');
+});
+
+suite.test('WhatsAppBaileysTransport caches status@broadcast and restores owner-only statusJidList on LID retry', async () => {
+  const transport = new WhatsAppBaileysTransport();
+  const ws = new EventEmitter();
+  const relayedCalls: Array<{ jid: string; message: any; options: any }> = [];
+  const assertedCalls: Array<{ jids: string[]; force: boolean }> = [];
+  const keySets: any[] = [];
+
+  const mockSocket: any = {
+    user: { id: '252633171649:6@s.whatsapp.net', lid: '117000009416739:6@lid' },
+    ws,
+    authState: {
+      keys: {
+        get: async () => ({}),
+        set: async (data: any) => {
+          keySets.push(data);
+        },
+      },
+    },
+    assertSessions: async (jids: string[], force: boolean) => {
+      assertedCalls.push({ jids, force });
+      return true;
+    },
+    relayMessage: async (jid: string, message: any, options: any) => {
+      relayedCalls.push({ jid, message, options });
+      return options?.messageId || 'STATUS_RETRY_001';
+    },
+  };
+
+  whatsappManagerService.setBotJid('252633171649:6@s.whatsapp.net');
+  whatsappManagerService.setSocket(mockSocket);
+  transport.installStatusHooks(mockSocket);
+
+  const statusPayload = { extendedTextMessage: { text: 'Live status message' } };
+  await mockSocket.relayMessage('status@broadcast', statusPayload, {
+    messageId: 'STATUS_RETRY_001',
+    statusJidList: ['252633171649@s.whatsapp.net', '252634949642@s.whatsapp.net'],
+    useUserDevicesCache: true,
+  });
+
+  assertEqual(relayedCalls.length, 1);
+  assertFalse(relayedCalls[0].options.useUserDevicesCache, 'Status relay must always force useUserDevicesCache: false');
+
+  const cachedForRetry = await transport.getMessageForRetry({ remoteJid: 'status@broadcast', id: 'STATUS_RETRY_001' });
+  assertEqual(cachedForRetry?.extendedTextMessage?.text, 'Live status message', 'getMessageForRetry must return cached status@broadcast payload');
+
+  // Simulate WhatsApp retry receipt from owner primary phone LID without :device
+  ws.emit('CB:receipt', {
+    attrs: {
+      type: 'retry',
+      id: 'STATUS_RETRY_001',
+      from: 'status@broadcast',
+      participant: '117000009416739@lid',
+    },
+  });
+
+  // Simulate Baileys sendMessagesAgain calling relayMessage without statusJidList
+  await mockSocket.relayMessage('status@broadcast', cachedForRetry, {
+    messageId: 'STATUS_RETRY_001',
+    useUserDevicesCache: false,
+  });
+
+  assertEqual(relayedCalls.length, 2);
+  assertEqual(JSON.stringify(relayedCalls[1].options.statusJidList), JSON.stringify(['252633171649@s.whatsapp.net']), 'Owner retry must restore owner-only PN statusJidList without spamming other contacts');
+  assertEqual(relayedCalls[1].options.participant, undefined, 'Owner retry must clear participant so messages-send uses asserted PN session');
+  assertTrue(assertedCalls.some(c => c.jids.includes('252633171649:0@s.whatsapp.net') && c.force), 'Owner retry must force-refresh owner :0 PN session');
+  assertTrue(keySets.some(d => d?.['sender-key-memory']?.['status@broadcast'] === null), 'Owner retry must reset status sender-key-memory so SKDM is re-sent');
+
+  // Simulate per-device @lid participant retry passed directly by sendMessagesAgain
+  await mockSocket.relayMessage('status@broadcast', cachedForRetry, {
+    messageId: 'STATUS_RETRY_001',
+    participant: { jid: '117000009416739:0@lid', count: 2 },
+  });
+
+  assertEqual(relayedCalls.length, 3);
+  assertEqual(relayedCalls[2].options.participant, undefined, 'Direct @lid participant retry must be stripped before Baileys turns it into @s.whatsapp.net');
+  assertEqual(JSON.stringify(relayedCalls[2].options.statusJidList), JSON.stringify(['252633171649@s.whatsapp.net']), 'Direct @lid owner retry must target owner PN statusJidList');
 });
 
 suite.run().then(summary => {

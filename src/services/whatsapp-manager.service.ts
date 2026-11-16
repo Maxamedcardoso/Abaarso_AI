@@ -289,10 +289,13 @@ export class WhatsAppManagerService {
         fromMe: true,
       };
       const recipients = this.getStatusRecipients();
-      const sendOpts: any = { broadcast: true };
+      const sendOpts: any = { broadcast: true, useUserDevicesCache: false };
       if (recipients.length > 0) {
         sendOpts.statusJidList = recipients;
       }
+
+      // Reset status sender-key memory before revoking so all recipient devices receive SKDM cleanly
+      await this.resetStatusSenderKeyMemory();
 
       // 1. Broadcast delete to all audience recipients who were eligible to see the status
       try {
@@ -301,12 +304,15 @@ export class WhatsAppManagerService {
         const errMsg = delSendErr?.message || '';
         if (errMsg.includes('session') || errMsg.includes('Session') || errMsg.includes('MAC') || errMsg.includes('Timed Out') || errMsg.includes('timed out')) {
           console.warn(`⚠️ [WhatsApp Status] Session/timeout error during status delete (${errMsg}). Retrying delete with safe fallback...`);
-          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true, statusJidList: this.getSafeFallbackRecipients() });
+          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true, useUserDevicesCache: false, statusJidList: this.getSafeFallbackRecipients() } as any);
         } else {
           console.warn(`[WhatsApp Status] Notice during status audience delete (${cleanId}): ${delSendErr?.message}`);
-          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true });
+          await this.socket.sendMessage('status@broadcast', { delete: key }, { broadcast: true, useUserDevicesCache: false } as any);
         }
       }
+
+      // Reset status sender-key memory after delete so the next status starts with fresh key distribution
+      await this.resetStatusSenderKeyMemory();
 
       // 2. Sync delete to primary phone and companion devices via App State Sync (deleteMessageForMeAction)
       // Only dispatch deleteForMe if this was NOT triggered directly from the user's phone,
@@ -686,9 +692,9 @@ export class WhatsAppManagerService {
    * Resets only the recipient delivery map ('sender-key-memory') for status@broadcast,
    * while preserving the active Signal 'sender-key' chain state.
    */
-  public async resetStatusSenderKeyMemory(): Promise<void> {
+  public async resetStatusSenderKeyMemory(authDirOverride?: string): Promise<void> {
     try {
-      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      const authDir = authDirOverride || path.join(process.cwd(), 'baileys_auth_info');
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
@@ -711,11 +717,151 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Validates the pairwise Signal session between the bot companion device
-   * and the owner's primary mobile phone (:0), ensuring the session store is intact.
+   * Inspects a serialized libsignal SessionRecord to determine whether its open
+   * session is stuck in an unacknowledged PreKey state (pendingPreKey still set,
+   * at most one chain, and outgoing counter >= 5 with zero peer reply/ack chains).
    */
-  public async ensureOwnerSessionHealthy(): Promise<void> {
-    // Keep session store safe and intact; never delete working sessions during runtime
+  private inspectOwnerSessionRecord(rawRecord: any): { stale: boolean; reason?: string } {
+    if (!rawRecord) {
+      return { stale: false };
+    }
+
+    let parsed = rawRecord;
+    try {
+      if (typeof rawRecord === 'string') {
+        parsed = JSON.parse(rawRecord);
+      } else if (Buffer.isBuffer(rawRecord) || rawRecord instanceof Uint8Array) {
+        parsed = JSON.parse(Buffer.from(rawRecord).toString('utf8'));
+      }
+    } catch {
+      return { stale: false };
+    }
+
+    const sessionsMap = parsed?._sessions || parsed?.sessions;
+    if (!sessionsMap || typeof sessionsMap !== 'object') {
+      return { stale: false };
+    }
+
+    const sessionEntries = Object.values(sessionsMap).filter((s): s is Record<string, any> => Boolean(s && typeof s === 'object'));
+    if (sessionEntries.length === 0) {
+      return { stale: false };
+    }
+
+    const openSessions = sessionEntries.filter((s) => s?.indexInfo?.closed === -1 || s?.indexInfo?.closed == null);
+    if (openSessions.length === 0) {
+      return { stale: true, reason: 'no open session in record' };
+    }
+
+    for (const sess of openSessions) {
+      const hasPendingPreKey = Boolean(sess?.pendingPreKey);
+      const chainsObj = sess?._chains || sess?.chains || {};
+      const chainEntries = Object.values(chainsObj).filter((c): c is Record<string, any> => Boolean(c && typeof c === 'object'));
+      let maxCounter = 0;
+      for (const ch of chainEntries) {
+        const counter = Number(ch?.chainKey?.counter ?? -1);
+        if (counter > maxCounter) {
+          maxCounter = counter;
+        }
+      }
+
+      if (hasPendingPreKey && chainEntries.length <= 1 && maxCounter >= 5) {
+        return {
+          stale: true,
+          reason: `unacknowledged PreKey session (counter=${maxCounter}, chains=${chainEntries.length})`,
+        };
+      }
+    }
+
+    return { stale: false };
+  }
+
+  /**
+   * Validates the pairwise Signal session between the bot companion device
+   * and the owner's primary mobile phone (:0). Only clears and re-asserts a
+   * session when `force` is true (e.g. an owner retry receipt) or when the open
+   * session is provably stuck sending unacknowledged PreKey messages.
+   */
+  public async ensureOwnerSessionHealthy(force: boolean = false, authDirOverride?: string): Promise<boolean> {
+    if (!this.socket) {
+      return false;
+    }
+
+    const ownerNumbers = new Set<string>();
+    for (const jid of this.getOwnerOnlyRecipients()) {
+      const num = jid.split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+      if (num) ownerNumbers.add(num);
+    }
+    const socketUserId = String((this.socket as any)?.user?.id || '');
+    const socketUserNum = socketUserId.split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+    if (socketUserNum) {
+      ownerNumbers.add(socketUserNum);
+    }
+
+    if (ownerNumbers.size === 0) {
+      return false;
+    }
+
+    const authDir = authDirOverride || path.join(process.cwd(), 'baileys_auth_info');
+    let refreshed = false;
+
+    for (const ownerNum of ownerNumbers) {
+      const signalId = `${ownerNum}.0`;
+      const targetJid = `${ownerNum}:0@s.whatsapp.net`;
+      const sessionFile = path.join(authDir, `session-${signalId}.json`);
+
+      let rawRecord: any = null;
+      try {
+        if ((this.socket as any)?.authState?.keys?.get) {
+          const storeResult = await (this.socket as any).authState.keys.get('session', [signalId]);
+          rawRecord = storeResult?.[signalId] ?? null;
+        }
+      } catch {}
+
+      if (!rawRecord && fs.existsSync(sessionFile)) {
+        try {
+          rawRecord = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+        } catch {
+          rawRecord = null;
+        }
+      }
+
+      const check = this.inspectOwnerSessionRecord(rawRecord);
+      if (!force && !check.stale) {
+        continue;
+      }
+
+      const reason = force ? 'forced by retry' : (check.reason || 'stale session');
+      console.warn(`⚠️ [WhatsApp Status] Refreshing primary phone Signal session ${signalId} (${reason})...`);
+
+      try {
+        if (fs.existsSync(sessionFile)) {
+          fs.unlinkSync(sessionFile);
+        }
+      } catch {}
+
+      try {
+        if ((this.socket as any)?.authState?.keys?.set) {
+          await (this.socket as any).authState.keys.set({
+            session: { [signalId]: null },
+          });
+        }
+      } catch {}
+
+      // Reset status sender-key memory so Baileys re-sends SKDM over the refreshed PN session
+      await this.resetStatusSenderKeyMemory(authDirOverride);
+
+      try {
+        if (typeof (this.socket as any).assertSessions === 'function') {
+          await (this.socket as any).assertSessions([targetJid], true);
+        }
+      } catch (assertErr: any) {
+        console.warn(`⚠️ [WhatsApp Status] assertSessions failed for ${targetJid}:`, assertErr?.message);
+      }
+
+      refreshed = true;
+    }
+
+    return refreshed;
   }
 
   // ─── 1. WHATSAPP STATUS (STORIES) MANAGEMENT ──────────────────────────────

@@ -40,6 +40,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   /** View-Once stubs waiting for the retry / phone resend to deliver real content. */
   private pendingViewOnce: Map<string, NodeJS.Timeout> = new Map();
   private viewOnceFallbackSent: Set<string> = new Set();
+  /** Cached outgoing status@broadcast payloads so owner retry receipts can be fulfilled cleanly. */
+  private sentStatusMessages: Map<string, { message: any; statusJidList: string[] }> = new Map();
+  /** Maps status@broadcast message IDs to the participant JID that requested a retry. */
+  private statusRetryParticipants: Map<string, string> = new Map();
 
   constructor(authDir: string = './baileys_auth_info') {
     this.authDir = authDir;
@@ -126,11 +130,26 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     }
 
-    // Purge any stale status sender-key files on startup so status #1 and #2+ always start at iteration 0
+    // Purge our own status sender-key & sender-key-memory files on startup so status #1 starts at iteration 0
+    // while keeping incoming status sender keys from contacts intact
     try {
       if (fs.existsSync(this.authDir)) {
+        let myPhoneUser = '';
+        let myLidUser = '';
+        const credsPath = path.join(this.authDir, 'creds.json');
+        if (fs.existsSync(credsPath)) {
+          try {
+            const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+            myPhoneUser = String(creds?.me?.id || '').split('@')[0]?.split(':')[0] || '';
+            myLidUser = String(creds?.me?.lid || '').split('@')[0]?.split(':')[0] || '';
+          } catch {}
+        }
+
         for (const f of fs.readdirSync(this.authDir)) {
-          if (f.startsWith('sender-key-status@broadcast') || f.startsWith('sender-key-memory-status@broadcast')) {
+          const isMemory = f.startsWith('sender-key-memory-status@broadcast');
+          const isOwnPhoneSenderKey = Boolean(myPhoneUser && f.startsWith(`sender-key-status@broadcast--${myPhoneUser}--`));
+          const isOwnLidSenderKey = Boolean(myLidUser && f.startsWith(`sender-key-status@broadcast--${myLidUser}--`));
+          if (isMemory || isOwnPhoneSenderKey || isOwnLidSenderKey) {
             try {
               fs.unlinkSync(path.join(this.authDir, f));
             } catch {}
@@ -151,15 +170,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
       syncFullHistory: false, // Do not dump hundreds of old historical chat messages on every connect
       shouldSyncHistoryMessage: () => false,
-      getMessage: async (key) => {
-        if (key?.remoteJid === 'status@broadcast') {
-          return undefined;
-        }
-        if (key?.id && this.rawMessages.has(key.id)) {
-          return this.rawMessages.get(key.id)?.message;
-        }
-        return undefined;
-      },
+      getMessage: async (key) => this.getMessageForRetry(key),
     });
 
     // Fix Baileys 6.7.9 GroupCipher.encrypt off-by-one iteration bug (`iteration === 0 ? 0 : iteration + 1` -> `iteration`)
@@ -281,6 +292,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       });
     }
 
+    // Install status@broadcast cache/retry hooks and CB:receipt listener
+    this.installStatusHooks(this.socket);
+
     whatsappManagerService.setSocket(this.socket);
 
     this.socket.ev.on('creds.update', saveCreds);
@@ -325,6 +339,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           whatsappManagerService.setBotJid(botId || botLid);
         }
         whatsappManagerService.setSocket(this.socket);
+        // Heal stale unacknowledged owner primary-phone Signal sessions on connect
+        whatsappManagerService.ensureOwnerSessionHealthy(false).catch((err) => {
+          console.warn('⚠️ [WhatsAppBaileys] Owner session health check failed:', err?.message || err);
+        });
         console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
       }
     });
@@ -1221,6 +1239,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         if (sentMsg?.key?.id) {
+          if (chatId !== 'status@broadcast') {
+            this.cacheRawMessage(sentMsg);
+          }
           this.botSentMessageIds.add(sentMsg.key.id);
           if (this.botSentMessageIds.size > 500) {
             const oldest = this.botSentMessageIds.keys().next().value;
@@ -1310,6 +1331,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         // Track bot-sent media IDs so students can quote or reply to them in groups
         if (sentMediaMsg?.key?.id) {
+          if (chatId !== 'status@broadcast') {
+            this.cacheRawMessage(sentMediaMsg);
+          }
           this.botSentMessageIds.add(sentMediaMsg.key.id);
           if (this.botSentMessageIds.size > 500) {
             const oldest = this.botSentMessageIds.keys().next().value;
@@ -1399,6 +1423,195 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       activeChats: 1,
       lastActivity: this.lastActivityTimestamp,
     };
+  }
+
+  private trimBoundedMap<K, V>(map: Map<K, V>, maxEntries: number): void {
+    while (map.size > maxEntries) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+    }
+  }
+
+  private cacheRawMessage(msg: any): void {
+    const id = msg?.key?.id;
+    if (!id || !msg?.message) {
+      return;
+    }
+    this.rawMessages.set(id, msg);
+    this.trimBoundedMap(this.rawMessages, 1000);
+  }
+
+  private cacheSentStatusMessage(id: string, message: any, statusJidList: string[]): void {
+    if (!id || !message) {
+      return;
+    }
+    this.sentStatusMessages.set(id, { message, statusJidList: [...statusJidList] });
+    this.trimBoundedMap(this.sentStatusMessages, 50);
+  }
+
+  private isOwnerParticipantJid(jid: string, socket: any = this.socket): boolean {
+    const reqUser = String(jid || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+    if (!reqUser) {
+      return false;
+    }
+
+    const ownerUsers = new Set<string>();
+    const sockPhone = String(socket?.user?.id || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+    const sockLid = String(socket?.user?.lid || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+    if (sockPhone) ownerUsers.add(sockPhone);
+    if (sockLid) ownerUsers.add(sockLid);
+
+    for (const ownerJid of whatsappManagerService.getOwnerOnlyRecipients()) {
+      const num = String(ownerJid || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+      if (num) ownerUsers.add(num);
+    }
+
+    return ownerUsers.has(reqUser);
+  }
+
+  /**
+   * Provides stored message payloads to Baileys on Signal retry receipts,
+   * including recently sent `status@broadcast` payloads so owner/contact
+   * retry requests are never dropped silently.
+   */
+  public async getMessageForRetry(key: { id?: string | null; remoteJid?: string | null }): Promise<proto.IMessage | undefined> {
+    if (!key?.id) {
+      return undefined;
+    }
+    if (key.remoteJid === 'status@broadcast') {
+      return this.sentStatusMessages.get(key.id)?.message;
+    }
+    if (this.rawMessages.has(key.id)) {
+      return this.rawMessages.get(key.id)?.message;
+    }
+    return undefined;
+  }
+
+  /**
+   * Records participant JIDs from `<receipt type="retry" from="status@broadcast">`
+   * stanzas so `relayMessage` knows which device requested a resend even when
+   * Baileys takes its `sendToAll` path and omits `participant` and `statusJidList`.
+   */
+  public handleStatusReceiptNode(node: any): void {
+    try {
+      const attrs = node?.attrs;
+      const isStatusReceipt = attrs?.from === 'status@broadcast' || attrs?.recipient === 'status@broadcast';
+      if (!attrs || attrs.type !== 'retry' || !isStatusReceipt) {
+        return;
+      }
+      const participant = String(
+        attrs.participant || (attrs.from !== 'status@broadcast' ? attrs.from : '') || ''
+      ).trim();
+      if (!participant) {
+        return;
+      }
+
+      const ids = new Set<string>();
+      if (attrs.id) {
+        ids.add(String(attrs.id));
+      }
+      if (Array.isArray(node.content)) {
+        for (const child of node.content) {
+          if (child?.tag === 'item' && child?.attrs?.id) {
+            ids.add(String(child.attrs.id));
+          } else if (child?.tag === 'list' && Array.isArray(child.content)) {
+            for (const item of child.content) {
+              if (item?.tag === 'item' && item?.attrs?.id) {
+                ids.add(String(item.attrs.id));
+              }
+            }
+          }
+        }
+      }
+
+      for (const id of ids) {
+        this.statusRetryParticipants.set(id, participant);
+      }
+      this.trimBoundedMap(this.statusRetryParticipants, 100);
+    } catch {}
+  }
+
+  /**
+   * Instruments a Baileys socket to:
+   * 1. Force `useUserDevicesCache: false` on `status@broadcast` relays (Baileys `sendMessage` strips it).
+   * 2. Cache outgoing status payloads by message ID for retry receipts.
+   * 3. Restore `statusJidList` and heal owner `:0` PN sessions when a retry arrives for `status@broadcast`,
+   *    preventing Baileys `sendMessagesAgain` from sending empty participant lists or mangling `@lid` JIDs.
+   */
+  public installStatusHooks(socket: any): void {
+    if (!socket) {
+      return;
+    }
+
+    if (socket.ws && typeof socket.ws.on === 'function' && !(socket.ws as any).__statusReceiptHooked) {
+      (socket.ws as any).__statusReceiptHooked = true;
+      socket.ws.on('CB:receipt', (node: any) => this.handleStatusReceiptNode(node));
+    }
+
+    if (typeof socket.relayMessage === 'function' && !(socket.relayMessage as any).__statusWrapped) {
+      const origRelay = socket.relayMessage.bind(socket);
+      const wrappedRelay = async (jid: string, message: any, options: any = {}) => {
+        if (jid !== 'status@broadcast') {
+          return origRelay(jid, message, options);
+        }
+
+        const relayOpts: any = { ...(options || {}), useUserDevicesCache: false };
+
+        if (Array.isArray(relayOpts.statusJidList) && relayOpts.statusJidList.length > 0) {
+          await whatsappManagerService.ensureOwnerSessionHealthy(false);
+          if (relayOpts.messageId) {
+            this.cacheSentStatusMessage(String(relayOpts.messageId), message, relayOpts.statusJidList);
+          }
+          return origRelay(jid, message, relayOpts);
+        }
+
+        // Retry path (or omitted statusJidList): determine requester and ensure clean SKDM delivery
+        const messageId = relayOpts.messageId ? String(relayOpts.messageId) : '';
+        const recordedParticipant = messageId ? this.statusRetryParticipants.get(messageId) : undefined;
+        const requesterJid = String(relayOpts.participant?.jid || recordedParticipant || '').trim();
+
+        await whatsappManagerService.resetStatusSenderKeyMemory();
+
+        if (!requesterJid || this.isOwnerParticipantJid(requesterJid, socket)) {
+          await whatsappManagerService.ensureOwnerSessionHealthy(true);
+          delete relayOpts.participant;
+          let ownerRecipients = whatsappManagerService.getOwnerOnlyRecipients();
+          if (ownerRecipients.length === 0) {
+            const sockPhone = String(socket?.user?.id || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+            if (sockPhone) {
+              ownerRecipients = [`${sockPhone}@s.whatsapp.net`];
+            }
+          }
+          if (ownerRecipients.length > 0) {
+            relayOpts.statusJidList = ownerRecipients;
+          }
+        } else if (requesterJid.endsWith('@s.whatsapp.net')) {
+          if (!relayOpts.participant?.jid || !String(relayOpts.participant.jid).endsWith('@s.whatsapp.net')) {
+            delete relayOpts.participant;
+            const cleanUser = requesterJid.split('@')[0]?.split(':')[0];
+            if (cleanUser) {
+              relayOpts.statusJidList = [`${cleanUser}@s.whatsapp.net`];
+            }
+          }
+        } else {
+          // Third-party @lid retry: Baileys messages-send.js:366 encodes @lid participant retries as @s.whatsapp.net
+          // when groupData is absent, so strip participant and use PN recipient list instead.
+          delete relayOpts.participant;
+          const cachedRecipients = messageId ? this.sentStatusMessages.get(messageId)?.statusJidList : undefined;
+          const fallbackRecipients = (cachedRecipients && cachedRecipients.length > 0)
+            ? cachedRecipients
+            : whatsappManagerService.getStatusRecipients();
+          if (fallbackRecipients.length > 0) {
+            relayOpts.statusJidList = fallbackRecipients;
+          }
+        }
+
+        return origRelay(jid, message, relayOpts);
+      };
+      (wrappedRelay as any).__statusWrapped = true;
+      socket.relayMessage = wrappedRelay;
+    }
   }
 
   private printSafetyWarning(): void {
