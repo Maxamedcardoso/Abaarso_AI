@@ -202,6 +202,22 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         try {
           return await origEncrypt(args);
         } catch (err: any) {
+          // If PN failed for the host account, retry using its companion LID mapping
+          try {
+            const myPhone = this.socket?.user?.id?.split(':')[0]?.split('@')[0];
+            const myLid = (this.socket?.user as any)?.lid?.split(':')[0]?.split('@')[0];
+            const targetUser = args?.jid?.split(':')[0]?.split('@')[0];
+            const targetDevice = args?.jid?.split(':')[1]?.split('@')[0] || '0';
+
+            if (myPhone && myLid && targetUser === myPhone) {
+              const lidJid = `${myLid}:${targetDevice}@lid`;
+              const lidRes = await origEncrypt({ jid: lidJid, data: args.data });
+              if (lidRes?.ciphertext && lidRes.ciphertext.length > 0) {
+                return lidRes;
+              }
+            }
+          } catch {}
+
           const errMsg = err?.message || '';
           if (errMsg.includes('No session record') || errMsg.includes('Session') || errMsg.includes('session') || errMsg.includes('MAC')) {
             console.warn(`🛡️ [Signal Repository] No active session for ${args.jid} during broadcast encryption. Gracefully skipping recipient.`);

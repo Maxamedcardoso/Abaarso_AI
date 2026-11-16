@@ -474,6 +474,11 @@ export class WhatsAppManagerService {
       if (cleanMe) {
         list.push(cleanMe);
       }
+      const myLid = (this.socket.user as any)?.lid;
+      if (myLid) {
+        const cleanLid = myLid.split(':')[0].split('@')[0] + '@lid';
+        list.push(cleanLid);
+      }
     } else {
       try {
         const credsPath = path.join(process.cwd(), 'baileys_auth_info', 'creds.json');
@@ -484,6 +489,10 @@ export class WhatsAppManagerService {
             if (cleanMe) {
               list.push(cleanMe);
             }
+          }
+          if (creds?.me?.lid) {
+            const cleanLid = creds.me.lid.split(':')[0].split('@')[0] + '@lid';
+            list.push(cleanLid);
           }
         }
       } catch {}
