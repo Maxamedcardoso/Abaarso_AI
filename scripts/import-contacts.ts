@@ -23,7 +23,7 @@ async function main() {
   const content = fs.readFileSync(filePath, 'utf8');
 
   // Initialize SQLite database
-  const memory = new SQLiteStudentMemory('./data/abarso.db');
+  const memory = new SQLiteStudentMemory('./data/cardoso.db');
   await memory.initialize();
   broadcastService.setMemory(memory);
   await broadcastService.loadPersistedContacts();

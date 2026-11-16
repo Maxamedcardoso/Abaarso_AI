@@ -1,4 +1,4 @@
-# Multi-stage production build for ABARSO AI
+# Multi-stage production build for CARDOSO AI
 FROM node:22-alpine AS builder
 
 WORKDIR /app

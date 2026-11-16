@@ -250,30 +250,6 @@ export class StudentAdvisorEngine {
       };
     }
 
-    // 5.58. Section 7: Course Recommendation Screening Trigger
-    // When a student asks "ila tali", "course kee baan qaataa", "course kee igu habboon", "maxaan ka barta abaarso"
-    // Never recommend immediately: ask the mandatory screening question first.
-    const isCourseAdviceQuery =
-      /^(?:ila\s+tali(?:[\s,]*(?:course|koors|maad|kulliyad|jaamacad|waxbarasho))?|course\s+kee(?:\s+baan\s+qaataa|\s+igu\s+habboon|\s+aan\s+bartaa)?|maxaan\s+ka\s+barta[a]?\s+abaarso|which\s+course\s+should\s+i\s+study|what\s+do\s+you\s+recommend\s+for\s+me)[?!.\s]*$/i.test(content.trim()) ||
-      /(?:course\s+kee\s+igu\s+habboon|maxaan\s+ka\s+barta[a]?\s+abaarso)/i.test(content);
-
-    if (isCourseAdviceQuery) {
-      const screeningText = lang === 'en'
-        ? 'In order to recommend the most suitable course for you, what are your strengths and what do you find interesting? Do you prefer technology, health sciences, business, law, or serving the community?'
-        : 'Si aan kuugu doorto course kugu habboon, maxaad ku fiican tahay, maxaadse xiisaysaa? Ma jeceshahay technology, caafimaadka, ganacsiga, sharciga mise inaad bulshada caawiso?';
-
-      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'user', content, languageDetected: lang, timestamp });
-      await this.memory.saveMessage({ studentId: student.studentId, chatId, role: 'model', content: screeningText, languageDetected: lang, timestamp: Date.now() });
-
-      return {
-        replyText: screeningText,
-        studentId: student.studentId,
-        intent: 'academic',
-        language: lang,
-        latencyMs: Date.now() - startTime,
-      };
-    }
-
     // 5.6. Handle Image Generation request ("@sawir...", "!sawir...", "ii samee sawir...")
     if (ImageGeneratorService.isImageRequest(content)) {
       const prompt = ImageGeneratorService.extractPrompt(content);
@@ -483,8 +459,7 @@ export class StudentAdvisorEngine {
       /@cardoso\b/i.test(content) ||
       /@cardoso\b/i.test(input.rawContent || '');
 
-    // Section 8: Ordinary university conversations must remain text-only
-    // Only synthesize voice if explicitly requested with @cod, !cod, or forceVoiceReply
+    // Ordinary conversations remain text-only unless explicitly requested with @cod, !cod, voice note, or forceVoiceReply
     const isExplicitVoiceCmd =
       Boolean(input.forceVoiceReply) ||
       /(?:@?cod\b|!cod\b|cod\s+i[si]oo?\s+duub|cod\s+ii?\s+duub|cod\s+ahaan|cod\s+ku\s+jawaab|cod\s+iigu\s+soo\s+jawaab|cod\s+iigu\s+jawaab)/i.test(content);
@@ -616,7 +591,7 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       aiResult.text = aiResult.text.replace(/<!--\s*transcript:\s*[\s\S]*?-->/gi, '').trim();
     }
 
-    // Section 9: Strict Silence Rule for unrelated questions
+    // Optional silence token handling from model output
     if (aiResult.text.includes('[SILENCE]') || aiResult.text.trim() === '[SILENCE]') {
       aiResult.text = '[SILENCE]';
     } else if (lang === 'so' || lang === 'mixed') {

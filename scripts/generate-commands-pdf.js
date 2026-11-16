@@ -662,14 +662,6 @@ export function generateCommandsPDF() {
     'Database-ka SQLite ayaa isla markiiba laga masaxayaa dhammaan xogta iyo taariikhda qofkaas.'
   );
 
-  doc.addCommandCard(
-    '!abaarso / @abaarso',
-    '[QOF KASTA]',
-    'Waxay toos u soo bandhigaysaa xayeysiiska rasmiga ah ee codka iyo qoraalka ah ee Jaamacadda Abaarso.',
-    '!abaarso   ama   @abaarso',
-    'Waxaa la soo dirayaa cod rasmi ah oo sharaxaya kulliyadaha, deeqaha waxbarasho, iyo diiwaangelinta.'
-  );
-
   // ════════════════════════════════════════════════════════════════════════════
   // BOGGA 5: SHAXDA GUUD EE ISBARBARDHIGGA (MASTER COMMAND REFERENCE TABLE)
   // ════════════════════════════════════════════════════════════════════════════
@@ -724,7 +716,6 @@ export function generateCommandsPDF() {
     ['@sawir / !sawir', 'Qof Kasta', 'Sawir AI ah ka codso bot-ka', '@sawir arday dugsi jooga'],
     ['jooji / stop', 'Qof Kasta', 'Ka bax fariin-wadareedka (Opt-out)', 'jooji'],
     ['!tirtir / !clear', 'Qof Kasta', 'Xogtaada oo dhan tirtir (Privacy)', '!tirtir'],
-    ['!abaarso', 'Qof Kasta', 'Xayeysiiska rasmiga ah ee jaamacadda', '!abaarso'],
   ];
 
   for (let idx = 0; idx < tableData.length; idx++) {

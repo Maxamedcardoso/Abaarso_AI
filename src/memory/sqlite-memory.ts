@@ -8,7 +8,7 @@ export class SQLiteStudentMemory implements IStudentMemory {
   private db: DatabaseSync | null = null;
   private dbPath: string;
 
-  constructor(dbPath: string = './data/abarso.db') {
+  constructor(dbPath: string = './data/cardoso.db') {
     this.dbPath = dbPath;
   }
 

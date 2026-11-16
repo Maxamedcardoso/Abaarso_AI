@@ -1,6 +1,6 @@
-# ABARSO AI — Troubleshooting & Common Issues Guide
+# CARDOSO AI — Troubleshooting & Common Issues Guide
 
-This guide helps you identify, understand, and fix any issue that may arise while developing, testing, or deploying **ABARSO AI**.
+This guide helps you identify, understand, and fix any issue that may arise while developing, testing, or deploying **CARDOSO AI**.
 
 ---
 
@@ -16,10 +16,10 @@ This guide helps you identify, understand, and fix any issue that may arise whil
 ### B. "⚠️ Rate limit reached on Google AI Studio free tier (HTTP 429)"
 - **Cause:** Google AI Studio free tier limits requests to ~15 requests per minute (RPM).
 - **Fix:**
-  - ABARSO AI automatically performs exponential backoff and retries.
-  - If several students in a group spam the bot at once, the per-student rate limiter (`src/pipeline/rate-limiter.ts`) asks the student to wait 10–15 seconds before retrying.
+  - CARDOSO AI automatically performs exponential backoff and retries.
+  - If several users in a group spam the bot at once, the per-user rate limiter (`src/pipeline/rate-limiter.ts`) asks them to wait 10–15 seconds before retrying.
 
-### C. "⚠️ [ABARSO AI Zero-Cost Safeguard]: Daily free quota reached"
+### C. "⚠️ [CARDOSO AI Zero-Cost Safeguard]: Daily free quota reached"
 - **Cause:** You have reached your configured `DAILY_REQUEST_LIMIT` (default: 1,400 requests/day).
 - **Protection:** This is an intentional safeguard to ensure **ZERO accidental charges**.
 - **Fix:**
@@ -47,7 +47,7 @@ This guide helps you identify, understand, and fix any issue that may arise whil
   3. Restart the bot (`npm start`). A fresh QR code will appear for pairing.
 
 ### C. Ban Risk Prevention Tips
-- **Rule 1:** Use `GROUP_RESPONSE_MODE=mention_only` so the bot only speaks when tagged (`@Abarso`).
+- **Rule 1:** Use `GROUP_RESPONSE_MODE=mention_only` so the bot only speaks when tagged (`@cardoso`).
 - **Rule 2:** Do not add the bot to dozens of unknown public groups.
 - **Rule 3:** Never send mass unsolicited broadcast messages.
 - **Rule 4:** Keep the built-in 1.5–2.0 second typing delay enabled.
@@ -86,8 +86,8 @@ This guide helps you identify, understand, and fix any issue that may arise whil
   ```
 
 ### B. Database Locked Error (`SQLITE_BUSY`)
-- **Cause:** Another process or SQLite viewer has opened `./data/abarso.db` with an exclusive lock.
+- **Cause:** Another process or SQLite viewer has opened `./data/cardoso.db` with an exclusive lock.
 - **Fix:**
   - Close any external SQLite desktop viewers (e.g. DB Browser for SQLite).
-  - ABARSO AI uses `PRAGMA journal_mode = WAL;` which allows concurrent readers while writing safely.
+  - CARDOSO AI uses `PRAGMA journal_mode = WAL;` which allows concurrent readers while writing safely.
 

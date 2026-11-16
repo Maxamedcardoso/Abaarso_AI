@@ -1,6 +1,6 @@
-# ABARSO AI — Free-Tier Cloud Deployment Guide
+# CARDOSO AI — Free-Tier Cloud Deployment Guide
 
-This document analyzes suitable free hosting options, explains runtime and networking limitations, and outlines how to host **ABARSO AI** at **zero financial cost**.
+This document analyzes suitable free hosting options, explains runtime and networking limitations, and outlines how to host **CARDOSO AI** at **zero financial cost**.
 
 ---
 
@@ -12,7 +12,7 @@ Before choosing a cloud provider, understand how the two messaging transports be
 | :--- | :--- | :--- |
 | **Connection Type** | Continuous WebSocket connection to WhatsApp servers | Stateless HTTP webhook receiver (`GET/POST /webhook`) |
 | **Idle Behavior** | **Must run 24/7 as a background daemon.** If the server goes to sleep, the bot disconnects from WhatsApp. | Can handle wake-on-request HTTP calls. |
-| **Storage Need** | Requires persistent disk for `./baileys_auth_info` (session tokens) and `./data/abarso.db`. | Only requires persistent disk for `./data/abarso.db` (or external free PostgreSQL). |
+| **Storage Need** | Requires persistent disk for `./baileys_auth_info` (session tokens) and `./data/cardoso.db`. | Only requires persistent disk for `./data/cardoso.db` (or external free PostgreSQL). |
 | **Suitable Free Hosts** | VPS or non-sleeping container (e.g. Oracle Always Free VM, Fly.io, or Railway free credit). | Render, Koyeb, Vercel, or Fly.io. |
 
 ---
@@ -21,7 +21,7 @@ Before choosing a cloud provider, understand how the two messaging transports be
 
 ### Option 1: Oracle Cloud Infrastructure (OCI) Always Free VM (Recommended for 24/7 WhatsApp)
 - **Free Tier Allowance:** 4 ARM Ampere CPU cores, 24 GB RAM, 200 GB persistent block storage — completely free forever.
-- **Suitability for ABARSO AI:** **⭐⭐⭐⭐⭐ (Best)**
+- **Suitability for CARDOSO AI:** **⭐⭐⭐⭐⭐ (Best)**
 - **Pros:** True persistent virtual machine. Runs 24/7 without sleeping. Supports continuous WebSocket connections for Baileys. Local SQLite is fully persistent.
 - **Cons:** Requires a credit card during signup for identity verification (zero charge incurred).
 
@@ -31,11 +31,11 @@ Before choosing a cloud provider, understand how the two messaging transports be
 - **Solved Challenges for WhatsApp Baileys on Render:**
   1. **Anti-Sleep / 24/7 Awake:** Built-in HTTP server on `/health`. With `RENDER_EXTERNAL_URL` or a free UptimeRobot monitor pinging every 10 minutes, Render never goes to sleep!
   2. **Session Persistence:** Solved via `SESSION_CREDS_BASE64` environment variable. Run `npm run export-session` locally and paste into Render. The bot connects immediately on boot without re-scanning QR codes.
-- **Suitability for ABARSO AI:** **⭐⭐⭐⭐⭐ (Easiest & Free)**
+- **Suitability for CARDOSO AI:** **⭐⭐⭐⭐⭐ (Easiest & Free)**
 
 ### Option 3: Fly.io (Hobby Tier)
 - **Free Tier Allowance:** Up to 3 shared-cpu-1x VMs, 3 GB persistent storage volumes.
-- **Suitability for ABARSO AI:** **⭐⭐⭐⭐ (Very Good)**
+- **Suitability for CARDOSO AI:** **⭐⭐⭐⭐ (Very Good)**
 - **Pros:** Supports persistent volumes (`fly volumes create`). Can keep a single small instance running 24/7 without automatic sleep if configured with `min_machines_running = 1`.
 
 ### Option 4: Koyeb / Railway
@@ -67,10 +67,10 @@ sudo apt install -y nodejs git
 node -v # Should show v22.x
 ```
 
-### Step 3: Clone & Install ABARSO AI
+### Step 3: Clone & Install CARDOSO AI
 ```bash
-git clone https://github.com/your-username/abarso-ai.git
-cd abarso-ai
+git clone https://github.com/Maxamedcardoso/Abaarso_AI.git
+cd BOT
 npm install
 ```
 
@@ -90,8 +90,8 @@ Fill in:
 # Install PM2 process supervisor
 sudo npm install -g pm2
 
-# Start ABARSO AI
-pm2 start npm --name "abarso-ai" -- run start
+# Start CARDOSO AI
+pm2 start npm --name "cardoso-ai" -- run start
 
 # Setup auto-start on server reboot
 pm2 startup
@@ -101,15 +101,15 @@ pm2 save
 ### Step 6: Scan the WhatsApp Pairing QR Code
 To view the terminal QR code in PM2 logs:
 ```bash
-pm2 logs abarso-ai --lines 100
+pm2 logs cardoso-ai --lines 100
 ```
-Scan the QR code with your phone's WhatsApp app. ABARSO AI is now live 24/7!
+Scan the QR code with your phone's WhatsApp app. CARDOSO AI is now live 24/7!
 
 ---
 
 ## 4. Zero-Cost Protection Guarantees
 
-ABARSO AI includes built-in protective logic so you never get billed:
+CARDOSO AI includes built-in protective logic so you never get billed:
 1. **Hard Request Cap:** Monitored by `src/ai/quota-tracker.ts`. Outbound calls stop at 1,400 daily requests.
 2. **Never Upgrades to Paid:** The code does not contain any logic to enable paid Gemini plans or switch to paid models.
 3. **Daily Reset:** Quotas automatically reset each day at `00:00 UTC`.

@@ -1,6 +1,6 @@
-# ABARSO AI — Local Installation & Setup Guide (Windows)
+# CARDOSO AI — Local Installation & Setup Guide (Windows)
 
-This guide takes you step-by-step through setting up, configuring, and testing **ABARSO AI** on a Windows laptop.
+This guide takes you step-by-step through setting up, configuring, and testing **CARDOSO AI** on a Windows laptop.
 
 ---
 
@@ -60,7 +60,7 @@ ADMIN_PHONE_NUMBERS=252610000000
 
 ---
 
-## 3. Running & Verifying ABARSO AI
+## 3. Running & Verifying CARDOSO AI
 
 ### Mode A: Interactive Console Simulator (Recommended for Testing)
 To test all conversations, language switching, homework logic, and coding assistance locally without needing WhatsApp:
@@ -93,8 +93,8 @@ To connect your existing WhatsApp account to an existing student group:
    - Tap **Settings** (or 3 dots on Android) > **Linked Devices**.
    - Tap **Link a Device** and scan the terminal QR code.
 5. In your WhatsApp group, tag the bot:
-   - `@Abarso sideen loop ugu qoraa Python?`
-   - Or send `!abarso help`
+   - `@cardoso sideen loop ugu qoraa Python?`
+   - Or send `!cardoso help`
 
 ### Mode C: Run Admin Diagnostics
 To view system statistics, token counts, and student memory size:

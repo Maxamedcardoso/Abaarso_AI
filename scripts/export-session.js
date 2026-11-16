@@ -26,7 +26,7 @@ const bundleBase64 = compressed.toString('base64');
 console.log('\n========================================================================');
 console.log('   🎉 RENDER.COM COMPLETE SESSION BUNDLE (GUUSHA UGU HUBAN):             ');
 console.log('========================================================================\n');
-console.log('Gudaha Render.com > Dashboard > abaarso-ai > Environment Variables:\n');
+console.log('Gudaha Render.com > Dashboard > cardoso-ai > Environment Variables:\n');
 console.log('Key:');
 console.log('SESSION_BUNDLE_BASE64\n');
 console.log('Value (Koobi garee xogtan hoose oo dhan adigoon waxba ka goyn):');

@@ -120,7 +120,6 @@ Amarradan waxaa loogu talagalay ardayda, macallimiinta, iyo cid kasta oo la hadl
 | `!contact` | `!contact` | Cinwaanka, xafiisyada, iyo xiriirrada rasmiga ah ee jaamacadda. | **Qof Kasta** |
 | `!cod` | `!cod` | Daarka/deminta in bot-ku cod Soomaali ah (Edge TTS) kugu soo jawaabo. | **Qof Kasta** |
 | `!reset` | `!reset` | Tir-tiridda xusuusta wada-hadalka hore si dooda loo bilaabo mar kale. | **Qof Kasta** |
-| `!abaarso` | `!abaarso` | Ogeysiiska rasmiga ah iyo xayeysiiska guud ee jaamacadda. | **Qof Kasta** |
 | *Wada-hadal Caadi ah* | `Iiga warran computer science?` | Gemini AI oo ku siinaysa jawaab xikmad leh oo cilmiyeysan. | **Qof Kasta** |
 
 ---
@@ -159,7 +158,6 @@ Amarradan waxaa loogu talagalay ardayda, macallimiinta, iyo cid kasta oo la hadl
 | !contact          | Qof Kasta       | Cinwaanka & xafiisyada jaamacadda        | !contact                            |
 | !cod              | Qof Kasta       | Daarka ama deminta codka bot-ka          | !cod                                |
 | !reset            | Qof Kasta       | Dib u bilaabidda xusuusta wada-hadalka   | !reset                              |
-| !abaarso          | Qof Kasta       | Ogeysiiska rasmiga ah ee jaamacadda      | !abaarso                            |
 +-------------------+-----------------+------------------------------------------+-------------------------------------+
 ```
 

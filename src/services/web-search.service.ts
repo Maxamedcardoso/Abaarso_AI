@@ -32,7 +32,7 @@ export class WebSearchService {
   public static async search(query: string, maxSnippets: number = 3): Promise<string[]> {
     try {
       const cleanQuery = query
-        .replace(/@(cardoso|abaarso|abarso)\b/gi, '')
+        .replace(/@cardoso\b/gi, '')
         .replace(/^[!/]\w+\s*/, '')
         .trim();
 

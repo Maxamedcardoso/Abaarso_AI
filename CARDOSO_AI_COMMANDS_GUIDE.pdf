@@ -654,7 +654,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 14 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 16 0 obj
-<< /Length 7727 >>
+<< /Length 6956 >>
 stream
 0.059 0.090 0.165 rg
 36.00 781.89 523.28 24.00 re f
@@ -823,33 +823,13 @@ BT /F1 8.5 Tf 48.00 191.89 Td (Qofku wuxuu xaq u leeyahay inuu tirtiro dhammaan 
 BT /F3 8 Tf 48.00 179.89 Td (Tusaale: !tirtir   ama   !clear) Tj ET
 0.706 0.325 0.035 rg
 BT /F1 7.5 Tf 48.00 167.89 Td (Xog: Database-ka SQLite ayaa isla markiiba laga masaxayaa dhammaan xogta iyo taariikhda qofkaas.) Tj ET
-0.886 0.910 0.941 RG
-1 w
-0.973 0.980 0.988 rg
-36.00 91.89 523.28 62.00 re B
-0.059 0.090 0.165 rg
-44.00 135.89 140.00 14.00 re f
-0.220 0.741 0.973 rg
-BT /F2 8.5 Tf 50.00 139.89 Td (!abaarso / @abaarso) Tj ET
-0.063 0.725 0.506 RG
-1 w
-0.925 0.992 0.961 rg
-481.28 135.89 70.00 14.00 re B
-0.063 0.725 0.506 rg
-BT /F2 7.5 Tf 487.28 139.89 Td ([QOF KASTA]) Tj ET
-0.118 0.161 0.231 rg
-BT /F1 8.5 Tf 48.00 121.89 Td (Waxay toos u soo bandhigaysaa xayeysiiska rasmiga ah ee codka iyo qoraalka ah ee Jaamacadda Abaarso.) Tj ET
-0.392 0.455 0.545 rg
-BT /F3 8 Tf 48.00 109.89 Td (Tusaale: !abaarso   ama   @abaarso) Tj ET
-0.706 0.325 0.035 rg
-BT /F1 7.5 Tf 48.00 97.89 Td (Xog: Waxaa la soo dirayaa cod rasmi ah oo sharaxaya kulliyadaha, deeqaha waxbarasho, iyo diiwaangelinta.) Tj ET
 endstream
 endobj
 17 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 16 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>
 endobj
 18 0 obj
-<< /Length 13707 >>
+<< /Length 13330 >>
 stream
 0.059 0.090 0.165 rg
 36.00 781.89 523.28 24.00 re f
@@ -1242,26 +1222,14 @@ BT /F2 7 Tf 150.00 279.89 Td (Qof Kasta) Tj ET
 BT /F1 7 Tf 250.00 279.89 Td (Xogtaada oo dhan tirtir \(Privacy\)) Tj ET
 0.392 0.455 0.545 rg
 BT /F3 6.8 Tf 420.00 279.89 Td (!tirtir) Tj ET
-0.886 0.910 0.941 RG
-0.5 w
-1.000 1.000 1.000 rg
-36.00 261.89 523.28 14.00 re B
-0.059 0.090 0.165 rg
-BT /F2 7 Tf 40.00 265.89 Td (!abaarso) Tj ET
-0.063 0.725 0.506 rg
-BT /F2 7 Tf 150.00 265.89 Td (Qof Kasta) Tj ET
-0.200 0.255 0.333 rg
-BT /F1 7 Tf 250.00 265.89 Td (Xayeysiiska rasmiga ah ee jaamacadda) Tj ET
-0.392 0.455 0.545 rg
-BT /F3 6.8 Tf 420.00 265.89 Td (!abaarso) Tj ET
 0.369 0.918 0.831 RG
 1 w
 0.941 0.992 0.980 rg
-36.00 220.89 523.28 26.00 re B
+36.00 234.89 523.28 26.00 re B
 0.051 0.580 0.533 rg
-BT /F2 7.5 Tf 46.00 236.89 Td (= SIDA LOO CUSBOONAYSIIN KARO PDF-KAN MAR KASTA OO AMAR CUSUB LA SOO DARO:) Tj ET
+BT /F2 7.5 Tf 46.00 250.89 Td (= SIDA LOO CUSBOONAYSIIN KARO PDF-KAN MAR KASTA OO AMAR CUSUB LA SOO DARO:) Tj ET
 0.059 0.090 0.165 rg
-BT /F1 7 Tf 46.00 226.89 Td (Kaliya terminal-ka ka dhex qor: "npm run generate-pdf" ama "node scripts/generate-commands-pdf.js". Isla markiiba PDF-ka dib buu u dhisayaa.) Tj ET
+BT /F1 7 Tf 46.00 240.89 Td (Kaliya terminal-ka ka dhex qor: "npm run generate-pdf" ama "node scripts/generate-commands-pdf.js". Isla markiiba PDF-ka dib buu u dhisayaa.) Tj ET
 endstream
 endobj
 19 0 obj
@@ -1286,11 +1254,11 @@ xref
 0000023481 00000 n 
 0000025764 00000 n 
 0000025918 00000 n 
-0000033714 00000 n 
-0000033868 00000 n 
-0000047639 00000 n 
+0000032943 00000 n 
+0000033097 00000 n 
+0000046491 00000 n 
 trailer
 << /Size 20 /Root 1 0 R >>
 startxref
-47793
+46645
 %%EOF

@@ -1,6 +1,6 @@
-# ABARSO AI — Comprehensive Test Execution Report
+# CARDOSO AI — Comprehensive Test Execution Report
 
-This document records the automated testing suite executed on **ABARSO AI** on Windows (Node.js v22.17.0).  
+This document records the automated testing suite executed on **CARDOSO AI** on Windows (Node.js v22.17.0).  
 **AI Model used:** `gemini-flash-lite-latest` (1,500 daily free requests, fastest ultra-low latency response).  
 **Last full passing run:** 2026-11-07 — exit code 0 — **32/32 TESTS PASSED**.
 
@@ -42,19 +42,19 @@ This document records the automated testing suite executed on **ABARSO AI** on W
 | **Duplicate Incoming Messages** | Webhook delivers same message ID twice | In-memory LRU deduplicator drops duplicate without reprocessing | `phase2.test.ts`, `phase7.test.ts` |
 | **Restart & Recovery** | Bot stopped and restarted from disk | SQLite WAL file re-opened; conversation continuity 100% preserved | `e2e-master.test.ts` |
 | **Right to be Forgotten** | Student sends `!tirtir` or `!clear` | Complete database purge of student messages and profile | `phase5.test.ts`, `phase6.test.ts` |
-| **Group Mention Filter** | Unmentioned chat in WhatsApp group | Dropped silently to prevent group clutter; only activates on `@Abarso` | `phase7.test.ts` |
-| **Admin Authorization** | Admin sends `!abarso off` | Bot deactivated for that group; verified against admin phone whitelist | `phase7.test.ts` |
+| **Group Mention Filter** | Unmentioned chat in WhatsApp group | Dropped silently to prevent group clutter; only activates on `@cardoso` | `phase7.test.ts` |
+| **Admin Authorization** | Admin sends `!cardoso off` | Bot deactivated for that group; verified against admin phone whitelist | `phase7.test.ts` |
 
 ---
 
 ## 3. Actual Automated Test Run Log
 
 ```text
-> abarso-ai@1.0.0 test
+> cardoso-ai@1.0.0 test
 > tsx tests/all.ts
 
 ================================================================
-  ABARSO AI — RUNNING ALL UNIT, INTEGRATION & E2E TEST SUITES   
+  CARDOSO AI — RUNNING ALL UNIT, INTEGRATION & E2E TEST SUITES
 ================================================================
 
 ========================================
@@ -143,7 +143,7 @@ Suite "Phase 8: Comprehensive Master E2E Test Suite" Summary: 7 Passed, 0 Failed
 ----------------------------------------
 
 ================================================================
-  🎉 ALL ABARSO AI TEST SUITES PASSED CLEANLY (31/31 TESTS)     
+  🎉 ALL CARDOSO AI TEST SUITES PASSED CLEANLY (31/31 TESTS)
 ================================================================
 ```
 

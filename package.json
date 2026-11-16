@@ -1,7 +1,7 @@
 {
-  "name": "abarso-ai",
+  "name": "cardoso-ai",
   "version": "1.0.0",
-  "description": "ABARSO AI — Your Smart Student Advisor (WhatsApp & Console)",
+  "description": "CARDOSO AI — Smart Personal WhatsApp Assistant & Advisor (WhatsApp & Console)",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
@@ -22,7 +22,7 @@
     "somali",
     "education"
   ],
-  "author": "ABARSO Team",
+  "author": "Mohamed Dahir (Cardoso)",
   "license": "MIT",
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

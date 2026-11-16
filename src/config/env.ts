@@ -86,7 +86,7 @@ export const config: AppConfig = {
     webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN || 'cardoso_secret_verify_token',
   },
   database: {
-    path: process.env.DATABASE_PATH || './data/abarso.db',
+    path: process.env.DATABASE_PATH || './data/cardoso.db',
     retentionDays: parseInt(process.env.DATA_RETENTION_DAYS || '', 10) || 30,
     maxContextMessages: parseInt(process.env.MAX_CONTEXT_MESSAGES || '', 10) || FREE_TIER_LIMITS.MAX_STUDENT_HISTORY_MESSAGES,
   },

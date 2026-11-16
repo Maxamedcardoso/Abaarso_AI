@@ -1,7 +1,7 @@
-# ABARSO AI — Your Smart Student Advisor
+# CARDOSO AI — Smart Personal WhatsApp Assistant
 > **Barasho, Dhiirigelin, iyo Horumar** (Education, Motivation, and Growth)
 
-ABARSO AI is a production-grade, bilingual (Somali, English, and Mixed code-switching) academic advisor bot designed for students and learners. Built with Google Gemini Flash AI intelligence, a secure local SQLite memory engine, and a pluggable messaging transport supporting local Console simulation, WhatsApp Multi-Device (Baileys), and official Meta Cloud API Webhooks.
+CARDOSO AI is a production-grade, bilingual (Somali, English, Arabic, and Mixed code-switching) personal assistant and WhatsApp manager designed by Mohamed Dahir. Built with Google Gemini Flash AI intelligence, a secure local SQLite memory engine, and a pluggable messaging transport supporting local Console simulation, WhatsApp Multi-Device (Baileys), and official Meta Cloud API Webhooks.
 
 ---
 
@@ -83,7 +83,7 @@ c:\Users\mohamed\Desktop\BOT\
 ├── package.json                # Project dependencies and npm scripts
 ├── tsconfig.json               # TypeScript configuration
 ├── data/                       # Local SQLite storage (gitignored)
-│   └── abarso.db
+│   └── cardoso.db
 ├── src/
 │   ├── index.ts                # Application startup orchestrator
 │   ├── config/                 # Configuration & limits

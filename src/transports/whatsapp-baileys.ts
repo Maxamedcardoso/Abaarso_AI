@@ -1029,14 +1029,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return;
     }
 
-    // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', broadcast commands, or Abaarso triggers
+    // Detect bot triggers: '@cardoso', '!cardoso', short voice trigger '@cod'/'!cod', image trigger '@sawir'/'!sawir', or broadcast commands
     const hasVoiceCommand = lowerText.includes('@cod') || lowerText.startsWith('!cod') || /\b@cod\b/i.test(lowerText);
     const hasImageCommand = lowerText.includes('@sawir') || lowerText.startsWith('!sawir') || lowerText.includes('@image') || lowerText.startsWith('!image') || /\b@sawir\b/i.test(lowerText);
-    const hasAbaarsoCommand =
-      lowerText.includes('@abaarso') ||
-      lowerText.startsWith('!abaarso') ||
-      /\b@abaarso\b/i.test(lowerText) ||
-      /\b!abaarso\b/i.test(lowerText);
     const hasBroadcastCommand =
       lowerText.startsWith('!fariin') ||
       lowerText.startsWith('!barasho') ||
@@ -1063,7 +1058,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // Any WhatsApp management or bot command keyword (with or without prefix)
     const hasManagementCommand =
-      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul|help|shax|ogaansho|kuliyadaha|kharashka|shuruudaha|contact|reset|abaarso)\b/i.test(lowerText);
+      /^[!./#]?(?:status|post-status|sheeko|status-ai|autoview|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul|help|contact|reset)\b/i.test(lowerText);
 
     const hasCardosoMention =
       lowerText.includes('@cardoso') ||
@@ -1073,7 +1068,6 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       hasVoiceCommand ||
       hasImageCommand ||
       hasBroadcastCommand ||
-      hasAbaarsoCommand ||
       isContactsDoc;
 
     // 4. Strict fromMe Handling:
