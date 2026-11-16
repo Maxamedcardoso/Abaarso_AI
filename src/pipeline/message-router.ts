@@ -566,8 +566,8 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Status info displayed' };
     }
 
-    if (/^[!./#]?(?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^[!./#]?(?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i);
+    if (/^[!./#](?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#](?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i);
       let statusContent = (match?.[1] || '').trim();
       if (statusContent) {
         statusContent = statusContent.replace(/^[!./#]?(?:status(?:-ai)?|sheeko)\s*/i, '').trim();

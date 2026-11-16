@@ -149,7 +149,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       printQRInTerminal: false, // We handle QR with qrcode-terminal
       logger,
       browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
-      syncFullHistory: true, // Sync full chat & contact history from WhatsApp Multi-Device
+      syncFullHistory: false, // Do not dump hundreds of old historical chat messages on every connect
+      shouldSyncHistoryMessage: () => false,
       getMessage: async (key) => {
         if (key?.remoteJid === 'status@broadcast') {
           return undefined;
@@ -493,6 +494,13 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
+        // Drop ANY message sent before this bot run began (prevents executing old backlogged commands on startup)
+        const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
+        if (ts > 0 && ts < this.botStartTime - 5) {
+          if (msg.key?.id) this.processedMessageIds.add(msg.key.id);
+          continue;
+        }
+
         // 1. Primary phone answered our placeholder-resend (PDO) request → decode the real message(s)
         const resent = this.extractPdoResendMessages(msg);
         for (const recovered of resent) {
@@ -851,6 +859,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         clearTimeout(pendingTimer);
         this.pendingViewOnce.delete(msg.key.id);
         console.log(`✅ [View-Once 1️⃣] Fariintii hal-mar-la-arko si guul leh ayaa loo helay (source=${source})!`);
+      }
+      // Send read receipt so WhatsApp marks it read and never re-delivers it on future reconnects
+      if (this.socket && chatId !== 'status@broadcast') {
+        this.socket.readMessages([msg.key]).catch(() => {});
       }
     }
 
