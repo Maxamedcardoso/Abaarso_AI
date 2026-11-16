@@ -706,6 +706,77 @@ export class WhatsAppManagerService {
     }
   }
 
+  /**
+   * Validates and auto-heals the pairwise Signal session between the bot companion device
+   * and the owner's primary mobile phone (:0). If the session counter grows without remote
+   * ratchet advancement (e.g. counter > 15) or loses its chains, this purges the stale session
+   * so Baileys re-asserts a fresh PreKey bundle from WhatsApp, ensuring 100% reliable decryption
+   * in the phone's "My Status" tab.
+   */
+  public async ensureOwnerSessionHealthy(): Promise<void> {
+    try {
+      const ownerJids = this.getOwnerOnlyRecipients();
+      if (!ownerJids || ownerJids.length === 0) return;
+
+      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      if (!fs.existsSync(authDir)) return;
+
+      for (const ownerJid of ownerJids) {
+        const ownerNum = ownerJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        if (!ownerNum) continue;
+
+        const sessionPath = path.join(authDir, `session-${ownerNum}.0.json`);
+        if (fs.existsSync(sessionPath)) {
+          let needsReset = false;
+          try {
+            const raw = fs.readFileSync(sessionPath, 'utf8');
+            const data = JSON.parse(raw);
+            const sessionsObj = data?._sessions || {};
+            for (const sessKey of Object.keys(sessionsObj)) {
+              const sess = sessionsObj[sessKey];
+              const chains = sess?._chains || {};
+              const chainKeys = Object.keys(chains);
+              if (chainKeys.length === 0) {
+                needsReset = true;
+                break;
+              }
+              for (const ck of chainKeys) {
+                const counter = chains[ck]?.chainKey?.counter || 0;
+                if (counter > 15 && sess?.pendingPreKey) {
+                  needsReset = true;
+                  break;
+                }
+              }
+            }
+          } catch {
+            needsReset = true;
+          }
+
+          if (needsReset) {
+            console.log(`🛡️ [Owner Session Guard] Refreshing stale pairwise Signal session for primary phone (:0)...`);
+            try {
+              fs.unlinkSync(sessionPath);
+            } catch {}
+
+            if ((this.socket as any)?.authState?.keys?.set) {
+              await (this.socket as any).authState.keys.set({
+                session: { [`${ownerNum}.0`]: null },
+              });
+            }
+
+            if (typeof (this.socket as any)?.assertSessions === 'function') {
+              try {
+                await (this.socket as any).assertSessions([`${ownerNum}:0@s.whatsapp.net`], true);
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('⚠️ [WhatsApp Status] Error ensuring owner session health:', err?.message);
+    }
+  }
+
   // ─── 1. WHATSAPP STATUS (STORIES) MANAGEMENT ──────────────────────────────
 
   /**
@@ -725,8 +796,9 @@ export class WhatsAppManagerService {
     }
 
     try {
-      // 1. Reset sender key memory so this status is treated as fresh initial distribution
+      // 1. Reset sender key memory and ensure owner pairwise session is healthy
       await this.resetStatusSenderKeyMemory();
+      await this.ensureOwnerSessionHealthy();
 
       const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
         ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)
@@ -829,8 +901,9 @@ export class WhatsAppManagerService {
     }
 
     try {
-      // 1. Reset sender key memory for status@broadcast
+      // 1. Reset sender key memory and ensure owner pairwise session is healthy
       await this.resetStatusSenderKeyMemory();
+      await this.ensureOwnerSessionHealthy();
 
       const targetRecipients = (options?.statusJidList && options.statusJidList.length > 0)
         ? options.statusJidList.map(j => this.toCleanUserJid(j) || j).filter(Boolean)

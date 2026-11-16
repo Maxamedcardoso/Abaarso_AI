@@ -389,11 +389,14 @@ SHURUUCDA DUGSIIYA:
     }
 
     // ─── 1f. WhatsApp Status Posting & Management ─────────────────────────────
-    if (/^[!./#]?(?:status-ai)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^[!./#]?(?:status-ai)(?:\s+(.+))?$/i);
-      const topic = match?.[1]?.trim();
+    if (/^[!./#]?(?:status-ai|status_ai)(?:[\s!./#]+(.+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:status-ai|status_ai)(?:[\s!./#]+(.+))?$/i);
+      let topic = match?.[1]?.trim();
+      if (topic) {
+        topic = topic.replace(/^[!./#]?(?:status(?:-ai)?|sheeko)\s*/i, '').trim();
+      }
       await transport.sendMessage(message.chatId, '⏳ *[CARDOSO AI Status]*: AI ayaa diyaarinaya status dhiirigelin ah...');
-      const res = await whatsappManagerService.generateAndPostAIStatus(topic);
+      const res = await whatsappManagerService.generateAndPostAIStatus(topic || undefined);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'AI Status generated and posted' };
     }
@@ -563,9 +566,12 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Status info displayed' };
     }
 
-    if (/^[!./#]?(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
-      const match = text.match(/^[!./#]?(?:status|post-status|sheeko)(?:\s+([\s\S]+))?$/i);
-      const statusContent = (match?.[1] || '').trim();
+    if (/^[!./#]?(?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i);
+      let statusContent = (match?.[1] || '').trim();
+      if (statusContent) {
+        statusContent = statusContent.replace(/^[!./#]?(?:status(?:-ai)?|sheeko)\s*/i, '').trim();
+      }
 
       // If media is attached (image, video, voice note)
       if (message.media?.dataBase64) {
