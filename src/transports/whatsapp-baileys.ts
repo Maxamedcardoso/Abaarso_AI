@@ -35,6 +35,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private sessionExpired: boolean = false;
   /** Message IDs whose real content has already been dispatched (dedupes PDO resend vs. re-emit). */
   private processedMessageIds: Set<string> = new Set();
+  /** Timestamp in seconds when this bot instance started up; used to discard old backlogged commands. */
+  private botStartTime: number = Math.floor(Date.now() / 1000);
   /** View-Once stubs waiting for the retry / phone resend to deliver real content. */
   private pendingViewOnce: Map<string, NodeJS.Timeout> = new Map();
   private viewOnceFallbackSent: Set<string> = new Set();
@@ -137,6 +139,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     } catch {}
 
+    this.botStartTime = Math.floor(Date.now() / 1000);
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
     const logger = pino({ level: 'silent' }); // Keep terminal clean
@@ -652,6 +655,31 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     const chatId = msg.key.remoteJid || '';
     const isGroup = chatId.endsWith('@g.us');
     const senderId = msg.key.participant || msg.participant || msg.key.remoteJid || '';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const msgTimestamp = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
+
+    // ─── Drop Historical Messages & Commands on Startup ───────────────────────
+    // When the bot boots up, WhatsApp Multi-Device sends backlogged/unread chat messages.
+    // If an owner message (fromMe: true) or command was sent before this bot run started
+    // (or is older than 90s), NEVER execute it! This prevents re-posting old deleted statuses
+    // or re-triggering past commands (e.g. !status, !deletestatus) from chat history.
+    if (chatId !== 'status@broadcast') {
+      const isHistoricalOwnerMsg = Boolean(msg.key?.fromMe) && (
+        (msgTimestamp > 0 && msgTimestamp < this.botStartTime - 10) ||
+        (msgTimestamp > 0 && nowSec - msgTimestamp > 90)
+      );
+      if (isHistoricalOwnerMsg) {
+        if (msg.key?.id) this.processedMessageIds.add(msg.key.id);
+        console.log(`⏳ [Historical Command Ignored] Skipped stale fromMe message (${msg.key?.id}, age: ${nowSec - msgTimestamp}s) to prevent re-executing old commands on startup.`);
+        return;
+      }
+
+      // Also ignore any management/prefix commands from any user that are older than 180s on connect
+      if (msgTimestamp > 0 && nowSec - msgTimestamp > 180) {
+        if (msg.key?.id) this.processedMessageIds.add(msg.key.id);
+        return;
+      }
+    }
 
     // Cache raw message so we can safely quote it in replies AND recover View Once media when quoted
     // (Never cache status@broadcast messages so Baileys retry handler cannot re-relay status without statusJidList)
