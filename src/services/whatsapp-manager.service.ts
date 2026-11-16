@@ -263,7 +263,10 @@ export class WhatsAppManagerService {
     return this.postedStatuses.has(id) || this.lastPostedStatusKeys.some(k => k.id === id);
   }
 
-  public async deleteStatusById(statusId: string): Promise<{ success: boolean; message: string }> {
+  public async deleteStatusById(
+    statusId: string,
+    options?: { fromPhone?: boolean }
+  ): Promise<{ success: boolean; message: string }> {
     if (!this.socket) {
       return { success: false, message: 'WhatsApp ma xirna hadda (Socket not connected).' };
     }
@@ -278,12 +281,12 @@ export class WhatsAppManagerService {
     this.inProgressDeletes.add(cleanId);
 
     try {
-      const participantJid = this.socket?.user?.id || this.toCleanUserJid(this.socket?.user?.id) || undefined;
+      // For status@broadcast revokes, the key must strictly be { remoteJid: 'status@broadcast', id: cleanId, fromMe: true }
+      // without participant so contacts and WhatsApp server match the original broadcast entry correctly.
       const key: proto.IMessageKey = {
         remoteJid: 'status@broadcast',
         id: cleanId,
         fromMe: true,
-        participant: participantJid,
       };
       const recipients = this.getStatusRecipients();
       const sendOpts: any = { broadcast: true };
@@ -306,8 +309,9 @@ export class WhatsAppManagerService {
       }
 
       // 2. Sync delete to primary phone and companion devices via App State Sync (deleteMessageForMeAction)
-      // This is what forces the WhatsApp app on the user's primary mobile phone to remove the status from "My Status"!
-      if (typeof (this.socket as any)?.chatModify === 'function') {
+      // Only dispatch deleteForMe if this was NOT triggered directly from the user's phone,
+      // preventing redundant App State mutations that cause phone-side sync conflicts.
+      if (!options?.fromPhone && typeof (this.socket as any)?.chatModify === 'function') {
         try {
           await (this.socket as any).chatModify(
             {
@@ -1453,7 +1457,11 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           sendOptions.statusJidList = recipients;
         }
       }
-      await this.socket.sendMessage(chatId, { delete: messageKey }, sendOptions);
+      const targetKey: proto.IMessageKey = isStatus
+        ? { remoteJid: 'status@broadcast', id: messageKey.id, fromMe: true }
+        : messageKey;
+
+      await this.socket.sendMessage(chatId, { delete: targetKey }, sendOptions);
       return { success: true, message: '🗑️ Fariintii waa la tirtiray dhammaan (Delete for everyone).' };
     } catch (err: any) {
       return { success: false, message: `Cilad tirtiridda fariinta: ${err.message}` };

@@ -115,6 +115,7 @@ suite.test('Mock socket executes status posting and group actions successfully',
   assertTrue(delStatusRes.success, 'Status delete should succeed');
   assertEqual(sentJid, 'status@broadcast');
   assertEqual(sentPayload.delete.id, 'status_msg_123');
+  assertEqual(sentPayload.delete.participant, undefined, 'Status delete key must not contain participant');
   assertTrue(sentOptions.broadcast, 'Delete must broadcast to all recipients');
   assertTrue(Array.isArray(sentOptions.statusJidList), 'Delete must include statusJidList');
   assertTrue(sentOptions.statusJidList.includes('252610000000@s.whatsapp.net'), 'Delete must reach owner device');

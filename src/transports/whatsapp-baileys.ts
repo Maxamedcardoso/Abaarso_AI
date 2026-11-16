@@ -463,7 +463,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           const id = k?.id;
           if (id && (isStatus || whatsappManagerService.hasPostedStatus(id))) {
             console.log(`🗑️ [Phone Status Delete Detected] User manually deleted status ${id} on phone. Propagating delete to all contacts...`);
-            await whatsappManagerService.deleteStatusById(id);
+            await whatsappManagerService.deleteStatusById(id, { fromPhone: true });
           }
         }
       } catch (err: any) {
@@ -478,7 +478,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           const isRevoke = update?.update?.message === null || (update?.update as any)?.messageStubType === proto.WebMessageInfo.StubType.REVOKE;
           if (id && isRevoke && (update?.key?.remoteJid === 'status@broadcast' || whatsappManagerService.hasPostedStatus(id))) {
             console.log(`🗑️ [Status Revoke Detected] Status ${id} was revoked. Ensuring delete is propagated to all contacts...`);
-            await whatsappManagerService.deleteStatusById(id);
+            await whatsappManagerService.deleteStatusById(id, { fromPhone: true });
           }
         }
       } catch (err: any) {
@@ -502,13 +502,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         // 2. 'append' batches (offline / buffered events) are only accepted when they are
-        //    recent incoming messages or a View-Once message we are actively waiting for.
+        //    recent incoming messages or a View-Once message we are actively waiting for,
+        //    or recent phone-posted status updates from the owner.
         if (type !== 'notify') {
           const id = msg.key?.id || '';
           const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
           const isRecent = ts > 0 && nowSec - ts <= 120;
           const isPending = Boolean(id && this.pendingViewOnce.has(id));
-          if (msg.key?.fromMe || !(isRecent || isPending)) continue;
+          const isOwnRecentStatus = Boolean(msg.key?.fromMe && msg.key?.remoteJid === 'status@broadcast' && isRecent);
+          if (!isOwnRecentStatus && (msg.key?.fromMe || !(isRecent || isPending))) continue;
         }
 
         try {
@@ -670,7 +672,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const revokedId = msg.message.protocolMessage.key?.id;
         if (revokedId && (whatsappManagerService.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
           console.log(`🗑️ [Status Protocol Revoke] Received status revoke for ${revokedId}. Propagating delete to all contacts...`);
-          await whatsappManagerService.deleteStatusById(revokedId);
+          await whatsappManagerService.deleteStatusById(revokedId, { fromPhone: true });
         }
         return;
       }
@@ -696,6 +698,29 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const isOwnerStatus = Boolean(msg.key?.fromMe) ||
         (statusSender && statusReactorService.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
       if (isOwnerStatus) {
+        // Record phone-posted status so !deletestatus and !statusviews can track it
+        if (msg.key?.id) {
+          let contentType: 'text' | 'image' | 'video' | 'audio' = 'text';
+          let content = '';
+          if (msg.message?.imageMessage) {
+            contentType = 'image';
+            content = msg.message.imageMessage.caption || '[Sawir]';
+          } else if (msg.message?.videoMessage) {
+            contentType = 'video';
+            content = msg.message.videoMessage.caption || '[Muuqaal]';
+          } else if (msg.message?.audioMessage) {
+            contentType = 'audio';
+            content = '[Cod]';
+          } else if (msg.message?.conversation) {
+            content = msg.message.conversation;
+          } else if (msg.message?.extendedTextMessage?.text) {
+            content = msg.message.extendedTextMessage.text;
+          }
+          if (!whatsappManagerService.hasPostedStatus(msg.key.id)) {
+            whatsappManagerService.recordPostedStatus(msg.key.id, contentType, content, undefined, 0);
+            console.log(`📱 [Phone Status Recorded] Recorded status posted from phone (${msg.key.id}, ${contentType}): "${content.slice(0, 30)}"`);
+          }
+        }
         return;
       }
 

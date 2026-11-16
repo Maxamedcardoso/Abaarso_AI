@@ -867,7 +867,7 @@ SHURUUCDA DUGSIIYA:
     }
 
     // ─── Status Deletion (Delete for everyone) ───
-    const statusDeletePattern = /^[!./#]?(?:deletet?status|delete[-_\s]+status|tirtir[-_\s]*status|status[-_\s]*delete)(?:\s+(.+))?$/i;
+    const statusDeletePattern = /^[!./#]?(?:deletet?statuse?|delete[-_\s]+statuse?|tirtir[-_\s]*statuse?|statuse?[-_\s]*delete)(?:\s+(.+))?$/i;
     if (statusDeletePattern.test(lowerText) && isAdminUser) {
       const match = text.match(statusDeletePattern);
       const rawTarget = match?.[1]?.trim() || message.quotedMessageId;
