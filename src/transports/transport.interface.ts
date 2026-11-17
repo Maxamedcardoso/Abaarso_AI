@@ -91,6 +91,11 @@ export interface IMessagingTransport {
   reactToMessage?(chatId: string, messageId: string, emoji: string, participant?: string): Promise<boolean>;
 
   /**
+   * Sends a native WhatsApp Contact Card (vCard) with one-click [Save Contact] button
+   */
+  sendContactCard?(chatId: string, name: string, phoneNumber: string): Promise<boolean>;
+
+  /**
    * Returns underlying socket or client instance if supported
    */
   getSocket?(): any;

@@ -111,6 +111,12 @@ export class ConsoleSimulatorTransport implements IMessagingTransport {
     return true;
   }
 
+  public async sendContactCard(chatId: string, name: string, phoneNumber: string): Promise<boolean> {
+    this.lastActivityTimestamp = Date.now();
+    console.log(`\n🤖 CARDOSO AI 👤 [CONTACT CARD]: ${name} (+${phoneNumber})\n`);
+    return true;
+  }
+
   public onMessage(handler: (message: IncomingMessage) => Promise<void>): void {
     this.messageHandler = handler;
   }

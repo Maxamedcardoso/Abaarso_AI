@@ -736,6 +736,28 @@ suite.test('Status Reactor save-me tracking and owner name customization', () =>
   assertFalse(sr.isPendingSaveMe('252634555666'), 'Should no longer be pending after resolution');
 });
 
+suite.test('WhatsAppManager saveContact syncs via addOrEditContact and records broadcast contact', async () => {
+  const manager = new WhatsAppManagerService();
+  let contactActionCaptured: any = null;
+  let jidCaptured: string = '';
+
+  const mockSock: any = {
+    addOrEditContact: async (jid: string, action: any) => {
+      jidCaptured = jid;
+      contactActionCaptured = action;
+    },
+    sendMessage: async () => ({ key: { id: 'vc_1' } }),
+  };
+
+  manager.setSocket(mockSock);
+  const res = await manager.saveContact('252634123456', 'Khadar Cali');
+  assertTrue(res.success, 'saveContact should succeed');
+  assertEqual(res.name, 'Khadar Cali', 'Should return full name');
+  assertTrue(Boolean(contactActionCaptured), 'addOrEditContact should be called on socket');
+  assertEqual(contactActionCaptured?.fullName, 'Khadar Cali', 'fullName should match');
+  assertTrue(contactActionCaptured?.saveOnPrimaryAddressbook === true, 'saveOnPrimaryAddressbook should be true');
+});
+
 suite.run().then(summary => {
   if (summary.failed > 0) {
     process.exit(1);

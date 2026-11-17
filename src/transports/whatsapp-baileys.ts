@@ -1791,6 +1791,31 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     }
   }
 
+  public async sendContactCard(chatId: string, name: string, phoneNumber: string): Promise<boolean> {
+    if (!this.socket || !this.connected) return false;
+    try {
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      const vcard =
+        'BEGIN:VCARD\n' +
+        'VERSION:3.0\n' +
+        `FN:${name}\n` +
+        `TEL;type=CELL;type=VOICE;waid=${cleanPhone}:+${cleanPhone}\n` +
+        'END:VCARD';
+
+      await this.socket.sendMessage(chatId, {
+        contacts: {
+          displayName: name,
+          contacts: [{ vcard }],
+        },
+      });
+      console.log(`👤 [WhatsAppBaileys] Sent native contact card for "${name}" (+${cleanPhone}) to ${chatId}`);
+      return true;
+    } catch (err: any) {
+      console.warn(`[WhatsAppBaileys] sendContactCard error: ${err?.message}`);
+      return false;
+    }
+  }
+
   public onMessage(handler: (message: IncomingMessage) => Promise<void>): void {
     this.messageHandler = handler;
   }

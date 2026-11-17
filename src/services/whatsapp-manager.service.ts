@@ -1297,6 +1297,83 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   }
 
   /**
+   * Saves a contact directly into WhatsApp contacts list via Baileys multi-device sync
+   * (syncd app-state-sync / contactAction), and registers them in broadcast service.
+   * Also sends a native vCard contact card to the Bot Owner so they have the 1-click [Save Contact] button!
+   */
+  public async saveContact(
+    jidOrPhone: string,
+    fullName: string,
+    firstName?: string
+  ): Promise<{ success: boolean; name: string; jid: string; phone: string }> {
+    const cleanJid = this.normalizeToJid(jidOrPhone);
+    const rawDigits = jidOrPhone.replace(/\D/g, '');
+    const phone = rawDigits || cleanJid?.split('@')[0].split(':')[0] || '';
+    const name = fullName.trim() || 'Walaal';
+    const first = (firstName || name.split(' ')[0] || name).trim();
+
+    if (!cleanJid) {
+      return { success: false, name, jid: jidOrPhone, phone };
+    }
+
+    // 1. Record in broadcast service & SQLite database
+    this.broadcast.recordContact(cleanJid, name, false, true);
+
+    // 2. Sync to WhatsApp multi-device (App State Sync) so it saves directly in WhatsApp address book
+    if (this.socket) {
+      try {
+        const contactAction = {
+          fullName: name,
+          firstName: first,
+          saveOnPrimaryAddressbook: true,
+          pnJid: cleanJid,
+        };
+
+        // Method A: Built-in addOrEditContact
+        if (typeof (this.socket as any).addOrEditContact === 'function') {
+          await (this.socket as any).addOrEditContact(cleanJid, contactAction);
+          console.log(`📲 [WhatsAppManager] Contact saved via addOrEditContact: "${name}" (${cleanJid})`);
+        } else if (typeof (this.socket as any).chatModify === 'function') {
+          // Method B: chatModify with contact mutation
+          await (this.socket as any).chatModify({ contact: contactAction }, cleanJid);
+          console.log(`📲 [WhatsAppManager] Contact saved via chatModify: "${name}" (${cleanJid})`);
+        }
+      } catch (syncErr: any) {
+        console.warn(`[WhatsAppManager] Contact AppStateSync warning: ${syncErr?.message}`);
+      }
+
+      // 3. Send native vCard Contact Card to the Bot Owner / Admin so they have the 1-click [Save Contact] button!
+      try {
+        const adminPhones = this.configuredAdminPhones || [];
+        const ownerPhone = adminPhones[0];
+        if (ownerPhone) {
+          const ownerJid = this.normalizeToJid(ownerPhone);
+          if (ownerJid && ownerJid !== cleanJid) {
+            const vcard =
+              'BEGIN:VCARD\n' +
+              'VERSION:3.0\n' +
+              `FN:${name}\n` +
+              `TEL;type=CELL;type=VOICE;waid=${phone}:+${phone}\n` +
+              'END:VCARD';
+
+            await (this.socket as any).sendMessage(ownerJid, {
+              contacts: {
+                displayName: name,
+                contacts: [{ vcard }],
+              },
+            });
+            console.log(`👤 [WhatsAppManager] Delivered vCard contact card for "${name}" (+${phone}) to bot owner (${ownerJid})`);
+          }
+        }
+      } catch (vcardErr: any) {
+        console.warn(`[WhatsAppManager] Contact vCard delivery error: ${vcardErr?.message}`);
+      }
+    }
+
+    return { success: true, name, jid: cleanJid, phone };
+  }
+
+  /**
    * Removes (kicks) a participant from the group.
    * Supports @mention, raw number, local 061/063 format, or JID.
    */

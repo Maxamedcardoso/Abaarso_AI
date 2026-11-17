@@ -379,8 +379,29 @@ SHURUUCDA DUGSIIYA:
 
       if ((isPendingSaveMe && (isAffirmative || isStickerReply)) || isExplicitSavePhrase) {
         this.statusReactor?.resolvePendingSaveMe(message.chatId);
-        const contactName = message.senderName && message.senderName.trim().length > 0 ? message.senderName.trim() : 'Walaal';
-        this.broadcast.recordContact(message.chatId, contactName, false, Boolean(message.senderName));
+
+        // Try extracting user's declared name from the text (e.g. "Haye magacaygu waa Ahmed")
+        let contactName = '';
+        const nameMatch = text.match(/(?:magac(?:aygu|eygu)?\s*(?:waa|ayaa\s*la\s*yidhaahdaa|weeye)?|i\s*dhaha|waxaan\s*ahay)\s+([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)?)/i);
+        if (nameMatch && nameMatch[1]) {
+          contactName = nameMatch[1].trim();
+        } else if (message.senderName && message.senderName.trim().length > 0) {
+          contactName = message.senderName.trim();
+        } else {
+          contactName = 'Walaal';
+        }
+
+        // Full WhatsApp contact save: App-State-Sync + vCard to owner + Broadcast DB
+        await this.whatsappManager.saveContact(message.chatId, contactName);
+
+        // Also send contact card (vCard) into chat so native WhatsApp [Save Contact] button appears
+        try {
+          const rawPhone = message.senderPhone || message.chatId.replace(/\D/g, '');
+          if (rawPhone && typeof transport.sendContactCard === 'function') {
+            await transport.sendContactCard(message.chatId, contactName, rawPhone);
+          }
+        } catch {}
+
         await transport.sendMessage(message.chatId, 'Waan ku save gareeyay walaalo! ✅📲');
         return { handled: true, reason: 'Auto-saved contact from save-me status flow' };
       }
@@ -445,7 +466,8 @@ SHURUUCDA DUGSIIYA:
         `• \`!unreject <lambar>\` — Wicitaanka u fur lambar gaar ah\n` +
         `• \`!delete\` (quote fariin) — Delete for everyone fariintaas\n` +
         `• \`!react <emoji>\` (quote fariin) — Emoji ku dhufo fariintaas\n` +
-        `• \`!pin\` (quote fariin) — Pin garee fariintaas\n\n` +
+        `• \`!pin\` (quote fariin) — Pin garee fariintaas\n` +
+        `• \`!save <lambar> <magac>\` — Qofka toos ugu dar WhatsApp contacts-kaaga 📲\n\n` +
         `📢 *SMART BROADCAST:*\n` +
         `• \`!fariin <qoraal>\` — U dir 50 qof oo cusub fariin shakhsiyeed\n` +
         `• \`!contacts\` — Hubi tirada guud ee contacts-ka kaydsan`;
@@ -991,6 +1013,36 @@ SHURUUCDA DUGSIIYA:
       }
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'unreject executed' };
+    }
+
+    // ─── Manual Contact Save Command (!save <number> <name> or !save <name> when quoting) ───
+    if (/^[!./#]?(?:save|kaydi|addcontact)\b/i.test(lowerText) && isAdminUser) {
+      const parts = text.replace(/^[!./#]?(?:save|kaydi|addcontact)\s*/i, '').trim();
+      let targetJid = '';
+      let targetName = '';
+
+      if (message.quotedParticipant) {
+        targetJid = message.quotedParticipant;
+        targetName = parts || 'Walaal';
+      } else {
+        const match = parts.match(/^(\+?[0-9]{7,15})\s+(.+)$/);
+        if (match) {
+          targetJid = match[1];
+          targetName = match[2].trim();
+        } else if (parts) {
+          targetName = parts;
+          targetJid = message.chatId;
+        }
+      }
+
+      if (targetJid && targetName) {
+        const res = await this.whatsappManager.saveContact(targetJid, targetName);
+        await transport.sendMessage(
+          message.chatId,
+          `✅ Qofka *${res.name}* (${res.phone ? '+' + res.phone : targetJid}) si toos ah ayaa loogu daray contacts-kaaga WhatsApp-ka! 📲`
+        );
+        return { handled: true, reason: 'contact manually saved' };
+      }
     }
 
     // ─── Status Deletion (Delete for everyone) ───
