@@ -17,6 +17,7 @@ import { detectInstantGreetingReply, polishSomaliReply } from './somali-dictiona
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 import { BroadcastService, broadcastService } from '../services/broadcast.service.js';
 import { BotCategory, PlanGuard } from '../tenants/plan-catalog.js';
+import { inspectCustomerImageForPayment, ReceiptVerificationOutcome } from './receipt-verifier.js';
 
 export interface AdvisorEngineOptions {
   broadcast?: BroadcastService;
@@ -669,6 +670,44 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       }
     }
 
+    // 10.95. Isolated Zero-History Anti-Fraud Payment Receipt Verification (Business / Education images)
+    let receiptOutcome: ReceiptVerificationOutcome | null = null;
+    if (media?.type === 'image' && (this.tenantCategory === 'business' || this.tenantCategory === 'education')) {
+      receiptOutcome = await inspectCustomerImageForPayment({
+        ai: this.ai,
+        memory: this.memory,
+        media: { mimeType: media.mimeType, dataBase64: media.dataBase64 },
+        chatId,
+        senderPhone: chatId.split('@')[0].split(':')[0],
+        businessName: customConfig?.businessName || this.ownerDisplayName || '',
+        knowledgeBase: customConfig?.knowledgeBase || '',
+        systemRole: customConfig?.systemRole || '',
+      }).catch(() => null);
+
+      if (receiptOutcome && receiptOutcome.classification !== 'non_receipt') {
+        if (receiptOutcome.fraudCode !== 'DUPLICATE_SCREENSHOT' && receiptOutcome.parsed) {
+          this.planGuard?.recordUsage('ai');
+        }
+        if (receiptOutcome.advisorGuidanceBlock) {
+          enrichedPrompt = `${receiptOutcome.advisorGuidanceBlock}\n\n${enrichedPrompt}`;
+        }
+        if (this.memory.recordLead && (!this.planGuard || this.planGuard.checkFeature('leads').allowed)) {
+          const p = receiptOutcome.parsed;
+          const summary =
+            receiptOutcome.classification === 'verified' && p
+              ? `[VERIFIED] ${p.provider} Tix:${p.tix} — ${p.amount} ${p.currency} -> ${p.receiver_name || p.receiver_account || 'Store'}`
+              : `[REJECTED:${receiptOutcome.fraudCode || 'INVALID'}] ${receiptOutcome.rejectionReasonSomali || 'Rasiid aan sax ahayn'}`;
+          await this.memory.recordLead({
+            chatId,
+            senderName: effectiveUserName || '',
+            senderPhone: chatId.split('@')[0].split(':')[0],
+            category: receiptOutcome.classification === 'verified' ? 'payment_verified' : 'payment_rejected_fraud',
+            summary,
+          });
+        }
+      }
+    }
+
     // 11. Call AI provider (with optional media attachment for voice/image/document)
     const aiResult = await this.ai.generateResponse(enrichedPrompt, aiHistory, {
       systemInstruction,
@@ -678,6 +717,13 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
     });
     if (!aiResult.text.includes('Zero-Cost Safeguard') && !aiResult.text.includes('API key is missing')) {
       this.planGuard?.recordUsage('ai');
+    }
+
+    if (
+      receiptOutcome?.classification === 'rejected' &&
+      (aiResult.text.includes('Zero-Cost Safeguard') || aiResult.text.includes('API key is missing') || aiResult.text.includes('CARDOSO AI Error'))
+    ) {
+      aiResult.text = `⚠️ ${receiptOutcome.rejectionReasonSomali || 'Rasiidkan lama aqbalin. Fadlan soo dir rasiid sax ah oo aan horay loo isticmaalin.'}`;
     }
 
     // Extract voice transcript tag if provided, to store real user words into SQLite conversation memory
@@ -708,7 +754,11 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
         leadCat = inner.slice(0, idx).trim().toLowerCase() || 'lead';
         leadSummary = inner.slice(idx + 1).trim();
       }
-      if (leadSummary && this.memory.recordLead && (!this.planGuard || this.planGuard.checkFeature('leads').allowed)) {
+      const isDuplicateReceiptLead =
+        receiptOutcome &&
+        receiptOutcome.classification !== 'non_receipt' &&
+        (leadCat === 'payment_verified' || leadCat === 'payment_rejected_fraud');
+      if (!isDuplicateReceiptLead && leadSummary && this.memory.recordLead && (!this.planGuard || this.planGuard.checkFeature('leads').allowed)) {
         await this.memory.recordLead({
           chatId,
           senderName: effectiveUserName || '',

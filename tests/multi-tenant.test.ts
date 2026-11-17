@@ -14,6 +14,14 @@ import { ResponseCacheService } from '../src/services/response-cache.service.js'
 import { detectInstantGreetingReply } from '../src/advisor/somali-dictionary.js';
 import { PromptBuilder } from '../src/advisor/prompt-builder.js';
 import { buildSomaliGeographyPromptHint, getSomaliGeographyOverview } from '../src/advisor/somali-geography.js';
+import {
+  buildStrictReceiptParserPrompt,
+  extractMerchantReceivers,
+  matchesAllowedReceiver,
+  normalizeTix,
+  parseReceiptJsonResponse,
+  verifyReceiptDeterministically,
+} from '../src/advisor/receipt-verifier.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { WhatsAppBaileysTransport } from '../src/transports/whatsapp-baileys.js';
@@ -846,6 +854,188 @@ async function runTests() {
     assert(jsonParsed.formatted.includes('- Baati — $12 (Bombaay)') && jsonParsed.formatted.includes('- Hijab — $8'));
 
     console.log('✅ Test 9 passed: Somali cities/districts knowledge, disambiguation & CSV/JSON catalog importer verified!');
+
+    // ─── TEST 10: Anti-Fraud ZAAD/eDahab Payment Receipt Verification ───────
+    const askarReceivers = extractMerchantReceivers(
+      'ASKAR STORE',
+      'Goobta: Berbera\nZaad: 0634123456 (ASKAR STORE BERBERA)\neDahab Merchant: 69497',
+      'Sales Bot'
+    );
+    assert(askarReceivers.accounts.includes('69497'), 'Must extract merchant short code 69497');
+    assert(askarReceivers.accounts.includes('0634123456'), 'Must extract merchant ZAAD number');
+    assert(matchesAllowedReceiver('ASKAR STORE BERBERA', null, askarReceivers), 'Exact store branch name must match');
+    assert(matchesAllowedReceiver('Somali Customer', '69497', askarReceivers), 'Merchant code 69497 must match');
+    assert(!matchesAllowedReceiver('ALI STORE BERBERA', '0634999999', askarReceivers), 'Must NOT spoof ASKAR STORE with generic word STORE or BERBERA');
+
+    const parserPrompt = buildStrictReceiptParserPrompt(
+      'ASKAR STORE',
+      'Zaad: 0634123456 (ASKAR STORE BERBERA) | eDahab: 69497'
+    );
+    assert(parserPrompt.includes('SLSH') && parserPrompt.includes('69497') && parserPrompt.includes('ASKAR STORE'));
+
+    // Fraud 1: SLSH 1,000 parsed accurately (never confused as $1,000 USD)
+    const slshParsed = parseReceiptJsonResponse(JSON.stringify({
+      image_kind: 'PAYMENT_RECEIPT',
+      is_valid_receipt: true,
+      transaction_type: 'SENT_PAYMENT',
+      provider: 'ZAAD',
+      tix: 'Tix: 88221144',
+      amount: 1000,
+      currency: 'SLSH',
+      receiver_name: 'ASKAR STORE BERBERA',
+      receiver_account: '0634123456',
+      sender_name: 'Axmed',
+      sender_phone: '0634000111',
+      transaction_date_text: '17/11/2026 11:30',
+      fraud_flags: ['CURRENCY_SLSH_SHILLING'],
+      rejection_reason: null,
+    }));
+    assert(slshParsed, 'Valid SLSH JSON must parse');
+    const slshOutcome = verifyReceiptDeterministically(slshParsed!, askarReceivers, null, null, 'hash_slsh_1');
+    assert.strictEqual(slshOutcome.classification, 'verified');
+    assert(slshOutcome.advisorGuidanceBlock!.includes('1000 SLSH') && slshOutcome.advisorGuidanceBlock!.includes('NOT US Dollars'));
+
+    // Fraud 2: Wrong Receiver
+    const wrongRxParsed = parseReceiptJsonResponse(JSON.stringify({
+      image_kind: 'PAYMENT_RECEIPT',
+      is_valid_receipt: true,
+      transaction_type: 'SENT_PAYMENT',
+      provider: 'eDahab',
+      tix: 'ED990011',
+      amount: 25,
+      currency: 'USD',
+      receiver_name: 'XASAN MUUSE',
+      receiver_account: '0654888777',
+      fraud_flags: [],
+      rejection_reason: null,
+    }))!;
+    const wrongRxOutcome = verifyReceiptDeterministically(wrongRxParsed, askarReceivers, null, null, 'hash_wrong_rx');
+    assert.strictEqual(wrongRxOutcome.classification, 'rejected');
+    assert.strictEqual(wrongRxOutcome.fraudCode, 'WRONG_RECEIVER');
+
+    // Fraud 3: Tampered / Photoshop flag overrides even if AI accidentally sent is_valid_receipt: true
+    const editedParsed = parseReceiptJsonResponse(JSON.stringify({
+      image_kind: 'PAYMENT_RECEIPT',
+      is_valid_receipt: true,
+      transaction_type: 'SENT_PAYMENT',
+      provider: 'ZAAD',
+      tix: '77665544',
+      amount: 50,
+      currency: 'USD',
+      receiver_name: 'ASKAR STORE',
+      fraud_flags: ['EDITED_OR_PATCHED'],
+      rejection_reason: 'Font mismatch on amount',
+    }))!;
+    const editedOutcome = verifyReceiptDeterministically(editedParsed, askarReceivers, null, null, 'hash_edit');
+    assert.strictEqual(editedOutcome.classification, 'rejected');
+
+    // Fraud 4 & 5: End-to-End AdvisorEngine isolated zero-history inspection + SQLite Replay Fraud Blocker!
+    const receiptMem = new SQLiteStudentMemory(path.join(tempRoot, 'receipt_fraud.db'));
+    await receiptMem.initialize();
+    await receiptMem.saveBotConfig({
+      botName: 'ASKAR Bot',
+      businessName: 'ASKAR STORE',
+      systemRole: 'Sales',
+      knowledgeBase: 'Zaad: 0634123456 (ASKAR STORE BERBERA)\neDahab Merchant: 69497\n- Shaadh Casri ah: $15 USD',
+    });
+
+    // Seed previous order conversation claiming "$50" to prove Stage-2 receipt check passes history=[]
+    const scammerProfile = await receiptMem.getOrCreateStudent('252634555999@s.whatsapp.net');
+    await receiptMem.saveMessage({
+      studentId: scammerProfile.studentId,
+      chatId: '252634555999@s.whatsapp.net',
+      role: 'user',
+      content: 'Waxaan rabaa alaab $50 ah inaan iibsado',
+      languageDetected: 'so',
+      timestamp: Date.now() - 10000,
+    });
+
+    const seenHistories: number[] = [];
+    const mockVisionAi: any = {
+      generateResponse: async (_prompt: string, history: any[], opts: any) => {
+        if (opts?.responseMimeType === 'application/json') {
+          seenHistories.push(history.length);
+          return {
+            text: JSON.stringify({
+              image_kind: 'PAYMENT_RECEIPT',
+              is_valid_receipt: true,
+              transaction_type: 'SENT_PAYMENT',
+              provider: 'ZAAD',
+              tix: 'Tix: ASKAR778899',
+              amount: 1000,
+              currency: 'SLSH',
+              receiver_name: 'ASKAR STORE BERBERA',
+              receiver_account: '0634123456',
+              transaction_date_text: '17/11/2026 12:00',
+              fraud_flags: ['CURRENCY_SLSH_SHILLING'],
+              rejection_reason: null,
+            }),
+            provider: 'mock',
+            modelUsed: 'mock-vision',
+            latencyMs: 5,
+          };
+        }
+        return {
+          text: _prompt.includes('REJECTED')
+            ? 'Rasiidkan lama aqbalin: horey ayaa loo isticmaalay!'
+            : 'Waxaa la helay 1000 SLSH (Tix: ASKAR778899), maaha $15 USD — fadlan dhameystir lacagta.',
+          provider: 'mock',
+          modelUsed: 'mock-chat',
+          latencyMs: 5,
+        };
+      },
+    };
+
+    const fraudEngine = new StudentAdvisorEngine(receiptMem, mockVisionAi, {
+      cacheScope: 'receipt_test',
+      tenantCategory: 'business',
+      ownerDisplayName: 'ASKAR STORE',
+    });
+
+    const imgBytes = Buffer.from('fake-zaad-slsh-1000-screenshot-bytes').toString('base64');
+    const firstSubmit = await fraudEngine.processMessage({
+      rawSenderId: '252634555999@s.whatsapp.net',
+      chatId: '252634555999@s.whatsapp.net',
+      isGroup: false,
+      content: 'Waan soo diray lacagtii',
+      media: { type: 'image', mimeType: 'image/jpeg', dataBase64: imgBytes },
+    });
+    assert.strictEqual(seenHistories[0], 0, 'Stage-2 receipt inspector MUST run with ZERO chat history to prevent order-amount contamination');
+    assert(firstSubmit.replyText.includes('1000 SLSH'), 'Reply must reflect exact SLSH amount');
+
+    // Replay attack 1: Exact same screenshot bytes resubmitted by another phone/chat!
+    const replaySameImage = await fraudEngine.processMessage({
+      rawSenderId: '252634666888@s.whatsapp.net',
+      chatId: '252634666888@s.whatsapp.net',
+      isGroup: false,
+      content: 'Waa kan rasiidkii',
+      media: { type: 'image', mimeType: 'image/jpeg', dataBase64: imgBytes },
+    });
+    assert.strictEqual(seenHistories.length, 1, 'Duplicate screenshot hash must be blocked BEFORE calling Vision AI!');
+    assert(replaySameImage.replyText.includes('lama aqbalin'), 'Reused screenshot must be rejected');
+
+    // Replay attack 2: Different screenshot bytes (cropped/re-saved) containing the EXACT same Tix!
+    const imgBytesRecropped = Buffer.from('re-cropped-same-tix-askar778899').toString('base64');
+    const replaySameTix = await fraudEngine.processMessage({
+      rawSenderId: '252634666888@s.whatsapp.net',
+      chatId: '252634666888@s.whatsapp.net',
+      isGroup: false,
+      content: 'Tix cusub waaye kan',
+      media: { type: 'image', mimeType: 'image/jpeg', dataBase64: imgBytesRecropped },
+    });
+    assert(replaySameTix.replyText.includes('lama aqbalin'), 'Same Tix on re-saved screenshot must be blocked by SQLite Tix lock');
+
+    const storedTix = await receiptMem.findReceiptByTix(normalizeTix('Tix: ASKAR778899'));
+    assert(storedTix && storedTix.amount === 1000 && storedTix.currency === 'SLSH');
+
+    const auditLeads = await receiptMem.getLeads(10);
+    assert(
+      auditLeads.some((l) => l.category === 'payment_verified' && l.summary.includes('1000 SLSH')) &&
+      auditLeads.some((l) => l.category === 'payment_rejected_fraud' && l.summary.includes('DUPLICATE')),
+      'Orders Inbox must record both verified payments and rejected fraud replay attempts'
+    );
+    await receiptMem.close();
+    console.log('✅ Test 10 passed: Anti-fraud ZAAD/eDahab receipt parser (SLSH vs USD, Wrong Receiver, Replay Tix/Hash & Zero-History Isolation) verified!');
 
     console.log('\n🎉 ALL MULTI-TENANT SAAS TESTS PASSED CLEANLY!\n');
   } finally {

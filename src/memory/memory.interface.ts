@@ -38,6 +38,23 @@ export interface LeadRecord {
   createdAt: number;
 }
 
+export interface VerifiedReceiptRecord {
+  id?: number;
+  provider: string;
+  tix: string;
+  normalizedTix: string;
+  imageHash: string;
+  amount: number | null;
+  currency: string;
+  receiverName: string;
+  receiverAccount: string;
+  chatId: string;
+  senderPhone: string;
+  status: 'verified' | 'rejected';
+  rejectionReason: string;
+  createdAt: number;
+}
+
 /**
  * Pluggable Database / Memory Repository Interface.
  * Implemented initially by SQLite, easily swapped for PostgreSQL later.
@@ -141,6 +158,13 @@ export interface IStudentMemory {
    * Updates lead status
    */
   updateLeadStatus?(id: number, status: LeadRecord['status']): Promise<boolean>;
+
+  /**
+   * Payment receipt anti-fraud tracking (prevents Tix/screenshot replay fraud)
+   */
+  findReceiptByTix?(normalizedTix: string): Promise<VerifiedReceiptRecord | null>;
+  findReceiptByImageHash?(imageHash: string): Promise<VerifiedReceiptRecord | null>;
+  recordReceiptVerification?(receipt: Omit<VerifiedReceiptRecord, 'id' | 'createdAt'>): Promise<void>;
 
   /**
    * Closes database connections cleanly

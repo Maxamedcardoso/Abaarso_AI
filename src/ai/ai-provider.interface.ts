@@ -17,6 +17,7 @@ export interface AIMediaAttachment {
 export interface GenerateOptions {
   temperature?: number;
   maxOutputTokens?: number;
+  responseMimeType?: string;
   systemInstruction?: string;
   studentId?: string;
   media?: AIMediaAttachment;

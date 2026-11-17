@@ -150,6 +150,7 @@ export class GeminiProvider implements IAIProvider {
                 generationConfig: {
                   temperature: options.temperature ?? 0.7,
                   maxOutputTokens: options.maxOutputTokens ?? 1000,
+                  ...(options.responseMimeType ? { responseMimeType: options.responseMimeType } : {}),
                 },
               });
 

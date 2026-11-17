@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { IStudentMemory, LeadRecord, StoredMessage, StudentProfile } from './memory.interface.js';
+import { IStudentMemory, LeadRecord, StoredMessage, StudentProfile, VerifiedReceiptRecord } from './memory.interface.js';
 
 export class SQLiteStudentMemory implements IStudentMemory {
   private db: DatabaseSync | null = null;
@@ -123,6 +123,25 @@ export class SQLiteStudentMemory implements IStudentMemory {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS verified_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT DEFAULT 'UNKNOWN',
+        tix TEXT DEFAULT '',
+        normalized_tix TEXT DEFAULT '',
+        image_hash TEXT DEFAULT '',
+        amount REAL DEFAULT NULL,
+        currency TEXT DEFAULT 'UNKNOWN',
+        receiver_name TEXT DEFAULT '',
+        receiver_account TEXT DEFAULT '',
+        chat_id TEXT NOT NULL,
+        sender_phone TEXT DEFAULT '',
+        status TEXT NOT NULL,
+        rejection_reason TEXT DEFAULT '',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_receipts_tix ON verified_receipts(normalized_tix, status);
+      CREATE INDEX IF NOT EXISTS idx_receipts_hash ON verified_receipts(image_hash, status);
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -656,6 +675,72 @@ export class SQLiteStudentMemory implements IStudentMemory {
       return Boolean(res?.changes > 0);
     } catch {
       return false;
+    }
+  }
+
+  public async findReceiptByTix(normalizedTix: string): Promise<VerifiedReceiptRecord | null> {
+    if (!this.db || !normalizedTix) return null;
+    try {
+      const row = this.db.prepare(
+        `SELECT id, provider, tix, normalized_tix as normalizedTix, image_hash as imageHash,
+                amount, currency, receiver_name as receiverName, receiver_account as receiverAccount,
+                chat_id as chatId, sender_phone as senderPhone, status, rejection_reason as rejectionReason,
+                created_at as createdAt
+         FROM verified_receipts
+         WHERE normalized_tix = ? AND status = 'verified'
+         ORDER BY created_at DESC LIMIT 1`
+      ).get(normalizedTix) as any;
+      return row || null;
+    } catch {
+      return null;
+    }
+  }
+
+  public async findReceiptByImageHash(imageHash: string): Promise<VerifiedReceiptRecord | null> {
+    if (!this.db || !imageHash) return null;
+    try {
+      const row = this.db.prepare(
+        `SELECT id, provider, tix, normalized_tix as normalizedTix, image_hash as imageHash,
+                amount, currency, receiver_name as receiverName, receiver_account as receiverAccount,
+                chat_id as chatId, sender_phone as senderPhone, status, rejection_reason as rejectionReason,
+                created_at as createdAt
+         FROM verified_receipts
+         WHERE image_hash = ?
+         ORDER BY created_at DESC LIMIT 1`
+      ).get(imageHash) as any;
+      return row || null;
+    } catch {
+      return null;
+    }
+  }
+
+  public async recordReceiptVerification(
+    receipt: Omit<VerifiedReceiptRecord, 'id' | 'createdAt'>
+  ): Promise<void> {
+    if (!this.db) return;
+    try {
+      this.db.prepare(
+        `INSERT INTO verified_receipts
+           (provider, tix, normalized_tix, image_hash, amount, currency, receiver_name, receiver_account,
+            chat_id, sender_phone, status, rejection_reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        (receipt.provider || 'UNKNOWN').trim(),
+        (receipt.tix || '').trim(),
+        (receipt.normalizedTix || '').trim(),
+        (receipt.imageHash || '').trim(),
+        receipt.amount ?? null,
+        (receipt.currency || 'UNKNOWN').trim(),
+        (receipt.receiverName || '').trim(),
+        (receipt.receiverAccount || '').trim(),
+        receipt.chatId,
+        (receipt.senderPhone || '').trim(),
+        receipt.status,
+        (receipt.rejectionReason || '').trim().slice(0, 500),
+        Date.now()
+      );
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed recording receipt verification:', err.message);
     }
   }
 

@@ -97,7 +97,10 @@ export class PromptBuilder {
 - Speak courteously, persuasively, and clearly like a trusted shop/business representative.
 - Answer prices, stock, hours, delivery (intra-city xaafadaha & inter-city magaalooyinka kale), and payment methods (Zaad/eDahab) ONLY from the Verified Business Knowledge Base below. Never invent prices!
 - **SOMALI CITIES & DISTRICTS AWARENESS (Magaalooyinka & Xaafadaha):** You accurately know all Somali cities and their districts/neighborhoods (xaafado & degmooyin). When a customer mentions a neighborhood or district (e.g., 26 June, Jigjiga Yar, Axmed Dhagax, New Hargeisa, Lixle, Hodan, KM4, Bakaaraha, Suuq Bacaad, New Bosaso, Garsoor, etc.), recognize its city seamlessly and confirm their exact Magaalo + Xaafad + Phone for delivery.
-- When customers send payment receipts/screenshots or place an order or ask to buy/reserve, confirm clearly and append a hidden summary line at the very end:
+- **PAYMENT & ANTI-FRAUD GUARD (KA HORTAGGA TUUGADA & BEENTA):**
+  • If the system attaches an [OFFICIAL RECEIPT VERIFICATION RESULT] block for a screenshot, obey that exact verified/rejected status, amount, currency (NEVER confuse SLSH/Shillings with USD Dollars!), and Tix — NEVER accept a rejected, duplicate, blurry, edited, or wrong-receiver receipt!
+  • If a customer only pastes/forwards plain text claiming they paid (e.g., pasted "Tix: ... Waxaad $... u dirtay ..."), NEVER mark the order paid from plain text alone! Politely ask them to send the original uncropped Zaad/eDahab screenshot photo or wait for management confirmation.
+- When customers place a genuine order or inquire about buying/reserving, confirm clearly and append a hidden summary line at the very end:
   <!-- lead: order | [Customer name or phone] ordered/inquired: [item/payment/location/summary] -->
 `;
     } else if (roleCategory === 'education') {
@@ -106,6 +109,7 @@ export class PromptBuilder {
 - You are actively serving as the Academic Advisor & Enrollment Assistant for *${context.customConfig?.businessName || activeOwner}*.
 - Be encouraging, patient, structured, and helpful to students and parents.
 - Answer courses, schedules, fees, and registration steps accurately from the Knowledge Base below, and guide homework/study questions step by step.
+- **PAYMENT & ANTI-FRAUD GUARD:** Only treat fee payments as verified when authenticated by [OFFICIAL RECEIPT VERIFICATION RESULT] (never conflate SLSH with USD, never accept duplicate/edited screenshots or plain pasted SMS text).
 - When someone wants to register or asks about courses/fees, capture a hidden summary line at the end:
   <!-- lead: student_inquiry | [Name] asked about: [course/registration summary] -->
 `;
