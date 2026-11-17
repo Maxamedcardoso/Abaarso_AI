@@ -1120,55 +1120,43 @@ Respond with ONLY valid JSON:
       }
 
       try {
-        const rawParticipant = msg.key.participant || msg.participant || senderJid;
-        const cleanSender = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+        // ── Clean JIDs ────────────────────────────────────────────────────────
+        const rawParticipant = msg.key.participant || (msg as any).participant || senderJid;
+        const cleanSender      = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
         const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
 
-        // Target key targeting the status update with full participant identification
-        const reactionKey: proto.IMessageKey = {
-          remoteJid: 'status@broadcast',
-          id: msg.key.id,
-          participant: cleanParticipant,
-          fromMe: Boolean(msg.key.fromMe),
-        };
+        // ── Use the ORIGINAL msg.key — do NOT reconstruct ────────────────────
+        // Reconstructed keys miss server-side fields (e.g. serverToken) that
+        // WhatsApp needs to match the status update and show "liked your status".
+        const originalKey = msg.key;
 
-        const statusJidSet = new Set<string>();
-        statusJidSet.add(senderJid);
-        statusJidSet.add(cleanSender);
-        statusJidSet.add(cleanParticipant);
+        // ── statusJidList: only the sender + ourselves ────────────────────────
+        // Extra JIDs (duplicates, LID variants) cause USync errors and prevent
+        // the reaction from being delivered.
+        const statusJidList: string[] = [cleanParticipant];
         if (socket.user?.id) {
-          statusJidSet.add(socket.user.id);
-          const cleanMyJid = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-          statusJidSet.add(cleanMyJid);
+          const myClean = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+          if (myClean !== cleanParticipant) statusJidList.push(myClean);
         }
-        const statusJidList = Array.from(statusJidSet);
 
-        // A. Send status reaction to status@broadcast with statusJidList
+        console.log(`[StatusReactor] Sending reaction "${emoji}" | statusJidList=${JSON.stringify(statusJidList)} | msgId=${originalKey.id}`);
+
+        // A. Send status@broadcast reaction (SenderKey path — registers the like
+        //    so WhatsApp servers record it and show the green heart in viewers)
         await socket.sendMessage(
           'status@broadcast',
-          {
-            react: {
-              text: emoji,
-              key: reactionKey,
-            },
-          },
-          {
-            statusJidList,
-          }
+          { react: { text: emoji, key: originalKey } },
+          { statusJidList }
         );
 
-        // B. Also notify direct peer socket so official WhatsApp mobile clients (Android/iOS)
-        // reliably display the Love (❤️) reaction on the contact's status story
+        // B. Send direct peer reaction (P2P path — makes "liked your status"
+        //    appear on the contact's screen immediately on Android / iOS)
         await socket.sendMessage(
-          senderJid,
-          {
-            react: {
-              text: emoji,
-              key: reactionKey,
-            },
-          }
+          cleanSender,
+          { react: { text: emoji, key: originalKey } },
+          { statusJidList }
         ).catch((err: any) => {
-          console.warn(`[StatusReactor] Direct peer reaction notice error: ${err?.message}`);
+          console.warn(`[StatusReactor] Direct peer reaction notice: ${err?.message}`);
         });
 
         this.recordInteraction({
