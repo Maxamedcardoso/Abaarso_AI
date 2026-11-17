@@ -1489,6 +1489,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       } catch {}
     }
 
+    const isSticker = unwrapped.msgType === 'stickerMessage' || unwrapped.baileysMediaType === 'sticker';
+
     const incoming: IncomingMessage = {
       id: msg.key.id || `baileys_${Date.now()}`,
       senderId,
@@ -1496,7 +1498,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       senderName: msg.pushName || undefined,
       chatId,
       isGroup,
-      content: text || (isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]' : isVideo || mediaAttachment?.type === 'video' ? '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
+      content: text || (isSticker ? '🏷️ [WhatsApp Sticker – Qofku wuxuu soo diray Sticker/Istiikar. Eeg waxa ku qoran (sida Save me, qosol, salaam) oo si dabiici ah ugu jawaab]' : isAudio || mediaAttachment?.type === 'audio' ? '🎙️ [Voice Note – Fadlan codkan dhagayso oo jawaab sii]' : isImage || mediaAttachment?.type === 'image' ? '🖼️ [Sawir – Fadlan sawirkan eeg oo ka hadal waxa ku jira]' : isVideo || mediaAttachment?.type === 'video' ? '🎬 [Muuqaal – Fadlan muuqaalkan daawo oo dhagayso kadibna ka jawaab]' : isDocument || mediaAttachment?.type === 'document' ? '📄 [Dukumenti – Fadlan soo koob macluumaadka muhiimka ah]' : ''),
       rawTimestamp: WhatsAppBaileysTransport.toNumber(msg.messageTimestamp) * 1000 || Date.now(),
       isMentioned,
       isFromMe: Boolean(msg.key.fromMe),

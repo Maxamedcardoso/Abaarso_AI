@@ -47,6 +47,7 @@ export interface StatusAnalysisResult {
   mediaKind?: string | null;
   gender?: 'male' | 'female' | 'unknown';
   confidence: number;
+  extractedDescription?: string;
 }
 
 export interface StatusInteractionLog {
@@ -247,10 +248,29 @@ export class StatusReactorService {
     text: string,
     hasMedia: boolean = false,
     mediaKind?: string | null,
-    gender: 'male' | 'female' | 'unknown' = 'unknown'
+    gender: 'male' | 'female' | 'unknown' = 'unknown',
+    visualCategory?: StatusCategory | null,
+    visualDescription?: string
   ): StatusAnalysisResult {
     const clean = (text || '').trim();
     const lower = clean.toLowerCase();
+
+    // 00. Strict Visual Business Override:
+    // If AI vision inspected image/video and found clothes (dhar), shoes (kabo), merchandise,
+    // or products for sale, immediately mark as 'business' with ZERO comments per user request!
+    if (visualCategory === 'business') {
+      return {
+        category: 'business',
+        suggestedEmojis: ['💚'],
+        suggestedComments: [], // NO REPLY: Business status only gets official Status Like 💚
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 0.99,
+        extractedDescription: visualDescription,
+      };
+    }
 
     // 0a. Emoji-only detection — if text has ONLY emojis/whitespace, skip comment
     if (clean.length > 0 && /^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}\s]+$/u.test(clean)) {
@@ -534,38 +554,22 @@ export class StatusReactorService {
       };
     }
 
-    // 8. Business / Ganacsi / Sale / Products
+    // 8. Business / Ganacsi / Sale / Products / Clothes (Dhar, Kabo, Badeeco, Dukaan)
     if (
-      /\b(iib|qiimo|qiimaha|dalbo|delivery|order|discount|sale|furniture|dhar|kabo|stock|meherad|dukaan|xafiis|kirada|commission|kala soo xiriir)\b/i.test(
+      /\b(iib|qiimo|qiimaha|dalbo|delivery|order|discount|sale|furniture|dhar|kabo|stock|meherad|dukaan|xafiis|kirada|commission|kala soo xiriir|dharka|dhar\s+cusub|cadarka|perfume|badeeco|badeecad|shaati|surwaal|dirac|bacweyne|garbasaar|jalbaab|dahab|saacad|mobile|laptop|computer|qiimo\s+jaban|free\s+delivery|nagala\s+soo\s+xiriir)\b/i.test(
         lower
       )
     ) {
-      const maleList = [
-        "Masha'Allah sxb ganacsi barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🤲",
-        "Alaab aad u wanaagsan weeye bro! Macaamiil badan iyo barako Allaha kugu arzuqo! ✨🔥",
-        "Masha'Allah ganacsi horumar leh ninyahow, suuq wanaagsan! 👏💼",
-        "Dadaal fiican weeye sxb, Rabi shaqadaada iyo hantidaada ha kuu barakeeyo! 🤲💼",
-      ];
-      const femaleList = [
-        "Masha'Allah abaayo meherad barakaysan iyo suuq khayr leh Allaha kaaga dhigo! 💼🌸",
-        "Alaab aad u qurux badan weeye abaayo macaan! Macaamiil badan iyo barako! ✨💐",
-        "Masha'Allah horumar joogto ah abaayo, suuq wanaagsan! 👏💼",
-        "Rabi ganacsigaaga iyo dadaalkaaga ha kuu barakeeyo abaayo! 🤲💼",
-      ];
-      const neutralList = [
-        "Masha'Allah, Rabi meheradda iyo ganacsigaaga ha kuu barakeeyo walaal! 🤲💼",
-        "Masha'Allah alaab aad u qurux badan, suuq khayr leh iyo macaamiil badan! ✨🔥",
-      ];
-
       return {
         category: 'business',
-        suggestedEmojis: ['💼', '🔥', '🤲', '✨'],
-        suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
+        suggestedEmojis: ['💚'],
+        suggestedComments: [], // STRICT: No reply/comment for business statuses per user request! Only official Status Like 💚
         extractedText: clean,
         hasMedia,
         mediaKind,
         gender,
-        confidence: 0.88,
+        confidence: 0.98,
+        extractedDescription: visualDescription,
       };
     }
 
@@ -689,7 +693,8 @@ export class StatusReactorService {
       };
     }
 
-    // 13. Media only (Photo without specific caption)
+    // 13. Visual Category Honor / Media Only (Photo or Video analyzed by AI Vision)
+    const effectiveCategory: StatusCategory = visualCategory || (mediaKind === 'video' ? 'video' : 'media_only');
     const maleMedia = [
       "Masha'Allah sawir aad u qurux badan sxb! 🔥✨",
       "Masha'Allah nin shidan bro, sawir aad u wanaagsan! 👏📸",
@@ -706,14 +711,15 @@ export class StatusReactorService {
     ];
 
     return {
-      category: 'media_only',
-      suggestedEmojis: ['🔥', '❤️', '👏', '✨'],
+      category: effectiveCategory,
+      suggestedEmojis: ['💚', '🔥', '👏', '✨'],
       suggestedComments: gender === 'male' ? maleMedia : gender === 'female' ? femaleMedia : neutralMedia,
       extractedText: clean,
       hasMedia,
       mediaKind,
       gender,
-      confidence: 0.7,
+      confidence: visualCategory ? 0.95 : 0.7,
+      extractedDescription: visualDescription,
     };
   }
 
@@ -793,6 +799,66 @@ SHURUUCO ADAG (MAMNUUC):
     chosen = chosen.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
     this.recentCommentHistory.push(chosen);
     return chosen;
+  }
+
+  /**
+   * Downloads and inspects status media (image/video) using Gemini multimodal vision.
+   * Accurately detects business products (clothes/dhar, shoes, merchandise, sales ads)
+   * vs personal moments (selfies, wedding, graduation, travel, funny clips, tacsi).
+   */
+  public async inspectStatusMediaWithAI(
+    media: { mimeType: string; dataBase64: string },
+    caption: string,
+    mediaKind: string
+  ): Promise<{ isBusiness: boolean; category: StatusCategory; description: string }> {
+    if (!this.aiOrchestrator) {
+      return { isBusiness: false, category: mediaKind === 'video' ? 'video' : 'media_only', description: '' };
+    }
+
+    const visionPrompt = `You are a visual and contextual social media inspector for WhatsApp stories.
+Analyze this status media (${mediaKind}) and optional caption: "${caption || 'none'}".
+
+RULES FOR CLASSIFICATION:
+1. "isBusiness": TRUE if this image or video shows commercial merchandise, goods for sale, clothes/fashion/dhar/kabo/abaya, electronics, phones, cars for sale, furniture, perfume, shop advertisements, flyers, pricing, or product promotion.
+2. "category":
+   - "business": if isBusiness is true (clothes, shoes, goods, sales, products).
+   - "style_selfie": if it is a personal photo of a person (selfie, outfit, portrait, posing, friends).
+   - "wedding": if it shows a wedding, bride, groom, aroos, marriage ceremony.
+   - "graduation": if it shows graduation, gown, diploma, qalin-jabin, university celebration.
+   - "travel": if it shows travel, airport, airplane, beautiful scenery, tourist destination, beach, foreign city.
+   - "condolence": if it is a funeral, mourning, or condolence notice.
+   - "funny": if it is a meme, comedy clip, or humorous situation.
+   - "islamic_friday" or "islamic_duco": if it is religious Quran verse, Friday greeting, or Islamic reminder.
+   - "general_quote": if it is inspirational quotes or text on background.
+   - "media_only": if general image.
+
+Respond with ONLY valid JSON:
+{"isBusiness": boolean, "category": string, "description": "brief description in 10 words"}`;
+
+    try {
+      const res = await this.aiOrchestrator.generateResponse(visionPrompt, [], {
+        maxOutputTokens: 100,
+        media: { mimeType: media.mimeType, dataBase64: media.dataBase64 },
+      });
+      if (res && res.text) {
+        const cleaned = res.text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const cat = parsed.category as StatusCategory;
+          const isBiz = Boolean(parsed.isBusiness || parsed.category === 'business');
+          return {
+            isBusiness: isBiz,
+            category: isBiz ? 'business' : cat || (mediaKind === 'video' ? 'video' : 'media_only'),
+            description: parsed.description || '',
+          };
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[StatusReactor] Vision status inspection error: ${e?.message}`);
+    }
+
+    return { isBusiness: false, category: mediaKind === 'video' ? 'video' : 'media_only', description: '' };
   }
 
   /**
@@ -881,7 +947,31 @@ SHURUUCO ADAG (MAMNUUC):
 
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
-    const analysis = this.analyzeStatus(text, hasMedia, mediaKind, gender);
+
+    // 7. Download status media & perform AI Vision inspection if media is present
+    let visualCategory: StatusCategory | null = null;
+    let visualDescription: string | undefined = undefined;
+    if (hasMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && this.aiOrchestrator) {
+      try {
+        const buf = await MediaProcessorService.downloadMediaBuffer(unwrapped.mediaContent, unwrapped.baileysMediaType);
+        if (buf && buf.length > 50) {
+          const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
+          const mimeType = MediaProcessorService.getMimeType(unwrapped.msgType, rawMime);
+          const visionResult = await this.inspectStatusMediaWithAI(
+            { mimeType, dataBase64: buf.toString('base64') },
+            text,
+            mediaKind || 'image'
+          );
+          visualCategory = visionResult.category;
+          visualDescription = visionResult.description;
+          console.log(`👁️ [StatusReactor] Vision inspected ${mediaKind || 'media'} from ${senderName || senderJid}: category=${visualCategory}, isBusiness=${visionResult.isBusiness} ("${visualDescription}")`);
+        }
+      } catch (err: any) {
+        console.warn(`[StatusReactor] Media vision inspection failed: ${err?.message}`);
+      }
+    }
+
+    const analysis = this.analyzeStatus(text, hasMedia, mediaKind, gender, visualCategory, visualDescription);
 
     // Calculate natural human delay (e.g. 10 to 30 seconds)
     const minDelay = Math.max(0, this.config.minDelaySeconds);
@@ -963,9 +1053,12 @@ SHURUUCO ADAG (MAMNUUC):
     const shouldReact =
       this.config.autoReact &&
       (this.config.mode === 'reaction' || this.config.mode === 'both' || !this.config.autoComment);
-    // emoji_only and link_status: react only, never comment
+    // emoji_only, link_status, and business: react only (Love Cagaaran 💚), never comment per user requirement!
     const skipComment =
-      analysis.category === 'emoji_only' || analysis.category === 'link_status';
+      analysis.category === 'emoji_only' ||
+      analysis.category === 'link_status' ||
+      analysis.category === 'business' ||
+      analysis.suggestedComments.length === 0;
     const shouldComment =
       !skipComment &&
       this.config.autoComment &&

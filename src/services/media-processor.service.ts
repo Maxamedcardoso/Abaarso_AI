@@ -171,6 +171,25 @@ export class MediaProcessorService {
   }
 
   /**
+   * Downloads media stream from Baileys and returns Buffer.
+   * Works on any WhatsApp message including status updates, photos, videos, stickers, etc.
+   */
+  public static async downloadMediaBuffer(mediaContent: any, baileysMediaType: any): Promise<Buffer | null> {
+    try {
+      const { downloadContentFromMessage } = await import('@whiskeysockets/baileys');
+      const stream = await downloadContentFromMessage(mediaContent, baileysMediaType);
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const finalBuf = Buffer.concat(chunks);
+      return finalBuf.length > 0 ? finalBuf : null;
+    } catch (e: any) {
+      return null;
+    }
+  }
+
+  /**
    * Converts a Node.js Readable stream (from Baileys download) to base64 string.
    */
   public static async streamToBase64(stream: Readable): Promise<string> {
