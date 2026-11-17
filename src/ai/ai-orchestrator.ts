@@ -9,15 +9,25 @@ export class AIOrchestrator {
   private llamaProvider: LlamaProvider;
   private quotaTracker: QuotaTracker;
 
-  constructor(config: AppConfig, quotaTracker?: QuotaTracker) {
+  constructor(config: AppConfig, quotaTracker?: QuotaTracker, customApiKey?: string) {
     this.quotaTracker = quotaTracker || new QuotaTracker(config.gemini.dailyLimit, config.gemini.rpmLimit);
-    const keys = config.gemini.apiKeys.length > 0 ? config.gemini.apiKeys : config.gemini.apiKey;
+    const defaultKeys = config.gemini.apiKeys.length > 0 ? config.gemini.apiKeys : config.gemini.apiKey;
+    const keys = customApiKey?.trim() ? [customApiKey.trim()] : defaultKeys;
     this.geminiProvider = new GeminiProvider(keys, config.gemini.model, this.quotaTracker);
     this.llamaProvider = new LlamaProvider(
       config.llamaFallback.enabled,
       config.llamaFallback.url,
       config.llamaFallback.model
     );
+  }
+
+  public setCustomApiKey(apiKey: string | undefined, fallbackConfig: AppConfig): void {
+    if (apiKey?.trim()) {
+      this.geminiProvider.setApiKeys([apiKey.trim()]);
+    } else {
+      const defaultKeys = fallbackConfig.gemini.apiKeys.length > 0 ? fallbackConfig.gemini.apiKeys : fallbackConfig.gemini.apiKey;
+      this.geminiProvider.setApiKeys(defaultKeys);
+    }
   }
 
   public async initialize(): Promise<void> {

@@ -5,9 +5,15 @@ import { EmotionResult, EmotionDetector } from './emotion-detector.js';
 export interface PromptContext {
   studentName?: string;
   userName?: string;         // User's first name or WhatsApp contact name
+  savedContactName?: string; // Name from WhatsApp contacts / phonebook sync
   userGender?: 'male' | 'female' | 'unknown'; // Inferred gender (nin mise naag)
   userInterests?: string;   // Comma-separated interest topics
   userOccupation?: string;  // User's job/profession if shared
+  isReturningUser?: boolean;
+  totalMessagesCount?: number;
+  roleCategory?: 'personal' | 'business' | 'education';
+  ownerDisplayName?: string;
+  awayMode?: boolean;
   detectedLanguage: DetectedLanguage;
   isGroupChat?: boolean;
   emotionResult?: EmotionResult; // Detected emotional tone
@@ -29,14 +35,38 @@ export class PromptBuilder {
    * Constructs the master system instruction for CARDOSO AI.
    */
   public static buildSystemInstruction(context: PromptContext): string {
-    const { detectedLanguage, isGroupChat, userName, userGender, userInterests, userOccupation, emotionResult } = context;
+    const {
+      detectedLanguage,
+      isGroupChat,
+      userName,
+      savedContactName,
+      userGender,
+      userInterests,
+      userOccupation,
+      isReturningUser,
+      totalMessagesCount,
+      roleCategory,
+      ownerDisplayName,
+      awayMode,
+      emotionResult,
+    } = context;
 
-    // Build dynamic personalization block
+    // Build dynamic personalization & people-recognition block
     let personalizationBlock = '';
-    if (userName || userInterests || userOccupation || (userGender && userGender !== 'unknown')) {
-      personalizationBlock = `\n## PERSONALIZATION — WHAT YOU KNOW ABOUT THIS USER\n`;
+    if (userName || savedContactName || userInterests || userOccupation || isReturningUser || (userGender && userGender !== 'unknown')) {
+      personalizationBlock = `\n## PEOPLE RECOGNITION & PERSONALIZATION (DADKA KALA GARO)\n`;
+      if (savedContactName && savedContactName !== userName) {
+        personalizationBlock += `- Saved in phone contacts as: *${savedContactName}*.\n`;
+      }
       if (userName) {
-        personalizationBlock += `- The user's WhatsApp contact name is *${userName}*. You recognize who they are; address them naturally when it feels right — not every message, just when it flows naturally.\n`;
+        personalizationBlock += `- Person's name: *${userName}*. Greet and recognize them warmly by name when natural (e.g. when starting a chat or reassuring them) — not mechanically on every line.\n`;
+      } else {
+        personalizationBlock += `- You do not know their name yet; speak warmly and respectfully.\n`;
+      }
+      if (isReturningUser) {
+        personalizationBlock += `- RELATIONSHIP: This is a RETURNING contact (${totalMessagesCount || 'multiple'} past messages with you). Treat them like someone you already know and remember their prior context seamlessly!\n`;
+      } else {
+        personalizationBlock += `- RELATIONSHIP: First-time or fresh conversation with this person. Leave a warm, helpful, memorable first impression.\n`;
       }
       if (userGender && userGender !== 'unknown') {
         if (userGender === 'female') {
@@ -54,6 +84,35 @@ export class PromptBuilder {
         personalizationBlock += `- Their known interests include: ${userInterests}. Be aware of this when suggesting topics or giving examples.\n`;
       }
       personalizationBlock += `- Never ask for information you already know about them (name, occupation, interests above).\n`;
+    }
+
+    // Role-specific behavioral playbook (Personal vs Business vs Education)
+    const activeOwner = ownerDisplayName?.trim() || 'Mohamed Dahir';
+    let roleBehaviorBlock = '';
+    if (roleCategory === 'business') {
+      roleBehaviorBlock = `
+## ACTIVE ROLE MODE: BUSINESS SALES & CUSTOMER CARE (GANACSATO)
+- You are actively working as the Customer Service & Sales Specialist for *${context.customConfig?.businessName || activeOwner}*.
+- Speak courteously, persuasively, and clearly like a trusted shop/business representative.
+- Answer prices, stock, hours, delivery, and payment methods (Zaad/eDahab) ONLY from the Verified Business Knowledge Base below. Never invent prices!
+- When customers send payment receipts/screenshots or place an order or ask to buy/reserve, confirm clearly and append a hidden summary line at the very end:
+  <!-- lead: order | [Customer name or phone] ordered/inquired: [item/payment/summary] -->
+`;
+    } else if (roleCategory === 'education') {
+      roleBehaviorBlock = `
+## ACTIVE ROLE MODE: EDUCATION & STUDENT ADVISOR (WAXBARASHO)
+- You are actively serving as the Academic Advisor & Enrollment Assistant for *${context.customConfig?.businessName || activeOwner}*.
+- Be encouraging, patient, structured, and helpful to students and parents.
+- Answer courses, schedules, fees, and registration steps accurately from the Knowledge Base below, and guide homework/study questions step by step.
+- When someone wants to register or asks about courses/fees, capture a hidden summary line at the end:
+  <!-- lead: student_inquiry | [Name] asked about: [course/registration summary] -->
+`;
+    } else if (roleCategory === 'personal') {
+      roleBehaviorBlock = `
+## ACTIVE ROLE MODE: PERSONAL ASSISTANT & FRIENDLY PROXY (QOF CAADI AH)
+- You are managing WhatsApp for *${activeOwner}*.
+${awayMode ? `- **AWAY MODE ACTIVE:** ${activeOwner} is currently busy/away. Greet callers/texters warmly, help with everyday questions, and if someone wants ${activeOwner} personally or leaves a message/urgent note, capture it at the end:\n  <!-- lead: missed_note | [Name] left message: [short summary] -->` : `- Talk naturally like a smart, warm human acquaintance/assistant for ${activeOwner}.`}
+`;
     }
 
     const masterPrompt = `
@@ -559,7 +618,7 @@ ${customConfig.knowledgeBase || 'No extra catalog specified yet.'}
 `;
     }
 
-    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${emotionGuidance}${vocabBlock}${antiRepeatBlock}${customKnowledgeBlock}`;
+    return `${masterPrompt.trim()}\n\n${languageDirective.trim()}\n${personalizationBlock}${roleBehaviorBlock}${emotionGuidance}${vocabBlock}${antiRepeatBlock}${customKnowledgeBlock}`;
   }
 
   /**

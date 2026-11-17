@@ -15,7 +15,18 @@ import { ResponseCacheService } from '../services/response-cache.service.js';
 import { EmotionDetector } from './emotion-detector.js';
 import { detectInstantGreetingReply, polishSomaliReply } from './somali-dictionary.js';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
-import { broadcastService } from '../services/broadcast.service.js';
+import { BroadcastService, broadcastService } from '../services/broadcast.service.js';
+import { BotCategory, PlanGuard } from '../tenants/plan-catalog.js';
+
+export interface AdvisorEngineOptions {
+  broadcast?: BroadcastService;
+  reminderService?: ReminderService;
+  cacheScope?: string;
+  tenantCategory?: BotCategory;
+  ownerDisplayName?: string;
+  isAwayMode?: () => boolean;
+  planGuard?: PlanGuard;
+}
 
 export interface ProcessMessageInput {
   rawSenderId: string;
@@ -44,15 +55,36 @@ export class StudentAdvisorEngine {
   private memory: IStudentMemory;
   private ai: AIOrchestrator;
   private detector: LanguageDetector;
+  private broadcast: BroadcastService;
+  private reminders: ReminderService;
+  private cacheScope: string;
+  private tenantCategory?: BotCategory;
+  private ownerDisplayName?: string;
+  private isAwayMode?: () => boolean;
+  private planGuard?: PlanGuard;
 
-  constructor(memory: IStudentMemory, ai: AIOrchestrator) {
+  constructor(memory: IStudentMemory, ai: AIOrchestrator, options?: AdvisorEngineOptions) {
     this.memory = memory;
     this.ai = ai;
     this.detector = new LanguageDetector();
+    this.broadcast = options?.broadcast || broadcastService;
+    this.reminders = options?.reminderService || reminderService;
+    this.cacheScope = options?.cacheScope || 'default';
+    this.tenantCategory = options?.tenantCategory;
+    this.ownerDisplayName = options?.ownerDisplayName;
+    this.isAwayMode = options?.isAwayMode;
+    this.planGuard = options?.planGuard;
   }
 
   public getAIOrchestrator(): AIOrchestrator {
     return this.ai;
+  }
+
+  public setTenantCategory(category: BotCategory, ownerDisplayName?: string): void {
+    this.tenantCategory = category;
+    if (ownerDisplayName !== undefined) {
+      this.ownerDisplayName = ownerDisplayName;
+    }
   }
 
   public async processMessage(input: ProcessMessageInput): Promise<ProcessMessageOutput> {
@@ -69,8 +101,26 @@ export class StudentAdvisorEngine {
     const langResult = this.detector.detect(content);
     const lang = langResult.language;
 
-    // 1.5. Instant Islamic/Somali greeting shortcut — reply immediately without AI call
-    const instantReply = detectInstantGreetingReply(content);
+    // 3b. Resolve identity from memory + synced WhatsApp phonebook contacts
+    const savedContactName = this.broadcast.getContactName(chatId) || this.broadcast.getContactName(rawSenderId);
+    const knownUserName = student.firstName || input.senderName || savedContactName;
+    const knownGender = UserProfiler.detectGender(knownUserName, content);
+    const isReturning = student.totalMessagesCount > 2;
+    let cachedCustomConfig: { botName?: string; businessName?: string; systemRole?: string; knowledgeBase?: string } | undefined;
+    if (this.memory instanceof SQLiteStudentMemory) {
+      try {
+        cachedCustomConfig = await this.memory.getBotConfig();
+      } catch {}
+    }
+
+    // 1.5. Instant Islamic/Somali greeting shortcut — personalized by person + bot role (0 AI quota!)
+    const instantReply = detectInstantGreetingReply(content, {
+      userName: knownUserName,
+      userGender: knownGender,
+      roleCategory: this.tenantCategory,
+      businessName: cachedCustomConfig?.businessName || this.ownerDisplayName,
+      isReturning,
+    });
     if (instantReply && !media) {
       // Still learn vocab & save message for context
       if (this.memory instanceof SQLiteStudentMemory) {
@@ -157,7 +207,7 @@ export class StudentAdvisorEngine {
       const parsed = ReminderService.parseReminderTime(content);
       if (parsed) {
         const minutesFromNow = Math.max(1, Math.round((parsed.fireAtMs - Date.now()) / 60000));
-        reminderService.addReminder(student.studentId, chatId, parsed.reminderText, parsed.fireAtMs);
+        this.reminders.addReminder(student.studentId, chatId, parsed.reminderText, parsed.fireAtMs);
 
         let timeStr = `${minutesFromNow} daqiiqo`;
         if (minutesFromNow >= 60) {
@@ -269,10 +319,23 @@ export class StudentAdvisorEngine {
         };
       }
 
+      if (this.planGuard) {
+        const imgCheck = this.planGuard.checkFeature('image');
+        if (!imgCheck.allowed) {
+          return {
+            replyText: `⏳ ${imgCheck.reason}`,
+            studentId: student.studentId,
+            intent: 'image_generation',
+            language: lang,
+            latencyMs: Date.now() - startTime,
+          };
+        }
+      }
       // Send prompt directly to Pollinations — Somali/Arabic text works without translation.
       // Translation step removed: saves 2-4s latency and Pollinations handles non-English well.
       const generated = await ImageGeneratorService.generateImage(prompt);
       if (generated) {
+        this.planGuard?.recordUsage('image');
         const caption = lang === 'en'
           ? `🎨 *Generated Image:* "${prompt}"\nCreated by CARDOSO AI ✨`
           : `🎨 *Sawirka aad codsatay:* "${prompt}"\nWaxa soo saaray CARDOSO AI ✨`;
@@ -378,15 +441,29 @@ export class StudentAdvisorEngine {
 
     // 7.6. Handle WhatsApp Owner inquiry ("Qofkii WhatsApp-ka lahaa aaway?", "Ninkii lambarka lahaa aaway?")
     if (intentResult.intent === 'owner_inquiry') {
+      const ownerLabel = this.ownerDisplayName?.trim();
       let ownerReply: string;
       if (lang === 'so') {
-        ownerReply = `Walaal, hadda aniga ayaa maamulaya oo haya lambarkan, qofkii lambarka lahaa hadda ma joogo (wuu maqan yahay). Ma jirtaa fariin ama wax aan kuu qaban karo oo aan u reebo ama kaa caawiyo? 😊`;
+        ownerReply = ownerLabel
+          ? `Walaal, hadda aniga ayaa maamulaya oo haya lambarkan, ${ownerLabel} hadda ma joogo (wuu maqan yahay). Ma jirtaa fariin aan u reebo ama wax aan kuu qaban karo? 😊`
+          : `Walaal, hadda aniga ayaa maamulaya oo haya lambarkan, qofkii lambarka lahaa hadda ma joogo (wuu maqan yahay). Ma jirtaa fariin ama wax aan kuu qaban karo oo aan u reebo ama kaa caawiyo? 😊`;
       } else if (lang === 'en') {
-        ownerReply = `Hello! I am currently managing and holding this number; the owner of the number isn't around right now. Is there a message you'd like me to leave for them, or anything I can help you with? 😊`;
+        ownerReply = ownerLabel
+          ? `Hello! I am currently managing and holding this number; ${ownerLabel} isn't around right now. Is there a message you'd like me to leave for them, or anything I can help you with? 😊`
+          : `Hello! I am currently managing and holding this number; the owner of the number isn't around right now. Is there a message you'd like me to leave for them, or anything I can help you with? 😊`;
       } else if (lang === 'ar') {
         ownerReply = `أهلاً بك! أنا حالياً من يدير ويحمل هذا الرقم، وصاحب الرقم غير متواجد حالياً. هل هناك رسالة تود تركها له أو أي شيء يمكنني مساعدتك به؟ 😊`;
       } else {
         ownerReply = `Hello! I am currently managing and holding this number; the owner of the number isn't around right now. Is there a message or anything I can help you with? 😊`;
+      }
+      if (this.memory.recordLead && (!this.planGuard || this.planGuard.checkFeature('leads').allowed)) {
+        await this.memory.recordLead({
+          chatId,
+          senderName: knownUserName || '',
+          senderPhone: chatId.split('@')[0].split(':')[0],
+          category: 'owner_inquiry',
+          summary: `${knownUserName || rawSenderId} asked for owner (${content.slice(0, 120)})`,
+        });
       }
       return {
         replyText: ownerReply,
@@ -430,7 +507,7 @@ export class StudentAdvisorEngine {
       profileUpdates.firstName = detectedName;
       // Also update the user's real name in the broadcast contacts list
       if (!isGroup) {
-        broadcastService.recordContact(chatId, detectedName, false);
+        this.broadcast.recordContact(chatId, detectedName, false);
       }
     }
     if (detectedOccupation && detectedOccupation !== student.occupation) {
@@ -446,8 +523,8 @@ export class StudentAdvisorEngine {
       currentStudent = { ...student, ...profileUpdates };
     }
 
-    // Determine effective user name & inferred gender (nin mise naag)
-    const effectiveUserName = currentStudent.firstName || input.senderName;
+    // Determine effective user name & inferred gender (nin mise naag), falling back to synced WhatsApp contact name
+    const effectiveUserName = currentStudent.firstName || input.senderName || savedContactName;
     const detectedGender = UserProfiler.detectGender(effectiveUserName, content);
 
     // 8.9. Detect early whether this response will be delivered as an audio voice note
@@ -466,28 +543,30 @@ export class StudentAdvisorEngine {
 
     const wantsVoice = !isCardosoMentioned && (isExplicitVoiceCmd || media?.type === 'audio');
 
-    // 9. Build system instruction (includes language directive + emotion guidance + extended voice mode)
-    // Inject learned vocabulary and anti-repetition phrases for human-like responses
+    // 9. Build system instruction (includes language directive + role behavior + people recognition + custom knowledge)
     let learnedVocab: Array<{ word: string; frequency: number }> | undefined;
     let vocabCount: number | undefined;
     let recentPhrases: string[] | undefined;
-    let customConfig: { botName?: string; businessName?: string; systemRole?: string; knowledgeBase?: string } | undefined;
+    const customConfig = cachedCustomConfig;
     if (this.memory instanceof SQLiteStudentMemory) {
       learnedVocab = this.memory.getTopVocab(60);
       vocabCount = this.memory.getVocabCount();
       recentPhrases = this.memory.getRecentPhrases(chatId, 12);
-      try {
-        customConfig = await this.memory.getBotConfig();
-      } catch {}
     }
 
     const systemInstruction = PromptBuilder.buildSystemInstruction({
       detectedLanguage: lang,
       isGroupChat: isGroup,
       userName: effectiveUserName,
+      savedContactName,
       userGender: detectedGender,
       userInterests: currentStudent.interests,
       userOccupation: currentStudent.occupation,
+      isReturningUser: isReturning || storedHistory.length > 0,
+      totalMessagesCount: currentStudent.totalMessagesCount,
+      roleCategory: this.tenantCategory,
+      ownerDisplayName: this.ownerDisplayName,
+      awayMode: this.isAwayMode?.(),
       emotionResult,
       isVoiceReply: wantsVoice,
       learnedVocab,
@@ -558,12 +637,26 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       }
     }
 
-    // 10.5. Check Smart Response Cache (Instant response, saves quota for mass users)
+    // 10.5. Check Smart Response Cache (scoped per tenant, instant response)
     if (!media && ResponseCacheService.isCacheable(content)) {
-      const cached = ResponseCacheService.get(content, lang);
+      const cached = ResponseCacheService.get(content, lang, this.cacheScope);
       if (cached) {
         return {
           replyText: cached,
+          studentId: student.studentId,
+          intent: intentResult.intent,
+          language: lang,
+          latencyMs: Date.now() - startTime,
+        };
+      }
+    }
+
+    // 10.9. Enforce tenant plan AI daily quota before outbound call
+    if (this.planGuard) {
+      const aiCheck = this.planGuard.checkFeature('ai');
+      if (!aiCheck.allowed) {
+        return {
+          replyText: `⚠️ ${aiCheck.reason}`,
           studentId: student.studentId,
           intent: intentResult.intent,
           language: lang,
@@ -579,6 +672,9 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       maxOutputTokens: wantsVoice ? 2000 : 1000,
       media: media ? { mimeType: media.mimeType, dataBase64: media.dataBase64 } : undefined,
     });
+    if (!aiResult.text.includes('Zero-Cost Safeguard') && !aiResult.text.includes('API key is missing')) {
+      this.planGuard?.recordUsage('ai');
+    }
 
     // Extract voice transcript tag if provided, to store real user words into SQLite conversation memory
     let userTurnSavedContent = content;
@@ -591,6 +687,35 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       aiResult.text = aiResult.text.replace(/<!--\s*transcript:\s*[\s\S]*?-->/gi, '').trim();
     }
 
+    // Extract hidden lead/order/note tag if emitted by Business/Education/Personal away roles
+    const rawLeadTag = aiResult.text.match(/<!--\s*lead:\s*([\s\S]*?)-->/i);
+    if (rawLeadTag) {
+      const inner = rawLeadTag[1].trim();
+      let leadCat = 'lead';
+      let leadSummary = inner;
+      if (inner.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(inner);
+          leadCat = String(parsed.category || 'lead').trim().toLowerCase();
+          leadSummary = String(parsed.summary || '').trim();
+        } catch {}
+      } else if (inner.includes('|')) {
+        const idx = inner.indexOf('|');
+        leadCat = inner.slice(0, idx).trim().toLowerCase() || 'lead';
+        leadSummary = inner.slice(idx + 1).trim();
+      }
+      if (leadSummary && this.memory.recordLead && (!this.planGuard || this.planGuard.checkFeature('leads').allowed)) {
+        await this.memory.recordLead({
+          chatId,
+          senderName: effectiveUserName || '',
+          senderPhone: chatId.split('@')[0].split(':')[0],
+          category: leadCat,
+          summary: leadSummary,
+        });
+      }
+      aiResult.text = aiResult.text.replace(/<!--\s*lead:\s*[\s\S]*?-->/gi, '').trim();
+    }
+
     // Optional silence token handling from model output
     if (aiResult.text.includes('[SILENCE]') || aiResult.text.trim() === '[SILENCE]') {
       aiResult.text = '[SILENCE]';
@@ -599,9 +724,9 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
       aiResult.text = polishSomaliReply(aiResult.text);
     }
 
-    // Store successful generic responses in cache for subsequent users
+    // Store successful generic responses in scoped cache for subsequent users
     if (!media && ResponseCacheService.isCacheable(content) && aiResult.text.length > 15 && !aiResult.text.includes('Error') && aiResult.text !== '[SILENCE]') {
-      ResponseCacheService.set(content, lang, aiResult.text);
+      ResponseCacheService.set(content, lang, aiResult.text, undefined, this.cacheScope);
     }
 
     // 11.4. Track opening phrase of bot reply to avoid repeating same openers per chat
@@ -617,11 +742,12 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
     // Also respond with voice when user is replying in a group via voice (media.type === 'audio').
     let replyMedia: OutgoingMedia | undefined;
 
-    if (wantsVoice) {
+    if (wantsVoice && (!this.planGuard || this.planGuard.checkFeature('voice').allowed)) {
       console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
       try {
         const voiceResult = await VoiceReplyService.synthesizeVoice(aiResult.text, lang);
         if (voiceResult) {
+          this.planGuard?.recordUsage('voice');
           replyMedia = {
             type: 'audio',
             dataBuffer: voiceResult.buffer,

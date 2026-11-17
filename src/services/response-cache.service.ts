@@ -15,20 +15,20 @@ export class ResponseCacheService {
   /**
    * Normalizes a prompt to create a deterministic cache key.
    */
-  public static normalizeKey(prompt: string, lang: string): string {
+  public static normalizeKey(prompt: string, lang: string, scope: string = 'default'): string {
     const clean = prompt
       .toLowerCase()
       .replace(/[^\w\s\u00C0-\u024F\u0600-\u06FF]/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
-    return `${lang}:${clean}`;
+    return `${scope}:${lang}:${clean}`;
   }
 
   /**
    * Retrieves cached response if present and not expired.
    */
-  public static get(prompt: string, lang: string): string | null {
-    const key = this.normalizeKey(prompt, lang);
+  public static get(prompt: string, lang: string, scope: string = 'default'): string | null {
+    const key = this.normalizeKey(prompt, lang, scope);
     const entry = this.cache.get(key);
     if (!entry) return null;
 
@@ -43,13 +43,19 @@ export class ResponseCacheService {
   /**
    * Stores a response in the cache with expiration.
    */
-  public static set(prompt: string, lang: string, response: string, ttlMs: number = this.DEFAULT_TTL_MS): void {
+  public static set(
+    prompt: string,
+    lang: string,
+    response: string,
+    ttlMs: number = this.DEFAULT_TTL_MS,
+    scope: string = 'default'
+  ): void {
     if (this.cache.size >= this.MAX_ENTRIES) {
       const oldestKey = this.cache.keys().next().value;
       if (oldestKey) this.cache.delete(oldestKey);
     }
 
-    const key = this.normalizeKey(prompt, lang);
+    const key = this.normalizeKey(prompt, lang, scope);
     this.cache.set(key, {
       response,
       expiresAt: Date.now() + ttlMs,

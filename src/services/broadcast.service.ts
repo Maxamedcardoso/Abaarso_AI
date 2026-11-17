@@ -174,10 +174,16 @@ export class BroadcastService {
   };
   private memory?: SQLiteStudentMemory;
   private safety: BroadcastSafetyConfig;
+  private disableAutoFileImport: boolean = false;
 
-  constructor(memory?: SQLiteStudentMemory, safetyOverrides?: Partial<BroadcastSafetyConfig>) {
+  constructor(
+    memory?: SQLiteStudentMemory,
+    safetyOverrides?: Partial<BroadcastSafetyConfig>,
+    options?: { disableAutoFileImport?: boolean }
+  ) {
     this.memory = memory;
     this.safety = { ...DEFAULT_SAFETY_CONFIG, ...safetyOverrides };
+    this.disableAutoFileImport = Boolean(options?.disableAutoFileImport);
   }
 
   public setSafetyConfig(overrides: Partial<BroadcastSafetyConfig>): void {
@@ -257,8 +263,10 @@ export class BroadcastService {
         console.log(`📢 [BroadcastService] Loaded ${this.contactsMap.size} persisted contacts for broadcasting.`);
       }
 
-      // Auto-import contacts files (e.g. data/contacts.vcf or contacts.txt)
-      await this.checkAndAutoImportFiles();
+      // Auto-import contacts files only for root/owner instances unless disabled per-tenant
+      if (!this.disableAutoFileImport) {
+        await this.checkAndAutoImportFiles();
+      }
 
       this.sentJids = await this.memory.getSentBroadcastJids();
       if (this.sentJids.size > 0) {

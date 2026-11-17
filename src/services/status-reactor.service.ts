@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
-import { broadcastService } from './broadcast.service.js';
+import { BroadcastService, broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { config } from '../config/env.js';
 import { UserProfiler } from './user-profiler.service.js';
@@ -81,10 +81,20 @@ export class StatusReactorService {
   private commentByMsgId: Map<string, SentStatusCommentContext> = new Map();
   private recentCommentHistory: string[] = [];
   private processedStatusIds: Set<string> = new Set();
+  private readonly broadcast: BroadcastService;
+  private configuredAdminPhones: string[] | null = null;
 
-  constructor(customConfigPath?: string) {
+  constructor(customConfigPath?: string, broadcast?: BroadcastService, adminPhones?: string[]) {
     this.configPath = customConfigPath || path.resolve(process.cwd(), 'data', 'status_reactor_config.json');
+    this.broadcast = broadcast || broadcastService;
+    if (adminPhones) {
+      this.configuredAdminPhones = adminPhones;
+    }
     this.config = this.loadConfig();
+  }
+
+  public setAdminPhones(phones: string[]): void {
+    this.configuredAdminPhones = phones;
   }
 
   public setAIOrchestrator(ai: AIOrchestrator): void {
@@ -160,7 +170,9 @@ export class StatusReactorService {
     }
 
     // Check configured admin phone numbers
-    const adminNumbers = config.security.adminPhoneNumbers || [];
+    const adminNumbers = this.configuredAdminPhones !== null
+      ? this.configuredAdminPhones
+      : (config.security.adminPhoneNumbers || []);
     if (adminNumbers.some(admin => cleanSender.endsWith(admin) || admin.endsWith(cleanSender))) {
       return true;
     }
@@ -729,7 +741,7 @@ SHURUUCO ADAG OO MAMNUUC AH:
     if (!this.config.autoReact && !this.config.autoComment) return false;
 
     const senderJid = msg.key.participant || msg.participant || '';
-    if (!senderJid || !broadcastService.isValidIndividualJid(senderJid)) {
+    if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
       return false;
     }
 

@@ -35,6 +35,16 @@ export class GeminiProvider implements IAIProvider {
     return false;
   }
 
+  public setApiKeys(apiKeyOrKeys: string | string[]): void {
+    this.apiKeys = Array.isArray(apiKeyOrKeys)
+      ? apiKeyOrKeys.filter(Boolean)
+      : apiKeyOrKeys
+        ? [apiKeyOrKeys]
+        : [];
+    this.currentKeyIndex = 0;
+    this.initClients();
+  }
+
   public get isAvailable(): boolean {
     return this.clients.length > 0;
   }

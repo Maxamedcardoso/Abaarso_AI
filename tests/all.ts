@@ -13,6 +13,7 @@ const testFiles = [
   'tests/whatsapp-manager.test.ts',
   'tests/status-reactor.test.ts',
   'tests/e2e-master.test.ts',
+  'tests/multi-tenant.test.ts',
 ];
 
 console.log(`\n================================================================`);

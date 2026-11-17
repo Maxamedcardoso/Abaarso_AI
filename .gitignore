@@ -21,6 +21,7 @@ data/*.db-wal
 data/*.sqlite
 data/*.sqlite3
 data/*.json
+data/tenants/
 
 # Build output
 dist/

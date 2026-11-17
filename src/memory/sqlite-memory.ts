@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { IStudentMemory, StoredMessage, StudentProfile } from './memory.interface.js';
+import { IStudentMemory, LeadRecord, StoredMessage, StudentProfile } from './memory.interface.js';
 
 export class SQLiteStudentMemory implements IStudentMemory {
   private db: DatabaseSync | null = null;
@@ -111,6 +111,18 @@ export class SQLiteStudentMemory implements IStudentMemory {
         match_type TEXT DEFAULT 'contains',
         created_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        sender_name TEXT DEFAULT '',
+        sender_phone TEXT DEFAULT '',
+        category TEXT DEFAULT 'general',
+        summary TEXT NOT NULL,
+        status TEXT DEFAULT 'new',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(created_at DESC);
     `);
 
     // Safe schema migrations — add profile columns if they don't exist yet
@@ -596,6 +608,54 @@ export class SQLiteStudentMemory implements IStudentMemory {
       return null;
     } catch {
       return null;
+    }
+  }
+
+  public async recordLead(
+    lead: Omit<LeadRecord, 'id' | 'createdAt' | 'status'> & { status?: LeadRecord['status'] }
+  ): Promise<void> {
+    if (!this.db) return;
+    const summary = (lead.summary || '').trim();
+    if (!summary) return;
+    try {
+      this.db.prepare(
+        `INSERT INTO leads (chat_id, sender_name, sender_phone, category, summary, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        lead.chatId,
+        (lead.senderName || '').trim(),
+        (lead.senderPhone || '').trim(),
+        (lead.category || 'general').trim(),
+        summary.slice(0, 600),
+        lead.status || 'new',
+        Date.now()
+      );
+    } catch (err: any) {
+      console.warn('[SQLiteStudentMemory] Failed saving lead:', err.message);
+    }
+  }
+
+  public async getLeads(limit: number = 100): Promise<LeadRecord[]> {
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare(
+        `SELECT id, chat_id as chatId, sender_name as senderName, sender_phone as senderPhone,
+                category, summary, status, created_at as createdAt
+         FROM leads ORDER BY created_at DESC LIMIT ?`
+      ).all(limit) as any[];
+      return rows || [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async updateLeadStatus(id: number, status: LeadRecord['status']): Promise<boolean> {
+    if (!this.db) return false;
+    try {
+      const res = this.db.prepare('UPDATE leads SET status = ? WHERE id = ?').run(status, id) as any;
+      return Boolean(res?.changes > 0);
+    } catch {
+      return false;
     }
   }
 

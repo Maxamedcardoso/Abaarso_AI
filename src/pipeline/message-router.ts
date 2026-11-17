@@ -3,12 +3,22 @@ import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { MessageDeduplicator } from './deduplicator.js';
 import { RateLimiter } from './rate-limiter.js';
 import { AppConfig } from '../config/env.js';
-import { broadcastService } from '../services/broadcast.service.js';
-import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
-import { statusReactorService } from '../services/status-reactor.service.js';
+import { broadcastService, BroadcastService } from '../services/broadcast.service.js';
+import { whatsappManagerService, WhatsAppManagerService } from '../services/whatsapp-manager.service.js';
+import { statusReactorService, StatusReactorService } from '../services/status-reactor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { IStudentMemory } from '../memory/memory.interface.js';
 import { UserProfiler } from '../services/user-profiler.service.js';
+import { PlanGuard } from '../tenants/plan-catalog.js';
+
+export interface MessageRouterOptions {
+  broadcast?: BroadcastService;
+  whatsappManager?: WhatsAppManagerService;
+  statusReactor?: StatusReactorService;
+  planGuard?: PlanGuard;
+  subscriptionCheck?: () => { active: boolean; reason?: string };
+  getExtraAdmins?: () => string[];
+}
 
 export class MessageRouter {
   private engine: StudentAdvisorEngine;
@@ -18,28 +28,46 @@ export class MessageRouter {
   private isBotActiveGlobally: boolean = true;
   private inactiveGroups: Set<string> = new Set();
   private memory?: IStudentMemory;
+  private broadcast: BroadcastService;
+  private whatsappManager: WhatsAppManagerService;
+  private statusReactor: StatusReactorService;
+  private planGuard?: PlanGuard;
+  private subscriptionCheck?: () => { active: boolean; reason?: string };
+  private getExtraAdmins?: () => string[];
 
   constructor(
     engine: StudentAdvisorEngine,
     config: AppConfig,
     deduplicator?: MessageDeduplicator,
     rateLimiter?: RateLimiter,
-    memory?: IStudentMemory
+    memory?: IStudentMemory,
+    options?: MessageRouterOptions
   ) {
     this.engine = engine;
     this.config = config;
     this.deduplicator = deduplicator || new MessageDeduplicator();
     this.rateLimiter = rateLimiter || new RateLimiter();
     this.memory = memory;
+    this.broadcast = options?.broadcast || broadcastService;
+    this.whatsappManager = options?.whatsappManager || whatsappManagerService;
+    this.statusReactor = options?.statusReactor || statusReactorService;
+    this.planGuard = options?.planGuard;
+    this.subscriptionCheck = options?.subscriptionCheck;
+    this.getExtraAdmins = options?.getExtraAdmins;
   }
 
   public isAdmin(senderNumber: string, isGroup: boolean = false): boolean {
     const clean = senderNumber.replace(/[^0-9]/g, '');
-    if (this.config.security.adminPhoneNumbers.length === 0) {
+    if (!clean) return false;
+    const extra = this.getExtraAdmins ? this.getExtraAdmins() : [];
+    const allAdmins = [...this.config.security.adminPhoneNumbers, ...extra]
+      .map((a) => String(a || '').replace(/[^0-9]/g, ''))
+      .filter(Boolean);
+    if (allAdmins.length === 0) {
       // If no admin whitelist is configured, strictly only host phone (isFromMe) has admin privileges
       return false;
     }
-    return this.config.security.adminPhoneNumbers.some(admin => clean.endsWith(admin) || admin.endsWith(clean));
+    return allAdmins.some((admin) => clean.endsWith(admin) || admin.endsWith(clean));
   }
 
   public isGroupAllowed(groupJid: string): boolean {
@@ -83,9 +111,9 @@ export class MessageRouter {
     const contactJid = message.chatId || message.senderId;
     const isStoryReply = Boolean(message.isStoryReply || message.quotedParticipant === 'status@broadcast');
     const quotedComment = message.quotedMessageId
-      ? statusReactorService.getCommentByMsgId(message.quotedMessageId)
+      ? this.statusReactor.getCommentByMsgId(message.quotedMessageId)
       : undefined;
-    const recentComment = statusReactorService.getRecentCommentForContact(contactJid);
+    const recentComment = this.statusReactor.getRecentCommentForContact(contactJid);
 
     // Short explicit gratitude / duco detection
     const isGratitude =
@@ -302,12 +330,20 @@ SHURUUCDA DUGSIIYA:
       return { handled: false, reason: 'Bot echo discarded' };
     }
 
-    // 1c. Record contact for smart broadcasting (individual chats only, skip host's own fromMe messages)
-    if (!message.isGroup && !message.isFromMe) {
-      broadcastService.recordContact(message.chatId, message.senderName, false, true);
+    // 1b-sub. Tenant subscription status check (expired / suspended / pending)
+    if (this.subscriptionCheck) {
+      const sub = this.subscriptionCheck();
+      if (!sub.active) {
+        return { handled: false, reason: sub.reason || 'Subscription inactive or expired' };
+      }
     }
 
-    // Host phone's own outgoing commands (isFromMe) or whitelisted ADMIN_PHONE_NUMBERS are Admin
+    // 1c. Record contact for smart broadcasting (individual chats only, skip host's own fromMe messages)
+    if (!message.isGroup && !message.isFromMe) {
+      this.broadcast.recordContact(message.chatId, message.senderName, false, true);
+    }
+
+    // Host phone's own outgoing commands (isFromMe), whitelisted ADMIN_PHONE_NUMBERS, or tenant extraAdmins are Admin
     const isAdminUser = Boolean(message.isFromMe) || this.isAdmin(message.senderId, message.isGroup);
 
     // 1c-optout. Recipient opt-out guard (stops annoyed users from tapping WhatsApp "Report Spam")
@@ -316,7 +352,7 @@ SHURUUCDA DUGSIIYA:
       !isAdminUser &&
       /^(?:jooji|stop|unsubscribe|ha\s+ii\s+soo\s+dirin|ha\s+i\s+soo\s+dirin|fariimaha\s+jooji|iska\s+daa\s+fariimaha)[.!،\s]*$/i.test(lowerText)
     ) {
-      broadcastService.optOut(message.chatId, text);
+      this.broadcast.optOut(message.chatId, text);
       await transport.sendMessage(
         message.chatId,
         'Waa hagaag walaal, fariimaha dambe laguu soo diri maayo. Raalli ahow haddii ay ku dhibtay. Nabadgelyo. 🙏'
@@ -376,13 +412,20 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1f. WhatsApp Status Posting & Management ─────────────────────────────
     if (/^[!./#]?(?:status-ai|status_ai)(?:[\s!./#]+(.+))?$/i.test(lowerText) && isAdminUser) {
+      if (this.planGuard) {
+        const check = this.planGuard.checkFeature('status_post');
+        if (!check.allowed) {
+          await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+          return { handled: true, reason: 'Status post gated by plan' };
+        }
+      }
       const match = text.match(/^[!./#]?(?:status-ai|status_ai)(?:[\s!./#]+(.+))?$/i);
       let topic = match?.[1]?.trim();
       if (topic) {
         topic = topic.replace(/^[!./#]?(?:status(?:-ai)?|sheeko)\s*/i, '').trim();
       }
       await transport.sendMessage(message.chatId, '⏳ *[CARDOSO AI Status]*: AI ayaa diyaarinaya status dhiirigelin ah...');
-      const res = await whatsappManagerService.generateAndPostAIStatus(topic || undefined);
+      const res = await this.whatsappManager.generateAndPostAIStatus(topic || undefined);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'AI Status generated and posted' };
     }
@@ -394,10 +437,17 @@ SHURUUCDA DUGSIIYA:
       const mode = match?.[1]?.toLowerCase();
 
       if (mode === 'on') {
-        whatsappManagerService.setAutoViewStatus(true);
+        if (!isExplicitAutoviewOnly && this.planGuard) {
+          const check = this.planGuard.checkFeature('status_reactor');
+          if (!check.allowed) {
+            await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+            return { handled: true, reason: 'Status reactor gated by plan' };
+          }
+        }
+        this.whatsappManager.setAutoViewStatus(true);
         // If user used "view on" (or !view on), activate ALL 3: Seen + Reaction + AI Comment!
         if (!isExplicitAutoviewOnly) {
-          statusReactorService.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 0 });
+          this.statusReactor.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 0 });
           await transport.sendMessage(
             message.chatId,
             '👁️✨ *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *SHIDAY (ON)*!\n\n' +
@@ -411,9 +461,9 @@ SHURUUCDA DUGSIIYA:
           await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *SHIDAY (ON)*! Hadda bot-ku wuxuu si toos ah u daawan doonaa dhammaan status-yada cusub ee ay dadku soo dhigaan. ✅');
         }
       } else if (mode === 'off') {
-        whatsappManagerService.setAutoViewStatus(false);
+        this.whatsappManager.setAutoViewStatus(false);
         if (!isExplicitAutoviewOnly) {
-          statusReactorService.setConfig({ enabled: false, autoReact: false, autoComment: false });
+          this.statusReactor.setConfig({ enabled: false, autoReact: false, autoComment: false });
           await transport.sendMessage(
             message.chatId,
             '🛑 *[CARDOSO AI — ALL-IN-ONE VIEW]*: Waa la *DAMIDAY (OFF)*!\n\n' +
@@ -423,8 +473,8 @@ SHURUUCDA DUGSIIYA:
           await transport.sendMessage(message.chatId, '👁️ *[Auto-View Status]*: Waa la *DAMIDAY (OFF)*! Bot-ku ma daawan doono status-yada. 🛑');
         }
       } else {
-        const viewOn = whatsappManagerService.isAutoViewStatusEnabled();
-        const sr = statusReactorService.getConfig();
+        const viewOn = this.whatsappManager.isAutoViewStatusEnabled();
+        const sr = this.statusReactor.getConfig();
         await transport.sendMessage(
           message.chatId,
           `👁️ *[CARDOSO AI — ALL-IN-ONE VIEW STATUS]*:\n\n` +
@@ -444,13 +494,20 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?(?:statusreact)(?:\s+(on|off))?$/i);
       const action = match?.[1]?.toLowerCase();
       if (action === 'on') {
-        statusReactorService.setConfig({ autoReact: true });
+        if (this.planGuard) {
+          const check = this.planGuard.checkFeature('status_reactor');
+          if (!check.allowed) {
+            await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+            return { handled: true, reason: 'Status reactor gated by plan' };
+          }
+        }
+        this.statusReactor.setConfig({ autoReact: true });
         await transport.sendMessage(message.chatId, '❤️ *[Status Reactor]*: Falcelinta Emoji-ga (Auto-React) waa la *SHIDAY (ON)*! Bot-ku wuxuu status-yada ku dhufan doonaa emoji ku habboon (❤️, 😂, 👏, 🔥, 🤲). ✅');
       } else if (action === 'off') {
-        statusReactorService.setConfig({ autoReact: false });
+        this.statusReactor.setConfig({ autoReact: false });
         await transport.sendMessage(message.chatId, '🛑 *[Status Reactor]*: Falcelinta Emoji-ga (Auto-React) waa la *DAMIDAY (OFF)*.');
       } else {
-        const cfg = statusReactorService.getConfig();
+        const cfg = this.statusReactor.getConfig();
         await transport.sendMessage(
           message.chatId,
           `❤️ *[Status Reactor]*: Falcelinta Emoji-ga hadda waa: *${cfg.autoReact ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!statusreact on\` ama \`!statusreact off\``
@@ -464,13 +521,20 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?(?:statuscomment|statusreply)(?:\s+(on|off))?$/i);
       const action = match?.[1]?.toLowerCase();
       if (action === 'on') {
-        statusReactorService.setConfig({ autoComment: true });
+        if (this.planGuard) {
+          const check = this.planGuard.checkFeature('status_reactor');
+          if (!check.allowed) {
+            await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+            return { handled: true, reason: 'Status reactor gated by plan' };
+          }
+        }
+        this.statusReactor.setConfig({ autoComment: true });
         await transport.sendMessage(message.chatId, '💬 *[Status Reactor]*: Faallada Tooska ah ee AI (Smart Human Comment) waa la *SHIDAY (ON)*! Bot-ku wuxuu status kasta oo ku habboon kaga bixin doonaa faallo diirran oo Soomaali ah. ✅');
       } else if (action === 'off') {
-        statusReactorService.setConfig({ autoComment: false });
+        this.statusReactor.setConfig({ autoComment: false });
         await transport.sendMessage(message.chatId, '🛑 *[Status Reactor]*: Faallada Tooska ah ee AI (Status Comment) waa la *DAMIDAY (OFF)*.');
       } else {
-        const cfg = statusReactorService.getConfig();
+        const cfg = this.statusReactor.getConfig();
         await transport.sendMessage(
           message.chatId,
           `💬 *[Status Reactor]*: Faallada tooska ah ee AI hadda waa: *${cfg.autoComment ? 'ON (Furan)' : 'OFF (Xidhan)'}*.\nSi aad u beddesho qor:\n\`!statuscomment on\` ama \`!statuscomment off\``
@@ -484,10 +548,10 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?(?:statusmode)(?:\s+(reaction|comment|both))?$/i);
       const chosenMode = match?.[1]?.toLowerCase() as any;
       if (chosenMode) {
-        statusReactorService.setConfig({ mode: chosenMode });
+        this.statusReactor.setConfig({ mode: chosenMode });
         await transport.sendMessage(message.chatId, `⚙️ *[Status Reactor]*: Nooca falcelinta waxaa loo beddelay: *${chosenMode.toUpperCase()}* ✅`);
       } else {
-        const cfg = statusReactorService.getConfig();
+        const cfg = this.statusReactor.getConfig();
         await transport.sendMessage(
           message.chatId,
           `⚙️ *[Status Reactor Mode]*: Nooca hadda shaqaynaya waa: *${cfg.mode.toUpperCase()}*.\nDoorashooyinka:\n• \`!statusmode reaction\` (Emoji kaliya)\n• \`!statusmode comment\` (Faallo qoraal kaliya)\n• \`!statusmode both\` (Labada oo wada jira)`
@@ -501,10 +565,10 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?(?:statuscooldown)(?:\s+(\d+))?$/i);
       const hours = match?.[1] ? parseInt(match[1], 10) : null;
       if (hours && hours > 0 && hours <= 72) {
-        statusReactorService.setConfig({ cooldownHours: hours });
+        this.statusReactor.setConfig({ cooldownHours: hours });
         await transport.sendMessage(message.chatId, `⏳ *[Status Reactor]*: Cooldown-ka qofkiiba waxaa laga dhigay: *${hours} Saacadood* ✅ (Qofka looma celin doono wax ka badan 1 falcelin ${hours}-kaas saac gudahood).`);
       } else {
-        const cfg = statusReactorService.getConfig();
+        const cfg = this.statusReactor.getConfig();
         await transport.sendMessage(
           message.chatId,
           `⏳ *[Status Reactor Cooldown]*: Cooldown-ka hadda waa: *${cfg.cooldownHours} Saacadood*.\nSi aad u beddesho qor:\n\`!statuscooldown <saacado>\` (Tusaale: \`!statuscooldown 2\` ama \`!statuscooldown 6\`)`
@@ -517,20 +581,20 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?(?:statusviews|statusviewers|daawadeyaasha|daawadayaasha|status-views)(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
       const match = text.match(/^[!./#]?(?:statusviews|statusviewers|daawadeyaasha|daawadayaasha|status-views)(?:\s+(.+))?$/i);
       const targetId = match?.[1]?.trim();
-      const res = whatsappManagerService.getStatusViews(targetId);
+      const res = this.whatsappManager.getStatusViews(targetId);
       await transport.sendMessage(message.chatId, res.formattedReport);
       return { handled: true, reason: 'Status views displayed' };
     }
 
     // ─── Status AI Reactor: Status Info & Overview ──────────────────────────
     if (/^[!./#]?(?:statusinfo|statusreactor)\b/i.test(lowerText) && isAdminUser) {
-      const cfg = statusReactorService.getConfig();
-      const recent = statusReactorService.getRecentInteractions();
+      const cfg = this.statusReactor.getConfig();
+      const recent = this.statusReactor.getRecentInteractions();
       const recentSummary = recent.length > 0
         ? recent.slice(0, 5).map(r => `• ${r.type === 'reaction' ? '❤️ React' : '💬 Comment'}: "${r.content}" ➔ ${r.senderName || r.senderJid} (${r.category})`).join('\n')
         : '_Wali ma jiraan falcelino la diiwaangeliyay._';
 
-      const viewsSummary = whatsappManagerService.getStatusViews();
+      const viewsSummary = this.whatsappManager.getStatusViews();
       const lastStatusLine = viewsSummary.found && viewsSummary.status
         ? `• *Status-kaaga u dambeeyay*: ${viewsSummary.status.content ? `"${viewsSummary.status.content.slice(0, 32)}..."` : `[${viewsSummary.status.type}]`} (*${viewsSummary.totalViews} qof ayaa daawatay*)\n`
         : `• *Status-kaaga u dambeeyay*: _Wali ma jiro status cusub oo diiwaangashan_\n`;
@@ -538,7 +602,7 @@ SHURUUCDA DUGSIIYA:
       const infoText =
         `🌟 *[CARDOSO AI — STATUS AI REACTOR & VIEWS]* 🌟\n\n` +
         lastStatusLine +
-        `• *Auto-View (Seen)*: ${whatsappManagerService.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
+        `• *Auto-View (Seen)*: ${this.whatsappManager.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-React (Emoji)*: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-Comment (AI)*: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Mode*: *${cfg.mode.toUpperCase()}*\n` +
@@ -553,6 +617,13 @@ SHURUUCDA DUGSIIYA:
     }
 
     if (/^[!./#](?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i.test(lowerText) && isAdminUser) {
+      if (this.planGuard) {
+        const check = this.planGuard.checkFeature('status_post');
+        if (!check.allowed) {
+          await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+          return { handled: true, reason: 'Status post gated by plan' };
+        }
+      }
       const match = text.match(/^[!./#](?:status|post-status|sheeko)(?:[\s!./#]+([\s\S]+))?$/i);
       let statusContent = (match?.[1] || '').trim();
       if (statusContent) {
@@ -562,7 +633,7 @@ SHURUUCDA DUGSIIYA:
       // If media is attached (image, video, voice note)
       if (message.media?.dataBase64) {
         const buffer = Buffer.from(message.media.dataBase64, 'base64');
-        const res = await whatsappManagerService.postMediaStatus({
+        const res = await this.whatsappManager.postMediaStatus({
           buffer,
           mimeType: message.media.mimeType,
           caption: statusContent,
@@ -588,7 +659,7 @@ SHURUUCDA DUGSIIYA:
         textToPost = colorMatch[2].trim();
       }
 
-      const res = await whatsappManagerService.postTextStatus(textToPost, {
+      const res = await this.whatsappManager.postTextStatus(textToPost, {
         backgroundColor: customColor,
       });
       await transport.sendMessage(message.chatId, res.message);
@@ -611,7 +682,7 @@ SHURUUCDA DUGSIIYA:
         };
       }
 
-      const res = await whatsappManagerService.sendDirectReply(targetNumber, replyText, transport, { media: mediaToSend });
+      const res = await this.whatsappManager.sendDirectReply(targetNumber, replyText, transport, { media: mediaToSend });
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'Direct reply sent to number' };
     }
@@ -621,7 +692,7 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?reply\s+([\s\S]+)$/i);
       const replyText = match![1].trim();
       const targetParticipant = message.quotedParticipant;
-      const res = await whatsappManagerService.sendDirectReply(targetParticipant, replyText, transport, { replyToMessageId: message.quotedMessageId });
+      const res = await this.whatsappManager.sendDirectReply(targetParticipant, replyText, transport, { replyToMessageId: message.quotedMessageId });
       await transport.sendMessage(message.chatId, `✅ Jawaabtaada si toos ah ayaa loogu celiyay @${targetParticipant.split('@')[0]}!`, {
         replyToMessageId: message.id,
       });
@@ -633,7 +704,7 @@ SHURUUCDA DUGSIIYA:
       const match = text.match(/^[!./#]?cod\s+([0-9+]+)\s+([\s\S]+)$/i);
       const targetNumber = match![1].trim();
       const voiceText = match![2].trim();
-      const targetJid = whatsappManagerService.normalizeToJid(targetNumber);
+      const targetJid = this.whatsappManager.normalizeToJid(targetNumber);
 
       try {
         const synthesized = await VoiceReplyService.synthesizeVoice(voiceText, 'so');
@@ -703,7 +774,7 @@ SHURUUCDA DUGSIIYA:
       }
       const match = text.match(/^[!./#]?(?:tagall|dhammaan)(?:\s+([\s\S]+))?$/i);
       const customMsg = match?.[1]?.trim();
-      const res = await whatsappManagerService.tagAll(message.chatId, customMsg);
+      const res = await this.whatsappManager.tagAll(message.chatId, customMsg);
       if (!res.success) {
         await transport.sendMessage(message.chatId, res.message);
       }
@@ -720,7 +791,7 @@ SHURUUCDA DUGSIIYA:
         );
         return { handled: true, reason: 'kick target missing' };
       }
-      const res = await whatsappManagerService.kickMember(message.chatId, target);
+      const res = await this.whatsappManager.kickMember(message.chatId, target);
       await transport.sendMessage(message.chatId, res.message, {
         mentions: res.jid ? [res.jid] : undefined,
       });
@@ -737,10 +808,10 @@ SHURUUCDA DUGSIIYA:
         );
         return { handled: true, reason: 'add member target missing' };
       }
-      const res = await whatsappManagerService.addMember(message.chatId, target);
+      const res = await this.whatsappManager.addMember(message.chatId, target);
       if (res.success && res.jid) {
         const targetNum = res.jid.split('@')[0];
-        const contactName = res.name || whatsappManagerService.getContactName(res.jid);
+        const contactName = res.name || this.whatsappManager.getContactName(res.jid);
         const nameDisplay = contactName ? `${contactName} (@${targetNum})` : `@${targetNum}`;
 
         const welcomeMessage =
@@ -763,7 +834,7 @@ SHURUUCDA DUGSIIYA:
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!promote @user` ama `!promote 252634949642`');
         return { handled: true, reason: 'promote target missing' };
       }
-      const res = await whatsappManagerService.promoteMember(message.chatId, target);
+      const res = await this.whatsappManager.promoteMember(message.chatId, target);
       await transport.sendMessage(message.chatId, res.message, {
         mentions: res.jid ? [res.jid] : undefined,
       });
@@ -777,7 +848,7 @@ SHURUUCDA DUGSIIYA:
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan quote ku qabo qofka ama qor lambarkiisa: `!demote @user` ama `!demote 252634949642`');
         return { handled: true, reason: 'demote target missing' };
       }
-      const res = await whatsappManagerService.demoteMember(message.chatId, target);
+      const res = await this.whatsappManager.demoteMember(message.chatId, target);
       await transport.sendMessage(message.chatId, res.message, {
         mentions: res.jid ? [res.jid] : undefined,
       });
@@ -785,25 +856,25 @@ SHURUUCDA DUGSIIYA:
     }
 
     if (/^[!./#]?(?:mute|xidh)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
-      const res = await whatsappManagerService.setGroupMute(message.chatId, true);
+      const res = await this.whatsappManager.setGroupMute(message.chatId, true);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'group mute executed' };
     }
 
     if (/^[!./#]?(?:unmute|fur)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
-      const res = await whatsappManagerService.setGroupMute(message.chatId, false);
+      const res = await this.whatsappManager.setGroupMute(message.chatId, false);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'group unmute executed' };
     }
 
     if (/^[!./#]?(?:grouplink|link)$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
-      const res = await whatsappManagerService.getGroupInviteLink(message.chatId);
+      const res = await this.whatsappManager.getGroupInviteLink(message.chatId);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'grouplink executed' };
     }
 
     if (/^[!./#]?groupinfo$/i.test(lowerText.trim()) && isAdminUser && message.isGroup) {
-      const res = await whatsappManagerService.getGroupInfo(message.chatId);
+      const res = await this.whatsappManager.getGroupInfo(message.chatId);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'groupinfo executed' };
     }
@@ -812,7 +883,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?setname\s+(.+)$/i.test(text) && isAdminUser) {
       const match = text.match(/^[!./#]?setname\s+(.+)$/i);
       const newName = match![1].trim();
-      const res = await whatsappManagerService.updateProfileName(newName);
+      const res = await this.whatsappManager.updateProfileName(newName);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'setname executed' };
     }
@@ -820,7 +891,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?(?:setbio|setstatus)\s+(.+)$/i.test(text) && isAdminUser) {
       const match = text.match(/^[!./#]?(?:setbio|setstatus)\s+(.+)$/i);
       const newBio = match![1].trim();
-      const res = await whatsappManagerService.updateProfileBio(newBio);
+      const res = await this.whatsappManager.updateProfileBio(newBio);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'setbio executed' };
     }
@@ -828,7 +899,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?(?:setpp|setpfp)$/i.test(lowerText.trim()) && isAdminUser) {
       if (message.media?.type === 'image' && message.media.dataBase64) {
         const buffer = Buffer.from(message.media.dataBase64, 'base64');
-        const res = await whatsappManagerService.updateProfilePicture(buffer);
+        const res = await this.whatsappManager.updateProfilePicture(buffer);
         await transport.sendMessage(message.chatId, res.message);
       } else {
         await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sawir soo dir adigoo qoraal ahaan ku soo raacinaya `!setpp`');
@@ -839,7 +910,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?block\s+([0-9+]+)$/i.test(text) && isAdminUser) {
       const match = text.match(/^[!./#]?block\s+([0-9+]+)$/i);
       const target = match![1].trim();
-      const res = await whatsappManagerService.blockUser(target);
+      const res = await this.whatsappManager.blockUser(target);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'block executed' };
     }
@@ -847,7 +918,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?unblock\s+([0-9+]+)$/i.test(text) && isAdminUser) {
       const match = text.match(/^[!./#]?unblock\s+([0-9+]+)$/i);
       const target = match![1].trim();
-      const res = await whatsappManagerService.unblockUser(target);
+      const res = await this.whatsappManager.unblockUser(target);
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'unblock executed' };
     }
@@ -859,11 +930,11 @@ SHURUUCDA DUGSIIYA:
       const rawTarget = match?.[1]?.trim() || message.quotedMessageId;
       let res: { success: boolean; message: string };
       if (rawTarget && /^(?:all|dhammaan|dhamaan|kulligood|dhamman)$/i.test(rawTarget)) {
-        res = await whatsappManagerService.deleteAllStatuses();
+        res = await this.whatsappManager.deleteAllStatuses();
       } else if (rawTarget) {
-        res = await whatsappManagerService.deleteStatusById(rawTarget);
+        res = await this.whatsappManager.deleteStatusById(rawTarget);
       } else {
-        res = await whatsappManagerService.deleteLastStatus();
+        res = await this.whatsappManager.deleteLastStatus();
       }
       await transport.sendMessage(message.chatId, res.message);
       return { handled: true, reason: 'delete status executed' };
@@ -872,7 +943,7 @@ SHURUUCDA DUGSIIYA:
     if (/^[!./#]?(?:delete|tirtir)$/i.test(lowerText.trim()) && isAdminUser && message.quotedMessageId) {
       // If quoting a status story or message from status@broadcast
       if (message.quotedParticipant === 'status@broadcast' || message.isStoryReply) {
-        const res = await whatsappManagerService.deleteStatusById(message.quotedMessageId);
+        const res = await this.whatsappManager.deleteStatusById(message.quotedMessageId);
         await transport.sendMessage(message.chatId, res.message);
         return { handled: true, reason: 'delete status executed' };
       }
@@ -924,8 +995,8 @@ SHURUUCDA DUGSIIYA:
       ) {
         try {
           const content = Buffer.from(message.media.dataBase64, 'base64').toString('utf8');
-          const result = broadcastService.importFromText(content);
-          const stats = broadcastService.getStats();
+          const result = this.broadcast.importFromText(content);
+          const stats = this.broadcast.getStats();
           await transport.sendMessage(
             message.chatId,
             `🎉 *[CARDOSO AI — CONTACTS IMPORT]*\n\nFaylka *${message.media.fileName || 'Contacts'}* si buuxda ayaa loo akhriyay!\n• Waxaa laga helay: *${result.totalParsed} contacts*\n• Waxaa cusub oo lagu daray: *${result.added} qof*\n• Wadarta Guud ee Bot-ka: *${stats.total} qof*\n\nHadda waxaad diyaar u tahay inaad fariin u dirto:\n\`!fariin <fariintaada>\``
@@ -938,14 +1009,22 @@ SHURUUCDA DUGSIIYA:
     }
 
     // 2. Broadcast Confirmation Handling (HAA / MAYA)
-    if (broadcastService.hasPendingDraft(message.chatId)) {
+    if (this.broadcast.hasPendingDraft(message.chatId)) {
       const cleanReply = lowerText.trim();
       if (/^(?:haa|ha|yes|y|bilaaw|bilaab)$/i.test(cleanReply)) {
-        await broadcastService.confirmDraft(message.chatId, transport);
+        if (this.planGuard) {
+          const check = this.planGuard.checkFeature('broadcast');
+          if (!check.allowed) {
+            await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+            return { handled: true, reason: 'Broadcast gated by plan' };
+          }
+        }
+        const ok = await this.broadcast.confirmDraft(message.chatId, transport);
+        if (ok) this.planGuard?.recordUsage('broadcast');
         return { handled: true, reason: 'Broadcast confirmed and started' };
       }
       if (/^(?:maya|may|no|n|baaji|cancel)$/i.test(cleanReply)) {
-        broadcastService.cancelDraft(message.chatId);
+        this.broadcast.cancelDraft(message.chatId);
         await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI]*: Fariin-wadareedkii waa la baajiyay.');
         return { handled: true, reason: 'Broadcast cancelled' };
       }
@@ -953,7 +1032,7 @@ SHURUUCDA DUGSIIYA:
 
     // 2b. Broadcast Abort Command (!jooji)
     if (/^!(?:jooji|stop-broadcast|cancel-broadcast)$/i.test(lowerText.trim()) && isAdminUser) {
-      const aborted = broadcastService.abortBroadcast();
+      const aborted = this.broadcast.abortBroadcast();
       if (aborted) {
         await transport.sendMessage(message.chatId, '🛑 *[CARDOSO AI]*: Waxaa la diray amarka joojinta fariin-wadareedka. Way is-taagaysaa isla markiiba.');
       } else {
@@ -964,7 +1043,7 @@ SHURUUCDA DUGSIIYA:
 
     // 2c. Broadcast Query Contacts Command (!contacts / !liis)
     if (/^!(?:contacts|liis|xiriir)$/i.test(lowerText.trim()) && isAdminUser) {
-      const stats = broadcastService.getStats();
+      const stats = this.broadcast.getStats();
       const limitStr = stats.dailyLimit > 0 ? `${stats.sentToday}/${stats.dailyLimit}` : `${stats.sentToday} (Xad la'aan)`;
       await transport.sendMessage(
         message.chatId,
@@ -976,7 +1055,7 @@ SHURUUCDA DUGSIIYA:
     // 2d. Broadcast Test Command (!broadcast-test)
     if (/^!(?:broadcast-test|fariin-test)\s+/i.test(lowerText) && isAdminUser) {
       const sampleText = text.replace(/^!(?:broadcast-test|fariin-test)\s+/i, '');
-      const personalized = broadcastService.formatPersonalizedMessage(sampleText, message.senderName || 'Saaxiib');
+      const personalized = this.broadcast.formatPersonalizedMessage(sampleText, message.senderName || 'Saaxiib');
       await transport.sendMessage(
         message.chatId,
         `🧪 *[CARDOSO AI Broadcast Test Preview]*:\n\nSidan ayay u gaadhi doontaa qofka:\n"${personalized}"\n\nHaddii ay ku qanciso, u dir dhammaan adigoo isticmaalaya:\n\`!fariin ${sampleText}\``
@@ -986,7 +1065,7 @@ SHURUUCDA DUGSIIYA:
 
     // 2e. Broadcast Reset Command (!fariin reset / !broadcast reset)
     if (/^!(?:broadcast|fariin)\s+reset$/i.test(lowerText.trim()) && isAdminUser) {
-      await broadcastService.resetSentHistory();
+      await this.broadcast.resetSentHistory();
       await transport.sendMessage(
         message.chatId,
         '🔄 *[CARDOSO AI]*: Liiskii dadka fariinta loo diray waa la nadiifiyay! Hadda waxaad dib ugu bilaabi kartaa fariin cusub dhammaan contacts-ka.'
@@ -996,7 +1075,7 @@ SHURUUCDA DUGSIIYA:
 
     // 2f. Broadcast Stats Command (!fariin stats / !broadcast stats)
     if (/^!(?:broadcast|fariin)\s+(?:stats|status)$/i.test(lowerText.trim()) && isAdminUser) {
-      const stats = broadcastService.getStats();
+      const stats = this.broadcast.getStats();
       await transport.sendMessage(
         message.chatId,
         `📊 *[CARDOSO AI Smart Broadcast Xogteeda]*:\n• Wadarta Contacts-ka: *${stats.total} qof*\n• Horey loo Gaarsiiyay: *${stats.sent} qof*\n• Hadhay (Aan wali helin): *${stats.remaining} qof*`
@@ -1007,8 +1086,8 @@ SHURUUCDA DUGSIIYA:
     // 2g. Manual Contacts Import Command (!dar / !add)
     if (/^!(?:dar|add|kudar)\s+/i.test(lowerText) && isAdminUser) {
       const numbersRaw = text.replace(/^!(?:dar|add|kudar)\s+/i, '');
-      const addedCount = broadcastService.addManualNumbers(numbersRaw);
-      const stats = broadcastService.getStats();
+      const addedCount = this.broadcast.addManualNumbers(numbersRaw);
+      const stats = this.broadcast.getStats();
       await transport.sendMessage(
         message.chatId,
         `✅ *[CARDOSO AI]*: Waxaa si guul leh loogu daray *${addedCount} lambar* oo cusub!\nWadarta contacts-ka hadda waa *${stats.total} qof*.\n\nSi aad fariin ugu dirto, qor:\n\`!fariin <fariintaada>\``
@@ -1018,8 +1097,8 @@ SHURUUCDA DUGSIIYA:
 
     // 2h. Check and auto-import contacts files (!shub / !import)
     if (/^!(?:shub|import|load-contacts)$/i.test(lowerText.trim()) && isAdminUser) {
-      const imported = await broadcastService.checkAndAutoImportFiles();
-      const stats = broadcastService.getStats();
+      const imported = await this.broadcast.checkAndAutoImportFiles();
+      const stats = this.broadcast.getStats();
       await transport.sendMessage(
         message.chatId,
         `📋 *[CARDOSO AI — IMPORT]*\nWaxaa faylasha laga soo galiyay *${imported} contacts* oo cusub!\nWadarta guud ee hadda ku jirta: *${stats.total} qof*.\n\nHaddii aad haysato faylka VCF ee taleefanka (2,384 contacts), waxaad toos ugu soo diri kartaa halkan chat-ka dukumenti ahaan!`
@@ -1029,17 +1108,33 @@ SHURUUCDA DUGSIIYA:
 
     // 2i-barasho. Smart Barasho Command (!barasho [Magacaaga]) — sends tailored intro for named vs unnamed contacts
     if (/^!barasho(?:\s+(.+))?$/i.test(lowerText) && isAdminUser) {
+      if (this.planGuard) {
+        const check = this.planGuard.checkFeature('broadcast');
+        if (!check.allowed) {
+          await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+          return { handled: true, reason: 'Broadcast gated by plan' };
+        }
+      }
       const match = text.match(/^!barasho(?:\s+(.+))?$/i);
       const ownerName = (match?.[1] || '').trim() || 'Maxamed';
-      const result = await broadcastService.startBarashoBroadcast(message.chatId, transport, 50, ownerName);
+      const result = await this.broadcast.startBarashoBroadcast(message.chatId, transport, 50, ownerName);
+      if (result.success) this.planGuard?.recordUsage('broadcast');
       await transport.sendMessage(message.chatId, result.message);
       return { handled: true, reason: 'Barasho broadcast initiated' };
     }
 
     // 2i. Direct Broadcast Command (!broadcast / !fariin) — sends to the next 50 uncontacted contacts immediately!
     if (/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i.test(lowerText) && isAdminUser) {
+      if (this.planGuard) {
+        const check = this.planGuard.checkFeature('broadcast');
+        if (!check.allowed) {
+          await transport.sendMessage(message.chatId, `⛔ *[CARDOSO AI — PLAN]*: ${check.reason}`);
+          return { handled: true, reason: 'Broadcast gated by plan' };
+        }
+      }
       const broadcastContent = text.replace(/^!(?:broadcast|fariin)(?:\s+|[:,-]\s*)/i, '');
-      const result = await broadcastService.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);
+      const result = await this.broadcast.startDirectBroadcast(message.chatId, broadcastContent, transport, 50);
+      if (result.success) this.planGuard?.recordUsage('broadcast');
       await transport.sendMessage(message.chatId, result.message);
       return { handled: true, reason: 'Direct broadcast initiated' };
     }

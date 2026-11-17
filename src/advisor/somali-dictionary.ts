@@ -193,13 +193,73 @@ export function findTechnicalTermsInText(text: string): TechnicalTermExplanation
   return found;
 }
 
+export interface GreetingContext {
+  userName?: string;
+  userGender?: 'male' | 'female' | 'unknown';
+  roleCategory?: 'personal' | 'business' | 'education';
+  businessName?: string;
+  isReturning?: boolean;
+}
+
 /**
  * Checks whether a message is a pure Islamic / Somali greeting that deserves
  * an instant scripted reply instead of sending it through the AI engine.
- * Returns the reply string if it matches, or null otherwise.
+ * Adapts warmly to known person names, gender, returning status, and bot role.
  */
-export function detectInstantGreetingReply(text: string): string | null {
+export function detectInstantGreetingReply(text: string, context?: GreetingContext): string | null {
   const t = text.trim().toLowerCase().replace(/[.!،؟?،\s]+/g, ' ').trim();
+
+  const firstName = context?.userName ? context.userName.split(/\s+/)[0]?.trim() : undefined;
+  const nameTag = firstName && firstName.length >= 2 && !/^\d+$/.test(firstName) ? ` ${firstName}` : '';
+  const politeTerm = context?.userGender === 'female' ? 'abaayo' : context?.userGender === 'male' ? 'sxb' : 'walaal';
+  const brand = context?.businessName?.trim();
+
+  // Role-tailored personalized greetings when full context is supplied
+  if (context && !/^(s[\s.]*c[\s.]*w|scw|sallallahu|calayhi\s*salaatu|nnkh)/i.test(t)) {
+    const isIslamicSalam = /^(assalaamu?\s*calaykum|a[\s.]*s[\s.]*c|asc|salaam(u?\s*(calaykum)?)?|al[\s-]?salaam[\s-]?calaykum|alsalamu alaykum)(\s+warahmatullahi\s+wabarakaatuh)?$/i.test(t);
+    const isSomaliCheckin = /^(iska\s*warran|iskawarran|warran|ii\s*warran|iwaran|sidee\s*tahay|see\s*tahy|see\s*tahay|sideed\s*tahay)(\?)?$/i.test(t);
+    const isEnglishHi = /^(hi+|hey+|hello+|helo|howdy)(\s+there)?[.!]?$/i.test(t);
+
+    if (context.roleCategory === 'business' && brand) {
+      if (isIslamicSalam) {
+        return `Wa Calaykum Salaam${nameTag}! Ku soo dhawow *${brand}* — maxaan maanta kaa caawinnaa? 😊`;
+      }
+      if (isSomaliCheckin) {
+        return `Alhamdulillah${nameTag} ${politeTerm}, waan fiicanahay! Ku soo dhawow *${brand}* — adeeg ama alaabtee baad raadinaysay? 😊`;
+      }
+      if (isEnglishHi) {
+        return `Hello${nameTag}! Welcome to *${brand}* — how can we help you today? 😊`;
+      }
+    }
+
+    if (context.roleCategory === 'education' && brand) {
+      if (isIslamicSalam) {
+        return `Wa Calaykum Salaam${nameTag}! Ku soo dhawow *${brand}* — ma koorso ama macluumaad waxbarasho ayaad u baahnayd? 📚`;
+      }
+      if (isSomaliCheckin) {
+        return `Waan fiicanahay${nameTag} ${politeTerm}, mahadsanid! *${brand}* waxbarasho ama su'aalahaaga diyaar ayaan u nahay 📚😊`;
+      }
+      if (isEnglishHi) {
+        return `Hello${nameTag}! Welcome to *${brand}* — are you looking for course info or study help today? 📚`;
+      }
+    }
+
+    if (nameTag) {
+      if (isIslamicSalam) {
+        return context.isReturning
+          ? `Wa Calaykum Salaam${nameTag}! Waan ku faraxsanahay inaan mar kale ku maqlo ${politeTerm}, see tahay? 😊`
+          : `Wa Calaykum Salaam${nameTag}! Sidee tahay ${politeTerm}? 🌿`;
+      }
+      if (isSomaliCheckin) {
+        return `Waan fiicanahay${nameTag}, mahadsanid ${politeTerm}! Adiguna xaggaaga see wax yihiin? 😊`;
+      }
+      if (isEnglishHi) {
+        return context.isReturning
+          ? `Hey${nameTag}! Good to hear from you again — how are you doing? 😊`
+          : `Hi${nameTag}! How are you doing today? 😊`;
+      }
+    }
+  }
 
   // Mapping of greeting patterns → instant replies
   const GREETING_PAIRS: Array<[RegExp, string[]]> = [

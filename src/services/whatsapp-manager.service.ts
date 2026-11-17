@@ -2,9 +2,16 @@ import { WASocket, proto } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
-import { broadcastService } from './broadcast.service.js';
+import { BroadcastService, broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
+
+export interface WhatsAppManagerOptions {
+  authDir?: string;
+  statusStoragePath?: string;
+  broadcast?: BroadcastService;
+  adminPhones?: string[];
+}
 
 export interface PostStatusOptions {
   backgroundColor?: string;
@@ -44,12 +51,25 @@ export class WhatsAppManagerService {
   private botJid: string = '';
   private aiOrchestrator: AIOrchestrator | null = null;
   private lastPostedStatusKeys: Array<{ id: string; timestamp: number }> = [];
-  private readonly statusStoragePath: string = path.join(process.cwd(), 'data', 'posted-statuses.json');
+  private readonly authDir: string;
+  private readonly statusStoragePath: string;
+  private readonly broadcast: BroadcastService;
+  private configuredAdminPhones: string[] | null = null;
   private postedStatuses: Map<string, PostedStatusRecord> = new Map();
   private inProgressDeletes: Set<string> = new Set();
 
-  constructor() {
+  constructor(options?: WhatsAppManagerOptions) {
+    this.authDir = options?.authDir || path.join(process.cwd(), 'baileys_auth_info');
+    this.statusStoragePath = options?.statusStoragePath || path.join(process.cwd(), 'data', 'posted-statuses.json');
+    this.broadcast = options?.broadcast || broadcastService;
+    if (options?.adminPhones) {
+      this.configuredAdminPhones = options.adminPhones;
+    }
     this.loadPersistedStatuses();
+  }
+
+  public setAdminPhones(phones: string[]): void {
+    this.configuredAdminPhones = phones;
   }
 
   private loadPersistedStatuses(): void {
@@ -145,7 +165,7 @@ export class WhatsAppManagerService {
     }
 
     if (targetRecord) {
-      const viewerName = broadcastService.getContactName(cleanViewerJid) || undefined;
+      const viewerName = this.broadcast.getContactName(cleanViewerJid) || undefined;
       const existingIdx = targetRecord.viewers.findIndex(v => v.jid === cleanViewerJid);
       if (existingIdx >= 0) {
         targetRecord.viewers[existingIdx].timestamp = ts;
@@ -486,7 +506,7 @@ export class WhatsAppManagerService {
       }
     } else {
       try {
-        const credsPath = path.join(process.cwd(), 'baileys_auth_info', 'creds.json');
+        const credsPath = path.join(this.authDir, 'creds.json');
         if (fs.existsSync(credsPath)) {
           const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
           if (creds?.me?.id) {
@@ -502,25 +522,27 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Returns admin phone numbers configured in environment variables.
-   * Ensures the user/admin always receives and can view status updates.
+   * Returns admin phone numbers configured for this instance.
+   * Ensures the owner/admin always receives and can view status updates.
    */
   public getAdminRecipients(): string[] {
     const set = new Set<string>();
-    const envAdmins = [
-      process.env.ADMIN_PHONE_NUMBERS,
-      process.env.SUPER_ADMIN_PHONE,
-      process.env.ALLOWED_PHONE_NUMBERS,
-      '252634949642',
-      '252633171649',
-    ]
-      .filter(Boolean)
-      .join(',')
-      .split(',')
-      .map(n => n.trim())
-      .filter(Boolean);
+    const rawAdmins = this.configuredAdminPhones !== null
+      ? this.configuredAdminPhones
+      : [
+          process.env.ADMIN_PHONE_NUMBERS,
+          process.env.SUPER_ADMIN_PHONE,
+          process.env.ALLOWED_PHONE_NUMBERS,
+          '252634949642',
+          '252633171649',
+        ]
+          .filter(Boolean)
+          .join(',')
+          .split(',')
+          .map(n => n.trim())
+          .filter(Boolean);
 
-    for (const a of envAdmins) {
+    for (const a of rawAdmins) {
       const cleanAdmin = this.toCleanUserJid(a);
       if (cleanAdmin) {
         set.add(cleanAdmin);
@@ -530,13 +552,13 @@ export class WhatsAppManagerService {
   }
 
   /**
-   * Scans baileys_auth_info for active pairwise Signal session files that belong to real E.164 phone numbers.
+   * Scans authDir for active pairwise Signal session files that belong to real E.164 phone numbers.
    * Strictly excludes internal WhatsApp LID sessions so USync never times out on fake @s.whatsapp.net JIDs.
    */
   public getVerifiedDiskSessionRecipients(): string[] {
     const list: string[] = [];
     try {
-      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      const authDir = this.authDir;
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
@@ -670,7 +692,7 @@ export class WhatsAppManagerService {
     }
 
     // 4. Synchronized phone contacts from broadcast service (most recently active first, strictly @s.whatsapp.net only)
-    const contacts = [...broadcastService.getContacts()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    const contacts = [...this.broadcast.getContacts()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
     for (const c of contacts) {
       const phoneCandidate = c.phone || (!c.jid?.includes('@lid') ? c.jid : undefined);
       if (!phoneCandidate) continue;
@@ -694,7 +716,7 @@ export class WhatsAppManagerService {
    */
   public async resetStatusSenderKeyMemory(authDirOverride?: string): Promise<void> {
     try {
-      const authDir = authDirOverride || path.join(process.cwd(), 'baileys_auth_info');
+      const authDir = authDirOverride || this.authDir;
       if (fs.existsSync(authDir)) {
         const files = fs.readdirSync(authDir);
         for (const file of files) {
@@ -801,7 +823,7 @@ export class WhatsAppManagerService {
       return false;
     }
 
-    const authDir = authDirOverride || path.join(process.cwd(), 'baileys_auth_info');
+    const authDir = authDirOverride || this.authDir;
     let refreshed = false;
 
     for (const ownerNum of ownerNumbers) {
@@ -1265,7 +1287,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
    */
   public getContactName(jidOrPhone: string): string | undefined {
     const jid = this.normalizeToJid(jidOrPhone);
-    return broadcastService.getContactName(jid);
+    return this.broadcast.getContactName(jid);
   }
 
   /**

@@ -2,6 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { FREE_TIER_LIMITS } from '../config/limits.js';
 
+export interface FeatureUsage {
+  aiCalls: number;
+  voiceCalls: number;
+  imageCalls: number;
+  broadcastCalls: number;
+}
+
 export interface QuotaStats {
   date: string;
   dailyRequests: number;
@@ -9,6 +16,7 @@ export interface QuotaStats {
   minuteRequests: number;
   lastRequestTimestamp: number;
   isDailyQuotaExhausted: boolean;
+  featureUsage?: FeatureUsage;
 }
 
 /**
@@ -53,6 +61,7 @@ export class QuotaTracker {
             minuteRequests: 0,
             lastRequestTimestamp: parsed.lastRequestTimestamp || 0,
             isDailyQuotaExhausted: (parsed.dailyRequests || 0) >= this.dailyLimit,
+            featureUsage: parsed.featureUsage || { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 },
           };
         }
       }
@@ -67,6 +76,7 @@ export class QuotaTracker {
       minuteRequests: 0,
       lastRequestTimestamp: 0,
       isDailyQuotaExhausted: false,
+      featureUsage: { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 },
     };
   }
 
@@ -95,10 +105,37 @@ export class QuotaTracker {
         minuteRequests: 0,
         lastRequestTimestamp: 0,
         isDailyQuotaExhausted: false,
+        featureUsage: { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 },
       };
       this.minuteWindowTimestamps = [];
       this.saveState();
     }
+  }
+
+  public setDailyLimit(limit: number): void {
+    this.dailyLimit = Math.max(1, limit);
+    this.stats.isDailyQuotaExhausted = this.stats.dailyRequests >= this.dailyLimit;
+    this.saveState();
+  }
+
+  public getFeatureUsage(): FeatureUsage {
+    this.checkDayRollover();
+    if (!this.stats.featureUsage) {
+      this.stats.featureUsage = { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 };
+    }
+    return { ...this.stats.featureUsage };
+  }
+
+  public recordFeatureUsage(feature: 'ai' | 'voice' | 'image' | 'broadcast'): void {
+    this.checkDayRollover();
+    if (!this.stats.featureUsage) {
+      this.stats.featureUsage = { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 };
+    }
+    if (feature === 'ai') this.stats.featureUsage.aiCalls++;
+    else if (feature === 'voice') this.stats.featureUsage.voiceCalls++;
+    else if (feature === 'image') this.stats.featureUsage.imageCalls++;
+    else if (feature === 'broadcast') this.stats.featureUsage.broadcastCalls++;
+    this.saveState();
   }
 
   /**

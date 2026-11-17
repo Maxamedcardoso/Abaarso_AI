@@ -1,5 +1,8 @@
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
+  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   useMultiFileAuthState,
   proto,
   WASocket,
@@ -16,16 +19,44 @@ import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingM
 import { MediaProcessorService } from '../services/media-processor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
-import { broadcastService } from '../services/broadcast.service.js';
-import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
-import { statusReactorService } from '../services/status-reactor.service.js';
+import { broadcastService, BroadcastService, normalizePhoneNumber } from '../services/broadcast.service.js';
+import { whatsappManagerService, WhatsAppManagerService } from '../services/whatsapp-manager.service.js';
+import { statusReactorService, StatusReactorService } from '../services/status-reactor.service.js';
+
+export interface BaileysTransportOptions {
+  authDir?: string;
+  tenantId?: string;
+  allowedPhone?: string;
+  autoSyncContactsOnEmpty?: boolean;
+  allowEnvSessionRestore?: boolean;
+  broadcastService?: BroadcastService;
+  whatsappManager?: WhatsAppManagerService;
+  statusReactor?: StatusReactorService;
+  onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
+}
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
   public readonly name = 'whatsapp_baileys';
   public currentQR: string | null = null;
+  public currentPairingCode: string | null = null;
+  public pairingPhone: string | null = null;
+  public pairingError: string | null = null;
+  public lastSecurityBlockReason: string | null = null;
   private socket: WASocket | null = null;
   private connected: boolean = false;
   private authDir: string;
+  private tenantId: string = 'owner';
+  private allowedPhone?: string;
+  private autoSyncContactsOnEmpty: boolean = true;
+  private allowEnvSessionRestore: boolean = true;
+  private broadcast: BroadcastService;
+  private whatsappManager: WhatsAppManagerService;
+  private statusReactor: StatusReactorService;
+  private onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
+  private manualStopped: boolean = false;
+  private suppressCloseReconnect: boolean = false;
+  private contactsResyncAttempted: boolean = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   private messageHandler: ((message: IncomingMessage) => Promise<void>) | null = null;
   private lastActivityTimestamp: number | null = null;
   private rawMessages: Map<string, any> = new Map();
@@ -45,8 +76,38 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   /** Maps status@broadcast message IDs to the participant JID that requested a retry. */
   private statusRetryParticipants: Map<string, string> = new Map();
 
-  constructor(authDir: string = './baileys_auth_info') {
-    this.authDir = authDir;
+  constructor(authDirOrOptions: string | BaileysTransportOptions = './baileys_auth_info') {
+    if (typeof authDirOrOptions === 'string') {
+      this.authDir = authDirOrOptions;
+      this.broadcast = broadcastService;
+      this.whatsappManager = whatsappManagerService;
+      this.statusReactor = statusReactorService;
+    } else {
+      const opts = authDirOrOptions || {};
+      this.authDir = opts.authDir || './baileys_auth_info';
+      this.tenantId = opts.tenantId || 'owner';
+      this.allowedPhone = opts.allowedPhone;
+      this.autoSyncContactsOnEmpty = opts.autoSyncContactsOnEmpty ?? true;
+      this.allowEnvSessionRestore = opts.allowEnvSessionRestore ?? false;
+      this.broadcast = opts.broadcastService || broadcastService;
+      this.whatsappManager = opts.whatsappManager || whatsappManagerService;
+      this.statusReactor = opts.statusReactor || statusReactorService;
+      this.onConnectionChange = opts.onConnectionChange;
+    }
+  }
+
+  public static phonesMatch(allowedPhone: string, actualPhone: string): boolean {
+    const cleanA = String(allowedPhone || '').replace(/\D/g, '').replace(/^00/, '').replace(/^0+/, '');
+    const cleanB = String(actualPhone || '').replace(/\D/g, '').replace(/^00/, '').replace(/^0+/, '');
+    if (!cleanA || !cleanB) return false;
+    if (cleanA === cleanB) return true;
+    if (cleanA.length >= 9 && cleanB.endsWith(cleanA)) return true;
+    if (cleanB.length >= 9 && cleanA.endsWith(cleanB)) return true;
+    return false;
+  }
+
+  public setAllowedPhone(phone?: string): void {
+    this.allowedPhone = phone;
   }
 
   public get isConnected(): boolean {
@@ -66,7 +127,180 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     return this.rawMessages.get(id);
   }
 
+  public async syncContactsFromWhatsApp(force: boolean = false): Promise<{ synced: boolean; total: number }> {
+    if (!this.socket || !this.connected) {
+      return { synced: false, total: this.broadcast.getContactsCount() };
+    }
+    try {
+      this.contactsResyncAttempted = true;
+      await this.socket.resyncAppState(['critical_unblock_low'], force);
+      return { synced: true, total: this.broadcast.getContactsCount() };
+    } catch (err: any) {
+      console.warn(`⚠️ [Contacts Sync:${this.tenantId}] resyncAppState failed:`, err?.message || err);
+      return { synced: false, total: this.broadcast.getContactsCount() };
+    }
+  }
+
+  private restoreCredsBackupIfNeeded(): boolean {
+    try {
+      const credsPath = path.join(this.authDir, 'creds.json');
+      const bakPath = path.join(this.authDir, 'creds.backup.json');
+      if (!fs.existsSync(bakPath)) return false;
+
+      let primaryValid = false;
+      if (fs.existsSync(credsPath)) {
+        try {
+          const parsedPrimary = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+          primaryValid = Boolean(parsedPrimary && (parsedPrimary.registered || parsedPrimary.account || parsedPrimary.noiseKey));
+        } catch {}
+      }
+      if (primaryValid) return false;
+
+      const bakRaw = fs.readFileSync(bakPath, 'utf8');
+      const parsedBak = JSON.parse(bakRaw);
+      if (parsedBak && (parsedBak.registered || parsedBak.account)) {
+        fs.writeFileSync(credsPath, bakRaw, 'utf8');
+        console.log(`🛡️ [Auth Recovery:${this.tenantId}] Restored corrupted/missing creds.json from atomic backup!`);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  private writeAtomicCredsBackup(): void {
+    try {
+      const credsPath = path.join(this.authDir, 'creds.json');
+      if (!fs.existsSync(credsPath)) return;
+      const raw = fs.readFileSync(credsPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || (!parsed.registered && !parsed.account)) return;
+      const bakPath = path.join(this.authDir, 'creds.backup.json');
+      const tmpPath = `${bakPath}.tmp`;
+      fs.writeFileSync(tmpPath, raw, 'utf8');
+      fs.renameSync(tmpPath, bakPath);
+    } catch {}
+  }
+
+  private readDiskCredsState(): { exists: boolean; registered: boolean } {
+    this.restoreCredsBackupIfNeeded();
+    try {
+      const credsPath = path.join(this.authDir, 'creds.json');
+      if (!fs.existsSync(credsPath)) return { exists: false, registered: false };
+      const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+      return { exists: true, registered: Boolean(parsed?.registered || parsed?.account) };
+    } catch {
+      return { exists: false, registered: false };
+    }
+  }
+
+  private purgeUnregisteredAuthDir(): void {
+    const state = this.readDiskCredsState();
+    if (state.exists && !state.registered) {
+      try {
+        fs.rmSync(this.authDir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  public async requestPairingCodeForTenant(
+    phoneInput?: string
+  ): Promise<{ success: boolean; code?: string; formattedCode?: string; phone?: string; error?: string }> {
+    if (this.connected) {
+      return { success: false, error: 'WhatsApp horay ayuu ugu xidhan yahay!' };
+    }
+    const cleanedInput = normalizePhoneNumber(String(phoneInput || this.allowedPhone || '').replace(/^00/, ''));
+    if (cleanedInput.length < 9) {
+      return { success: false, error: 'Fadlan geli lambar WhatsApp ah oo sax ah (tusaale: 252634xxxxxx ama 0634xxxxxx).' };
+    }
+    if (this.allowedPhone && phoneInput && !WhatsAppBaileysTransport.phonesMatch(this.allowedPhone, cleanedInput)) {
+      return {
+        success: false,
+        error: 'Lambarkani kuma diiwaangashana akoonkan! Fadlan isticmaal lambarkii aad isku diiwaangelisay.',
+      };
+    }
+
+    const pairingDigits = (this.allowedPhone ? normalizePhoneNumber(this.allowedPhone.replace(/^00/, '')) : cleanedInput) || cleanedInput;
+
+    const diskCreds = this.readDiskCredsState();
+    if (this.socket?.authState?.creds?.registered || diskCreds.registered) {
+      this.pairingError = 'Session horay ayuu u diiwaangashan yahay — marka hore Unlink dheh.';
+      return { success: false, error: this.pairingError };
+    }
+
+    // Always recycle into a clean unregistered WebSocket + fresh Noise/creds state so pairingEphemeralKeyPair stays synced
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.socket) {
+      this.suppressCloseReconnect = true;
+      try {
+        this.socket.ev.removeAllListeners('connection.update');
+        this.socket.end(undefined);
+      } catch {}
+      this.socket = null;
+    }
+    this.currentQR = null;
+    this.currentPairingCode = null;
+    this.pairingError = null;
+    this.purgeUnregisteredAuthDir();
+
+    this.start().catch((err) => {
+      this.pairingError = err?.message || 'Socket start failed';
+    });
+
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline && (!this.getSocket() || (!this.currentQR && !this.connected))) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    const activeSock = this.getSocket();
+    if (!activeSock || !this.currentQR) {
+      this.pairingError = 'Xidhiidhka WhatsApp server-ka wuu daahay, fadlan mar kale guji.';
+      return { success: false, error: this.pairingError };
+    }
+
+    // Settle briefly so the initial WS Noise frame queue clears cleanly before sending companion_hello
+    await new Promise((r) => setTimeout(r, 350));
+
+    try {
+      const rawCode = await activeSock.requestPairingCode(pairingDigits);
+      const formatted = rawCode && rawCode.length === 8 ? `${rawCode.slice(0, 4)}-${rawCode.slice(4)}` : rawCode;
+      this.currentPairingCode = formatted;
+      this.pairingPhone = pairingDigits;
+      this.pairingError = null;
+      console.log(`🔑 [Pairing Code:${this.tenantId}] Generated code ${formatted} for +${pairingDigits}`);
+      return { success: true, code: rawCode, formattedCode: formatted, phone: pairingDigits };
+    } catch (err: any) {
+      this.pairingError = err?.message || 'Pairing code lama soo saari karin';
+      return { success: false, error: this.pairingError || undefined };
+    }
+  }
+
+  public async stopWithoutLogout(): Promise<void> {
+    this.manualStopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.connected = false;
+    this.currentQR = null;
+    this.currentPairingCode = null;
+    this.whatsappManager.setSocket(null);
+    if (this.socket) {
+      try {
+        this.socket.ev.removeAllListeners('connection.update');
+        this.socket.end(undefined);
+      } catch {}
+      this.socket = null;
+    }
+  }
+
   public async unlinkSession(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     try {
       if (this.socket) {
         await this.socket.logout();
@@ -77,14 +311,51 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     } catch {}
     this.connected = false;
     this.currentQR = null;
-    setTimeout(() => this.start(), 1500);
+    this.currentPairingCode = null;
+    this.pairingError = null;
+    this.pairingPhone = null;
+    this.contactsResyncAttempted = false;
+    this.whatsappManager.setSocket(null);
+    if (!this.manualStopped) {
+      this.reconnectTimer = setTimeout(() => this.start(), 1500);
+    }
+  }
+
+  private static cachedWaVersion: { version: [number, number, number]; fetchedAt: number } | null = null;
+
+  private async resolveLatestWaVersion(): Promise<[number, number, number] | undefined> {
+    if (
+      WhatsAppBaileysTransport.cachedWaVersion &&
+      Date.now() - WhatsAppBaileysTransport.cachedWaVersion.fetchedAt < 60 * 60 * 1000
+    ) {
+      return WhatsAppBaileysTransport.cachedWaVersion.version;
+    }
+    try {
+      const waRes = await fetchLatestWaWebVersion({ timeout: 2500 });
+      if (waRes?.version && Array.isArray(waRes.version)) {
+        const ver = waRes.version as [number, number, number];
+        WhatsAppBaileysTransport.cachedWaVersion = { version: ver, fetchedAt: Date.now() };
+        return ver;
+      }
+    } catch {}
+    try {
+      const bRes = await fetchLatestBaileysVersion({ timeout: 2500 });
+      if (bRes?.version && Array.isArray(bRes.version)) {
+        const ver = bRes.version as [number, number, number];
+        WhatsAppBaileysTransport.cachedWaVersion = { version: ver, fetchedAt: Date.now() };
+        return ver;
+      }
+    } catch {}
+    return undefined;
   }
 
   public async start(): Promise<void> {
+    this.manualStopped = false;
+    this.suppressCloseReconnect = false;
     this.printSafetyWarning();
 
-    // 1. Support complete session bundle (SESSION_BUNDLE_BASE64)
-    if (!this.sessionExpired && process.env.SESSION_BUNDLE_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    // 1. Support complete session bundle (SESSION_BUNDLE_BASE64) for primary owner instance only
+    if (this.allowEnvSessionRestore && !this.sessionExpired && process.env.SESSION_BUNDLE_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
@@ -115,8 +386,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     }
 
-    // 2. Fallback to single creds.json (SESSION_CREDS_BASE64)
-    if (!this.sessionExpired && process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+    // 2. Fallback to single creds.json (SESSION_CREDS_BASE64) for primary owner instance only
+    if (this.allowEnvSessionRestore && !this.sessionExpired && process.env.SESSION_CREDS_BASE64 && !fs.existsSync(path.join(this.authDir, 'creds.json'))) {
       try {
         if (!fs.existsSync(this.authDir)) {
           fs.mkdirSync(this.authDir, { recursive: true });
@@ -158,16 +429,22 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     } catch {}
 
+    // If a previous QR/pairing attempt left unregistered half-baked creds (registered !== true), wipe them cleanly
+    // so Baileys performs fresh device registration rather than failing login with "Couldn't link device".
+    this.purgeUnregisteredAuthDir();
+
     this.botStartTime = Math.floor(Date.now() / 1000);
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const waVersion = await this.resolveLatestWaVersion();
 
     const logger = pino({ level: 'silent' }); // Keep terminal clean
 
     this.socket = makeWASocket({
+      ...(waVersion ? { version: waVersion } : {}),
       auth: state,
       printQRInTerminal: false, // We handle QR with qrcode-terminal
       logger,
-      browser: ['CARDOSO AI', 'Chrome', '1.0.0'],
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false, // Do not dump hundreds of old historical chat messages on every connect
       shouldSyncHistoryMessage: () => false,
       getMessage: async (key) => this.getMessageForRetry(key),
@@ -295,17 +572,20 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     // Install status@broadcast cache/retry hooks and CB:receipt listener
     this.installStatusHooks(this.socket);
 
-    whatsappManagerService.setSocket(this.socket);
+    this.whatsappManager.setSocket(this.socket);
 
-    this.socket.ev.on('creds.update', saveCreds);
+    this.socket.ev.on('creds.update', async () => {
+      await saveCreds();
+      this.writeAtomicCredsBackup();
+    });
 
     this.socket.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
         this.currentQR = qr;
-        console.log('\n======================================================');
-        console.log('  SCAN THIS QR CODE IN WHATSAPP TO LINK CARDOSO AI:   ');
+        console.log(`\n======================================================`);
+        console.log(`  SCAN THIS QR CODE IN WHATSAPP TO LINK (${this.tenantId}):`);
         console.log('======================================================');
         qrcode.generate(qr, { small: true });
         console.log('Open WhatsApp > Linked Devices > Link a Device\n');
@@ -313,37 +593,91 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       if (connection === 'close') {
         this.connected = false;
-        whatsappManagerService.setSocket(null);
+        this.whatsappManager.setSocket(null);
+        if (this.manualStopped || this.suppressCloseReconnect) {
+          this.suppressCloseReconnect = false;
+          return;
+        }
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        console.log(`[WhatsAppBaileys] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+        console.log(`[WhatsAppBaileys:${this.tenantId}] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+        this.onConnectionChange?.({ connected: false, phone: this.getBotNumber(), error: statusCode ? String(statusCode) : undefined });
 
         if (statusCode === DisconnectReason.loggedOut) {
           this.sessionExpired = true;
-          console.warn('⚠️ [WhatsAppBaileys] Session has expired or was unlinked (401 Logged Out). Purging stale auth and requesting fresh QR Code in 2s...');
+          this.currentPairingCode = null;
+          this.pairingPhone = null;
+          console.warn(`⚠️ [WhatsAppBaileys:${this.tenantId}] Session expired or unlinked (401 Logged Out). Purging stale auth...`);
           try {
             fs.rmSync(this.authDir, { recursive: true, force: true });
           } catch {}
-          setTimeout(() => this.start(), 2000);
-        } else if (shouldReconnect) {
-          setTimeout(() => this.start(), 3000);
+          if (!this.manualStopped) {
+            this.reconnectTimer = setTimeout(() => this.start(), 2000);
+          }
+        } else if (statusCode === DisconnectReason.restartRequired) {
+          // 515 Stream Restart right after entering 8-digit pairing code or scanning QR: reconnect immediately!
+          console.log(`🔄 [WhatsAppBaileys:${this.tenantId}] Pairing restart required (515). Completing WhatsApp link in 400ms...`);
+          this.reconnectTimer = setTimeout(() => this.start(), 400);
+        } else if (statusCode === DisconnectReason.connectionReplaced) {
+          console.warn(`⚠️ [WhatsAppBaileys:${this.tenantId}] Session conflict (440 Connection Replaced by another running instance). Backing off 15s...`);
+          this.reconnectTimer = setTimeout(() => this.start(), 15000);
+        } else if (shouldReconnect && !this.manualStopped) {
+          if (statusCode === DisconnectReason.timedOut && !this.readDiskCredsState().registered) {
+            this.currentPairingCode = null;
+            this.pairingError = 'Waqtigii pairing code-ka wuu dhammaaday — fadlan mar kale guji Soo Saar.';
+            this.purgeUnregisteredAuthDir();
+          }
+          this.reconnectTimer = setTimeout(() => this.start(), 3000);
         }
       } else if (connection === 'open') {
-        this.connected = true;
-        this.currentQR = null;
-        this.lastActivityTimestamp = Date.now();
         const botId = this.socket?.user?.id || '';
         const botLid = (this.socket?.user as any)?.lid || '';
-        if (botId || botLid) {
-          broadcastService.setBotJid(botId, botLid);
-          whatsappManagerService.setBotJid(botId || botLid);
+        const botPhone = botId.split(':')[0].split('@')[0].replace(/\D/g, '');
+
+        // Phone-Number Lock: if subscriber signed up with allowedPhone, enforce exact phone match
+        if (this.allowedPhone && botPhone && !WhatsAppBaileysTransport.phonesMatch(this.allowedPhone, botPhone)) {
+          console.error(`⛔ [Security Phone Lock:${this.tenantId}] Connected phone ${botPhone} does NOT match allowedPhone ${this.allowedPhone}! Disconnecting & purging auth.`);
+          this.lastSecurityBlockReason = `Lambarka ku xidhmay (${botPhone}) kuma jiro diiwaanka akoonkan (${this.allowedPhone}).`;
+          this.connected = false;
+          this.currentQR = null;
+          this.currentPairingCode = null;
+          this.whatsappManager.setSocket(null);
+          this.onConnectionChange?.({ connected: false, phone: botPhone, error: this.lastSecurityBlockReason });
+          const sockToLogout = this.socket;
+          this.socket = null;
+          this.manualStopped = true;
+          Promise.resolve(sockToLogout?.logout()).catch(() => {}).finally(() => {
+            try {
+              fs.rmSync(this.authDir, { recursive: true, force: true });
+            } catch {}
+          });
+          return;
         }
-        whatsappManagerService.setSocket(this.socket);
+
+        this.connected = true;
+        this.currentQR = null;
+        this.currentPairingCode = null;
+        this.pairingError = null;
+        this.lastSecurityBlockReason = null;
+        this.lastActivityTimestamp = Date.now();
+        if (botId || botLid) {
+          this.broadcast.setBotJid(botId, botLid);
+          this.whatsappManager.setBotJid(botId || botLid);
+        }
+        this.whatsappManager.setSocket(this.socket);
+        this.onConnectionChange?.({ connected: true, phone: botPhone || null });
         // Heal stale unacknowledged owner primary-phone Signal sessions on connect
-        whatsappManagerService.ensureOwnerSessionHealthy(false).catch((err) => {
-          console.warn('⚠️ [WhatsAppBaileys] Owner session health check failed:', err?.message || err);
+        this.whatsappManager.ensureOwnerSessionHealthy(false).catch((err) => {
+          console.warn(`⚠️ [WhatsAppBaileys:${this.tenantId}] Owner session health check failed:`, err?.message || err);
         });
-        console.log('\n✅ [WhatsAppBaileys] Successfully connected to WhatsApp Multi-Device network!');
+        if (this.autoSyncContactsOnEmpty && !this.contactsResyncAttempted && this.broadcast.getContactsCount() === 0) {
+          setTimeout(() => {
+            if (this.connected && this.broadcast.getContactsCount() === 0) {
+              this.syncContactsFromWhatsApp(true).catch(() => {});
+            }
+          }, 4500);
+        }
+        console.log(`\n✅ [WhatsAppBaileys:${this.tenantId}] Successfully connected to WhatsApp Multi-Device network!`);
       }
     });
 
@@ -358,8 +692,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         .filter((v): v is string => typeof v === 'string' && v.length > 0);
       for (const jid of candidateIds) {
         const normalizedJid = jid.includes('@') ? jid : `${jid.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-        if (broadcastService.isValidIndividualJid(normalizedJid)) {
-          broadcastService.recordContact(normalizedJid, resolvedName, false, isProfileName);
+        if (this.broadcast.isValidIndividualJid(normalizedJid)) {
+          this.broadcast.recordContact(normalizedJid, resolvedName, false, isProfileName);
         }
       }
     };
@@ -378,7 +712,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
       if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
       if (Array.isArray(chats)) chats.forEach(syncContactEntry);
-      console.log(`📋 [Contacts Sync] Synchronized ${broadcastService.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
+      console.log(`📋 [Contacts Sync:${this.tenantId}] Synchronized ${this.broadcast.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
     });
 
     this.socket.ev.on('chats.upsert', (chats: any[]) => {
@@ -394,9 +728,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     });
 
     this.socket.ev.on('chats.phoneNumberShare', ({ lid, jid }: { lid: string; jid: string }) => {
-      if (jid && broadcastService.isValidIndividualJid(jid)) {
-        const existingName = lid ? broadcastService.getContactName(lid) : undefined;
-        broadcastService.recordContact(jid, existingName, false, Boolean(existingName));
+      if (jid && this.broadcast.isValidIndividualJid(jid)) {
+        const existingName = lid ? this.broadcast.getContactName(lid) : undefined;
+        this.broadcast.recordContact(jid, existingName, false, Boolean(existingName));
       }
     });
 
@@ -468,7 +802,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           const viewerJid = item.receipt.userJid;
           const readTimestamp = item.receipt.readTimestamp || (item.receipt as any).receiptTimestamp;
 
-          const result = whatsappManagerService.recordStatusView(statusId, viewerJid, readTimestamp);
+          const result = this.whatsappManager.recordStatusView(statusId, viewerJid, readTimestamp);
           if (result.recorded) {
             console.log(`👁️ [Status View] Qof ayaa daawatay status-kaaga: ${result.viewerName || viewerJid} (Wadarta: ${result.count})`);
           }
@@ -483,9 +817,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         for (const k of keys) {
           const isStatus = k?.remoteJid === 'status@broadcast';
           const id = k?.id;
-          if (id && (isStatus || whatsappManagerService.hasPostedStatus(id))) {
+          if (id && (isStatus || this.whatsappManager.hasPostedStatus(id))) {
             console.log(`🗑️ [Phone Status Delete Detected] User manually deleted status ${id} on phone. Propagating delete to all contacts...`);
-            await whatsappManagerService.deleteStatusById(id, { fromPhone: true });
+            await this.whatsappManager.deleteStatusById(id, { fromPhone: true });
           }
         }
       } catch (err: any) {
@@ -498,9 +832,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         for (const update of updates) {
           const id = update?.key?.id;
           const isRevoke = update?.update?.message === null || (update?.update as any)?.messageStubType === proto.WebMessageInfo.StubType.REVOKE;
-          if (id && isRevoke && (update?.key?.remoteJid === 'status@broadcast' || whatsappManagerService.hasPostedStatus(id))) {
+          if (id && isRevoke && (update?.key?.remoteJid === 'status@broadcast' || this.whatsappManager.hasPostedStatus(id))) {
             console.log(`🗑️ [Status Revoke Detected] Status ${id} was revoked. Ensuring delete is propagated to all contacts...`);
-            await whatsappManagerService.deleteStatusById(id, { fromPhone: true });
+            await this.whatsappManager.deleteStatusById(id, { fromPhone: true });
           }
         }
       } catch (err: any) {
@@ -724,9 +1058,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       // Check if this is a revoke (delete) of a status
       if (msg.message?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.REVOKE) {
         const revokedId = msg.message.protocolMessage.key?.id;
-        if (revokedId && (whatsappManagerService.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
+        if (revokedId && (this.whatsappManager.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
           console.log(`🗑️ [Status Protocol Revoke] Received status revoke for ${revokedId}. Propagating delete to all contacts...`);
-          await whatsappManagerService.deleteStatusById(revokedId, { fromPhone: true });
+          await this.whatsappManager.deleteStatusById(revokedId, { fromPhone: true });
         }
         return;
       }
@@ -750,7 +1084,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       // Owner/Admin status guard: NEVER auto-view, react or comment on the bot owner's status!
       const isOwnerStatus = Boolean(msg.key?.fromMe) ||
-        (statusSender && statusReactorService.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
+        (statusSender && this.statusReactor.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
       if (isOwnerStatus) {
         // Record phone-posted status so !deletestatus and !statusviews can track it
         if (msg.key?.id) {
@@ -770,8 +1104,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           } else if (msg.message?.extendedTextMessage?.text) {
             content = msg.message.extendedTextMessage.text;
           }
-          if (!whatsappManagerService.hasPostedStatus(msg.key.id)) {
-            whatsappManagerService.recordPostedStatus(msg.key.id, contentType, content, undefined, 0);
+          if (!this.whatsappManager.hasPostedStatus(msg.key.id)) {
+            this.whatsappManager.recordPostedStatus(msg.key.id, contentType, content, undefined, 0);
             console.log(`📱 [Phone Status Recorded] Recorded status posted from phone (${msg.key.id}, ${contentType}): "${content.slice(0, 30)}"`);
           }
         }
@@ -779,7 +1113,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
 
       // 1. Auto View Status: automatically mark contacts' status seen in real-time
-      if (whatsappManagerService.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
+      if (this.whatsappManager.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
         try {
           const statusKey = {
             remoteJid: 'status@broadcast',
@@ -794,17 +1128,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
 
       // 2. Record contact pushName and real phone number JID (participantPn) if present
-      if (statusSender && broadcastService.isValidIndividualJid(statusSender)) {
-        broadcastService.recordContact(statusSender, msg.pushName, false, Boolean(msg.pushName));
+      if (statusSender && this.broadcast.isValidIndividualJid(statusSender)) {
+        this.broadcast.recordContact(statusSender, msg.pushName, false, Boolean(msg.pushName));
       }
       const statusParticipantPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
-      if (statusParticipantPn && broadcastService.isValidIndividualJid(statusParticipantPn)) {
-        broadcastService.recordContact(statusParticipantPn, msg.pushName, false, Boolean(msg.pushName));
+      if (statusParticipantPn && this.broadcast.isValidIndividualJid(statusParticipantPn)) {
+        this.broadcast.recordContact(statusParticipantPn, msg.pushName, false, Boolean(msg.pushName));
       }
 
       // 3. Status Reactor: Intelligently react and comment like a real human
       if (this.socket) {
-        statusReactorService.handleIncomingStatus(msg, this.socket).catch((err: any) => {
+        this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
           console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
         });
       }
@@ -816,12 +1150,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     // Always record sender WhatsApp profile pushName and real phone JID (senderPn / participantPn)
     if (!msg.key.fromMe) {
       const targetProfileJid = isGroup ? (msg.key.participant || '') : chatId;
-      if (msg.pushName && broadcastService.isValidIndividualJid(targetProfileJid)) {
-        broadcastService.recordContact(targetProfileJid, msg.pushName, false, true);
+      if (msg.pushName && this.broadcast.isValidIndividualJid(targetProfileJid)) {
+        this.broadcast.recordContact(targetProfileJid, msg.pushName, false, true);
       }
       const realPnJid = (msg.key as any)?.senderPn || (msg.key as any)?.participantPn;
-      if (realPnJid && broadcastService.isValidIndividualJid(realPnJid)) {
-        broadcastService.recordContact(realPnJid, msg.pushName, false, Boolean(msg.pushName));
+      if (realPnJid && this.broadcast.isValidIndividualJid(realPnJid)) {
+        this.broadcast.recordContact(realPnJid, msg.pushName, false, Boolean(msg.pushName));
       }
     }
 
@@ -848,14 +1182,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // Ingest native WhatsApp shared contact cards (Share Contacts via WhatsApp)
     if (innerMsg.contactMessage?.vcard) {
-      const res = broadcastService.importFromText(innerMsg.contactMessage.vcard);
+      const res = this.broadcast.importFromText(innerMsg.contactMessage.vcard);
       console.log(`👤 [WhatsApp Contact Shared]: Processed vCard (${res.added} new added).`);
     }
     if (innerMsg.contactsArrayMessage?.contacts) {
       let totalAdded = 0;
       for (const c of innerMsg.contactsArrayMessage.contacts) {
         if (c.vcard) {
-          const res = broadcastService.importFromText(c.vcard);
+          const res = this.broadcast.importFromText(c.vcard);
           totalAdded += res.added;
         }
       }
@@ -1203,7 +1537,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const isStatus = chatId === 'status@broadcast';
         const customStatusJids = (options as any)?.statusJidList?.length
           ? (options as any).statusJidList
-          : (isStatus ? whatsappManagerService.getStatusRecipients() : undefined);
+          : (isStatus ? this.whatsappManager.getStatusRecipients() : undefined);
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
@@ -1213,7 +1547,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
-          await whatsappManagerService.resetStatusSenderKeyMemory();
+          await this.whatsappManager.resetStatusSenderKeyMemory();
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -1264,7 +1598,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const isStatus = chatId === 'status@broadcast';
         const customStatusJids = (options as any)?.statusJidList?.length
           ? (options as any).statusJidList
-          : (isStatus ? whatsappManagerService.getStatusRecipients() : undefined);
+          : (isStatus ? this.whatsappManager.getStatusRecipients() : undefined);
         const sendOptions: any = {};
         if (isStatus) {
           sendOptions.broadcast = true;
@@ -1274,7 +1608,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           if (customStatusJids && customStatusJids.length > 0) {
             sendOptions.statusJidList = customStatusJids;
           }
-          await whatsappManagerService.resetStatusSenderKeyMemory();
+          await this.whatsappManager.resetStatusSenderKeyMemory();
         } else if (rawQuoted) {
           sendOptions.quoted = rawQuoted;
         }
@@ -1346,7 +1680,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
   public async postStatus(content: { text?: string; media?: OutgoingMedia; backgroundColor?: string; font?: number }): Promise<boolean> {
     if (content.media) {
-      const res = await whatsappManagerService.postMediaStatus({
+      const res = await this.whatsappManager.postMediaStatus({
         buffer: content.media.dataBuffer,
         mimeType: content.media.mimeType,
         caption: content.media.caption,
@@ -1356,7 +1690,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       });
       return res.success;
     } else if (content.text) {
-      const res = await whatsappManagerService.postTextStatus(content.text, {
+      const res = await this.whatsappManager.postTextStatus(content.text, {
         backgroundColor: content.backgroundColor,
         font: content.font,
       });
@@ -1371,7 +1705,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const isStatus = chatId === 'status@broadcast' || messageId.startsWith('status_');
       if (isStatus) {
         const cleanId = messageId.replace(/^status_/, '');
-        const res = await whatsappManagerService.deleteStatusById(cleanId);
+        const res = await this.whatsappManager.deleteStatusById(cleanId);
         return res.success;
       }
 
@@ -1382,7 +1716,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         id: messageId,
         participant,
       };
-      const res = await whatsappManagerService.deleteMessage(chatId, key);
+      const res = await this.whatsappManager.deleteMessage(chatId, key);
       return res.success;
     } catch {
       return false;
@@ -1399,7 +1733,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         id: messageId,
         participant,
       };
-      const res = await whatsappManagerService.reactToMessage(chatId, key, emoji);
+      const res = await this.whatsappManager.reactToMessage(chatId, key, emoji);
       return res.success;
     } catch {
       return false;
@@ -1456,7 +1790,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (sockPhone) ownerUsers.add(sockPhone);
     if (sockLid) ownerUsers.add(sockLid);
 
-    for (const ownerJid of whatsappManagerService.getOwnerOnlyRecipients()) {
+    for (const ownerJid of this.whatsappManager.getOwnerOnlyRecipients()) {
       const num = String(ownerJid || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
       if (num) ownerUsers.add(num);
     }
@@ -1553,7 +1887,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const relayOpts: any = { ...(options || {}), useUserDevicesCache: false };
 
         if (Array.isArray(relayOpts.statusJidList) && relayOpts.statusJidList.length > 0) {
-          await whatsappManagerService.ensureOwnerSessionHealthy(false);
+          await this.whatsappManager.ensureOwnerSessionHealthy(false);
           if (relayOpts.messageId) {
             this.cacheSentStatusMessage(String(relayOpts.messageId), message, relayOpts.statusJidList);
           }
@@ -1565,12 +1899,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const recordedParticipant = messageId ? this.statusRetryParticipants.get(messageId) : undefined;
         const requesterJid = String(relayOpts.participant?.jid || recordedParticipant || '').trim();
 
-        await whatsappManagerService.resetStatusSenderKeyMemory();
+        await this.whatsappManager.resetStatusSenderKeyMemory();
 
         if (!requesterJid || this.isOwnerParticipantJid(requesterJid, socket)) {
-          await whatsappManagerService.ensureOwnerSessionHealthy(true);
+          await this.whatsappManager.ensureOwnerSessionHealthy(true);
           delete relayOpts.participant;
-          let ownerRecipients = whatsappManagerService.getOwnerOnlyRecipients();
+          let ownerRecipients = this.whatsappManager.getOwnerOnlyRecipients();
           if (ownerRecipients.length === 0) {
             const sockPhone = String(socket?.user?.id || '').split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
             if (sockPhone) {
@@ -1595,7 +1929,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           const cachedRecipients = messageId ? this.sentStatusMessages.get(messageId)?.statusJidList : undefined;
           const fallbackRecipients = (cachedRecipients && cachedRecipients.length > 0)
             ? cachedRecipients
-            : whatsappManagerService.getStatusRecipients();
+            : this.whatsappManager.getStatusRecipients();
           if (fallbackRecipients.length > 0) {
             relayOpts.statusJidList = fallbackRecipients;
           }

@@ -1,13 +1,21 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import http from 'http';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { IMessagingTransport } from '../transports/transport.interface.js';
 import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
-import { broadcastService } from '../services/broadcast.service.js';
-import { whatsappManagerService } from '../services/whatsapp-manager.service.js';
-import { statusReactorService } from '../services/status-reactor.service.js';
+import { BroadcastService, broadcastService } from '../services/broadcast.service.js';
+import { WhatsAppManagerService, whatsappManagerService } from '../services/whatsapp-manager.service.js';
+import { StatusReactorService, statusReactorService } from '../services/status-reactor.service.js';
 import { AppConfig } from '../config/env.js';
+import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
+import { TenantManager } from '../tenants/tenant-manager.js';
+import { TenantRecord } from '../tenants/tenant-registry.js';
+import { getCategoryStarterTemplate } from '../tenants/tenant-templates.js';
+import { renderJoinHTML } from './views/join-page.js';
+import { renderClientPortalHTML } from './views/client-page.js';
+import { renderAdminDashboardHTML } from './views/admin-page.js';
+import { renderPortalLoginHTML } from './views/portal-login-page.js';
 
 export interface StudioServerOptions {
   port: number | string;
@@ -15,6 +23,45 @@ export interface StudioServerOptions {
   engine: StudentAdvisorEngine;
   transport: IMessagingTransport;
   config: AppConfig;
+  tenantManager?: TenantManager;
+  studioPasswordOverride?: string;
+}
+
+function sanitizeTenantForResponse(t: TenantRecord) {
+  return {
+    id: t.id,
+    name: t.name,
+    allowedPhone: t.allowedPhone,
+    category: t.category,
+    planTier: t.planTier,
+    status: t.status,
+    accessToken: t.accessToken,
+    monthsPurchased: t.monthsPurchased,
+    trialUsed: t.trialUsed,
+    startedAt: t.startedAt,
+    expiresAt: t.expiresAt,
+    effectiveFeatures: t.effectiveFeatures,
+    hasCustomGeminiKey: Boolean(t.customGeminiKey),
+    awayMode: t.awayMode,
+    extraAdmins: t.extraAdmins,
+    signupNotes: t.signupNotes,
+    promoCodeUsed: t.promoCodeUsed,
+    hasPin: Boolean(t.hasPin),
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
+
+function sanitizeCategory(raw: any): BotCategory {
+  if (raw === 'business' || raw === 'education' || raw === 'personal') return raw;
+  return 'personal';
+}
+
+function sanitizePlanTier(raw: any, fallback: PlanTier = 'trial_free'): PlanTier {
+  if (raw === 'trial_free' || raw === 'starter' || raw === 'business' || raw === 'education') {
+    return raw;
+  }
+  return fallback;
 }
 
 export function createStudioServer(options: StudioServerOptions): http.Server {
@@ -22,66 +69,807 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  const { memory, engine, transport, config, port } = options;
+  const { config, tenantManager } = options;
+  const studioPassword = options.studioPasswordOverride ?? process.env.STUDIO_PASSWORD ?? '';
 
-  // 1. Health check for Render / Cloud keep-alive
+  if (!studioPassword) {
+    console.warn('⚠️ [Studio] STUDIO_PASSWORD lama dejin — Admin dashboard-ku wuu xidhan yahay ilaa STUDIO_PASSWORD ama Admin user la dejiyo.');
+  }
+
+  const getOwnerRefs = (): {
+    memory: SQLiteStudentMemory;
+    engine: StudentAdvisorEngine;
+    transport: IMessagingTransport;
+    broadcast: BroadcastService;
+    whatsappManager: WhatsAppManagerService;
+    statusReactor: StatusReactorService;
+  } => {
+    const ownerCtx = tenantManager?.getOwnerContext();
+    if (ownerCtx) {
+      return {
+        memory: ownerCtx.memory,
+        engine: ownerCtx.engine,
+        transport: ownerCtx.transport || options.transport,
+        broadcast: ownerCtx.broadcast,
+        whatsappManager: ownerCtx.whatsappManager,
+        statusReactor: ownerCtx.statusReactor,
+      };
+    }
+    return {
+      memory: options.memory,
+      engine: options.engine,
+      transport: options.transport,
+      broadcast: broadcastService,
+      whatsappManager: whatsappManagerService,
+      statusReactor: statusReactorService,
+    };
+  };
+
+  // ─── 1. Public Health & Self-Signup Endpoints (No Admin Password) ──────────
   app.get(['/health', '/healthz'], (req: Request, res: Response) => {
     res.json({
       status: 'ok',
-      service: 'CARDOSO AI — No-Code Bot Studio',
+      service: 'CARDOSO AI — Multi-Tenant WhatsApp SaaS Platform',
       mode: config.messaging.mode,
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
   });
 
-  // 1b. Password protection (HTTP Basic Auth) for everything except /health.
-  // Set STUDIO_PASSWORD in .env / Render environment. Username can be anything.
-  const studioPassword = process.env.STUDIO_PASSWORD || '';
-  if (!studioPassword) {
-    console.warn('⚠️ [Studio] STUDIO_PASSWORD lama dejin — dashboard-ku waa xidhan yahay ilaa la dejiyo.');
-  }
-  app.use((req: Request, res: Response, next) => {
-    if (!studioPassword) {
+  app.get('/join', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderJoinHTML());
+  });
+
+  app.get('/portal', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderPortalLoginHTML());
+  });
+
+  app.post('/api/public/portal-login', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const phone = String(req.body?.phone || '').trim();
+    const pin = String(req.body?.pin || '').trim();
+    const tenant = tenantManager.registry.verifyTenantPin(phone, pin);
+    if (!tenant) {
+      res.status(401).json({ status: 'error', message: 'Lambarka ama PIN-ka ma saxna.' });
+      return;
+    }
+    const portalUrl = `/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
+    res.json({
+      status: 'ok',
+      portalUrl,
+      tenant: sanitizeTenantForResponse(tenant),
+    });
+  });
+
+  app.post('/api/public/portal-otp/request', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const phone = String(req.body?.phone || '').trim();
+    const result = await tenantManager.requestPortalOtp(phone);
+    res.status(result.sent ? 200 : 400).json({
+      status: result.sent ? 'ok' : 'error',
+      ...result,
+    });
+  });
+
+  app.post('/api/public/portal-otp/verify', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const phone = String(req.body?.phone || '').trim();
+    const code = String(req.body?.code || '').trim();
+    const tenant = tenantManager.verifyPortalOtp(phone, code);
+    if (!tenant) {
+      res.status(401).json({ status: 'error', message: 'Code-ka xaqiijinta ma saxna ama wuu dhacay.' });
+      return;
+    }
+    const portalUrl = `/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
+    res.json({ status: 'ok', portalUrl, tenant: sanitizeTenantForResponse(tenant) });
+  });
+
+  app.get('/api/public/template', (req: Request, res: Response) => {
+    const category = sanitizeCategory(req.query.category);
+    const name = typeof req.query.name === 'string' ? req.query.name : undefined;
+    const template = getCategoryStarterTemplate(category, name);
+    res.json({ status: 'ok', template });
+  });
+
+  app.post('/api/public/join', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Multi-tenant mode ma firfircoona.' });
+      return;
+    }
+    try {
+      const { name, phone, category, promoCode, notes, pin } = req.body || {};
+      const result = await tenantManager.registerPublicSignup({
+        name: String(name || ''),
+        phone: String(phone || ''),
+        category: sanitizeCategory(category),
+        promoCode: promoCode ? String(promoCode) : undefined,
+        notes: notes ? String(notes) : undefined,
+        pin: pin ? String(pin) : undefined,
+      });
+
+      const t = result.tenant;
+      const portalUrl = `/client/${encodeURIComponent(t.id)}?token=${encodeURIComponent(t.accessToken)}`;
+      res.status(201).json({
+        status: 'ok',
+        autoApproved: result.autoApproved,
+        portalUrl,
+        tenant: {
+          id: t.id,
+          name: t.name,
+          allowedPhone: t.allowedPhone,
+          category: t.category,
+          status: t.status,
+          planTier: t.planTier,
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err?.message || 'Diiwaangelintu way fashilantay' });
+    }
+  });
+
+  // ─── 2. Token-Protected Client Self-Service Portal & APIs ──────────────────
+  const resolveAuthenticatedClient = (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Multi-tenant mode ma shaqaynayo.' });
+      return null;
+    }
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const token =
+      (typeof req.query.token === 'string' && req.query.token) ||
+      (typeof req.headers['x-client-token'] === 'string' && req.headers['x-client-token']) ||
+      (req.body && typeof req.body.token === 'string' ? req.body.token : '');
+
+    const tenant = tenantManager.registry.verifyClientToken(rawId, token);
+    if (!tenant) {
+      res.status(401).json({ status: 'error', message: 'Link-ga ama token-kaaga ma saxna.' });
+      return null;
+    }
+    return tenant;
+  };
+
+  app.get('/client/:id', (req: Request, res: Response) => {
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant) return;
+    const token = String(req.query.token || '');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderClientPortalHTML(tenant.id, token, tenant.category));
+  });
+
+  app.get('/api/client/:id/status', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant) return;
+
+    const isActive = tenantManager.registry.isTenantActive(tenant);
+    const ctx = tenantManager.getContext(tenant.id);
+    const leads = ctx ? await ctx.memory.getLeads(500) : [];
+
+    res.json({
+      status: 'ok',
+      isActive,
+      tenant: sanitizeTenantForResponse(tenant),
+      whatsapp: {
+        connected: Boolean(ctx?.transport?.isConnected),
+        botNumber: ctx?.transport?.getBotNumber() || null,
+        currentQR: ctx?.transport?.currentQR || null,
+        currentPairingCode: ctx?.transport?.currentPairingCode || null,
+        pairingError: ctx?.transport?.pairingError || null,
+        securityBlockReason: ctx?.transport?.lastSecurityBlockReason || null,
+      },
+      contacts: ctx?.broadcast.getStats() || { total: 0, withNames: 0, sent: 0, remaining: 0, sentToday: 0, dailyLimit: 0, optedOut: 0 },
+      leadsCount: leads.length,
+      usage: ctx?.quotaTracker.getFeatureUsage() || { aiCalls: 0, voiceCalls: 0, imageCalls: 0, broadcastCalls: 0 },
+    });
+  });
+
+  const requireActiveClientCtx = async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return null;
+    }
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant) return null;
+    if (!tenantManager.registry.isTenantActive(tenant)) {
+      res.status(403).json({
+        status: 'error',
+        message: `Akoonkan hadda ma firfircoona (${tenant.status}). Fadlan la xidhiidh maamulka si loo furo ama loo cusboonaysiiyo.`,
+      });
+      return null;
+    }
+    const ctx = await tenantManager.mountTenant(tenant, false);
+    return { tenant, ctx };
+  };
+
+  app.get('/api/client/:id/config', async (req: Request, res: Response) => {
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant || !tenantManager) return;
+    const ctx = await tenantManager.mountTenant(tenant, false);
+    const botConfig = await ctx.memory.getBotConfig();
+    res.json({
+      status: 'ok',
+      config: botConfig,
+      tenant: sanitizeTenantForResponse(tenant),
+    });
+  });
+
+  app.post('/api/client/:id/config', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair || !tenantManager) return;
+    const { tenant, ctx } = pair;
+    try {
+      const { category, botName, businessName, systemRole, knowledgeBase } = req.body || {};
+      await ctx.memory.saveBotConfig({
+        botName: (botName || '').trim(),
+        businessName: (businessName || '').trim(),
+        systemRole: (systemRole || '').trim(),
+        knowledgeBase: (knowledgeBase || '').trim(),
+      });
+      if (category) {
+        tenantManager.updateTenantAndRefresh(tenant.id, { category: sanitizeCategory(category) });
+      }
+      res.json({ status: 'ok', message: 'Maskaxda bot-ka & hab-dhaqanka si guul leh ayaa loo keydiyay!' });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.put('/api/client/:id/settings', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair || !tenantManager) return;
+    const { tenant } = pair;
+    const { awayMode, customGeminiKey, extraAdmins, pin } = req.body || {};
+    try {
+      if (pin !== undefined && String(pin).trim().length > 0) {
+        tenantManager.registry.setTenantPin(tenant.id, String(pin));
+      }
+      const updated = tenantManager.updateTenantAndRefresh(tenant.id, {
+        ...(awayMode !== undefined ? { awayMode: Boolean(awayMode) } : {}),
+        ...(customGeminiKey !== undefined ? { customGeminiKey: String(customGeminiKey) } : {}),
+        ...(Array.isArray(extraAdmins) ? { extraAdmins: extraAdmins.map((s: any) => String(s || '')) } : {}),
+      });
+      res.json({
+        status: 'ok',
+        tenant: updated ? sanitizeTenantForResponse(updated) : null,
+      });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err?.message || 'Settings update failed' });
+    }
+  });
+
+  app.post('/api/client/:id/pair', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair || !tenantManager) return;
+    const result = await tenantManager.requestPairingCode(pair.tenant.id, req.body?.phone);
+    if (result.success) {
+      res.json({ status: 'ok', code: result.code, formattedCode: result.formattedCode, phone: result.phone });
+    } else {
+      res.status(400).json({ status: 'error', message: result.error || 'Pairing code lama soo saari karin' });
+    }
+  });
+
+  app.post('/api/client/:id/sync-contacts', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair || !tenantManager) return;
+    const result = await tenantManager.syncTenantContacts(pair.tenant.id);
+    res.json({ status: 'ok', ...result });
+  });
+
+  app.post('/api/client/:id/unlink', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair || !tenantManager) return;
+    await tenantManager.unlinkTenantSession(pair.tenant.id);
+    res.json({ status: 'ok', message: 'WhatsApp session waa la furay.' });
+  });
+
+  app.post('/api/client/:id/test-chat', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    try {
+      const userMessage = String(req.body?.message || '').trim();
+      if (!userMessage) {
+        res.status(400).json({ status: 'error', message: 'Fariintu ma bannaana' });
+        return;
+      }
+      const output = await pair.ctx.engine.processMessage({
+        rawSenderId: 'client_web_preview_user',
+        chatId: 'client_web_preview_chat',
+        isGroup: false,
+        content: userMessage,
+        senderName: 'Macmiil Tijaabo',
+      });
+      res.json({ status: 'ok', reply: output.replyText });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.get('/api/client/:id/leads', async (req: Request, res: Response) => {
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant || !tenantManager) return;
+    const ctx = await tenantManager.mountTenant(tenant, false);
+    const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const allLeads = await ctx.memory.getLeads(200);
+    const leads = statusFilter ? allLeads.filter((l) => l.status === statusFilter) : allLeads;
+    res.json({ status: 'ok', leads });
+  });
+
+  app.patch('/api/client/:id/leads/:leadId', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const leadId = Number(req.params.leadId);
+    const nextStatus = req.body?.status;
+    if (!['new', 'contacted', 'resolved', 'closed'].includes(nextStatus)) {
+      res.status(400).json({ status: 'error', message: 'Invalid lead status' });
+      return;
+    }
+    const ok = await pair.ctx.memory.updateLeadStatus(leadId, nextStatus);
+    res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  app.get('/api/client/:id/auto-replies', async (req: Request, res: Response) => {
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant || !tenantManager) return;
+    const ctx = await tenantManager.mountTenant(tenant, false);
+    const autoReplies = await ctx.memory.getAutoReplies();
+    res.json({ status: 'ok', autoReplies });
+  });
+
+  app.post('/api/client/:id/auto-replies', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const { keyword, replyText } = req.body || {};
+    if (!keyword || !replyText) {
+      res.status(400).json({ status: 'error', message: 'Ereyga iyo jawaabta waa waajib' });
+      return;
+    }
+    await pair.ctx.memory.saveAutoReply(String(keyword), String(replyText));
+    res.json({ status: 'ok', message: 'Auto-reply waa la keydiyay' });
+  });
+
+  app.delete('/api/client/:id/auto-replies/:keyword', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const kw = Array.isArray(req.params.keyword) ? req.params.keyword[0] : req.params.keyword;
+    if (kw) await pair.ctx.memory.deleteAutoReply(kw);
+    res.json({ status: 'ok' });
+  });
+
+  app.get('/api/client/:id/status/reactor', async (req: Request, res: Response) => {
+    const tenant = resolveAuthenticatedClient(req, res);
+    if (!tenant || !tenantManager) return;
+    const ctx = await tenantManager.mountTenant(tenant, false);
+    res.json({
+      status: 'ok',
+      autoView: ctx.whatsappManager.isAutoViewStatusEnabled(),
+      config: ctx.statusReactor.getConfig(),
+      recent: ctx.statusReactor.getRecentInteractions(),
+    });
+  });
+
+  app.post('/api/client/:id/status/master-view', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const isEn = Boolean(req.body?.enabled);
+    if (isEn) {
+      const check = pair.ctx.planGuard.checkFeature('status_reactor');
+      if (!check.allowed) {
+        res.status(403).json({ status: 'error', message: check.reason });
+        return;
+      }
+    }
+    pair.ctx.whatsappManager.setAutoViewStatus(isEn);
+    const updated = pair.ctx.statusReactor.setConfig({
+      enabled: isEn,
+      autoReact: isEn,
+      autoComment: isEn,
+      mode: 'both',
+    });
+    res.json({
+      status: 'ok',
+      config: updated,
+      message: isEn ? 'Status Reactor & Auto-View ON' : 'Status Reactor OFF',
+    });
+  });
+
+  app.post('/api/client/:id/status/post', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const check = pair.ctx.planGuard.checkFeature('status_post');
+    if (!check.allowed) {
+      res.status(403).json({ status: 'error', message: check.reason });
+      return;
+    }
+    const text = String(req.body?.text || '').trim();
+    if (!text) {
+      res.status(400).json({ status: 'error', message: 'Qor qoraalka status-ka' });
+      return;
+    }
+    const result = await pair.ctx.whatsappManager.postTextStatus(text, { backgroundColor: req.body?.color });
+    res.json(result);
+  });
+
+  app.post('/api/client/:id/broadcast', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const check = pair.ctx.planGuard.checkFeature('broadcast');
+    if (!check.allowed) {
+      res.status(403).json({ status: 'error', message: check.reason });
+      return;
+    }
+    const text = String(req.body?.text || '').trim();
+    if (!text) {
+      res.status(400).json({ status: 'error', message: 'Fadlan qor fariinta' });
+      return;
+    }
+    if (!pair.ctx.transport) {
+      res.status(400).json({ status: 'error', message: 'WhatsApp ma xidhna' });
+      return;
+    }
+    const result = await pair.ctx.broadcast.startDirectBroadcast('client_portal', text, pair.ctx.transport, 50);
+    if (result.success) {
+      pair.ctx.planGuard.recordUsage('broadcast');
+    }
+    res.json({ status: 'ok', message: result.message, success: result.success });
+  });
+
+  app.post('/api/client/:id/broadcast/abort', async (req: Request, res: Response) => {
+    const pair = await requireActiveClientCtx(req, res);
+    if (!pair) return;
+    const aborted = pair.ctx.broadcast.abortBroadcast();
+    res.json({ status: 'ok', aborted, message: aborted ? '🛑 Broadcast waa la joojiyay' : 'Ma jirto fariin socota' });
+  });
+
+  // ─── 3. Multi-Admin Authentication Middleware (Owner + Sub-Admins) ────────
+  const requireAdminAuth = (req: Request, res: Response, next: NextFunction) => {
+    const dbAdmins = tenantManager ? tenantManager.registry.listAdminUsers() : [];
+    if (!studioPassword && dbAdmins.length === 0) {
       res.status(503).send('Studio is locked. Set STUDIO_PASSWORD environment variable to enable the dashboard.');
       return;
     }
+
     const header = req.headers.authorization || '';
     const [scheme, encoded] = header.split(' ');
     if (scheme === 'Basic' && encoded) {
       const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-      const password = decoded.slice(decoded.indexOf(':') + 1);
-      if (password === studioPassword) {
+      const idx = decoded.indexOf(':');
+      const username = idx >= 0 ? decoded.slice(0, idx) : '';
+      const password = idx >= 0 ? decoded.slice(idx + 1) : decoded;
+
+      if (studioPassword && password === studioPassword) {
+        (req as any).adminLabel = username ? `${username} (Owner)` : 'Owner Super Admin';
         next();
         return;
       }
+
+      if (tenantManager && username && password) {
+        const verified = tenantManager.registry.verifyAdminUser(username, password);
+        if (verified) {
+          (req as any).adminLabel = `${verified.displayName} (${verified.role})`;
+          next();
+          return;
+        }
+      }
     }
-    res.setHeader('WWW-Authenticate', 'Basic realm="CARDOSO AI Studio"');
+
+    res.setHeader('WWW-Authenticate', 'Basic realm="CARDOSO AI Admin Studio"');
     res.status(401).send('Furaha sirta ah ayaa loo baahan yahay.');
+  };
+
+  app.use(requireAdminAuth);
+
+  // ─── 4. Super Admin SaaS Management APIs ───────────────────────────────────
+  app.get('/api/admin/tenants', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Multi-tenant mode ma shaqaynayo.' });
+      return;
+    }
+    const list = tenantManager.registry.listTenants(false).map((t) => {
+      const ctx = tenantManager.getContext(t.id);
+      return {
+        ...sanitizeTenantForResponse(t),
+        runtime: {
+          connected: Boolean(ctx?.transport?.isConnected),
+          botNumber: ctx?.transport?.getBotNumber() || null,
+          contactsCount: ctx?.broadcast.getStats().total || 0,
+        },
+      };
+    });
+
+    const summary = {
+      total: list.length,
+      active: list.filter((t) => t.status === 'active').length,
+      pending: list.filter((t) => t.status === 'pending').length,
+      expired: list.filter((t) => t.status === 'expired').length,
+      suspended: list.filter((t) => t.status === 'suspended').length,
+      expiringSoon: tenantManager.registry.getExpiringSoon(3).length,
+      adminUsers: tenantManager.registry.listAdminUsers().length,
+    };
+
+    res.json({ status: 'ok', tenants: list, summary });
   });
 
-  // 2. Real-time Status API
+  app.post('/api/admin/tenants', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Multi-tenant mode ma shaqaynayo.' });
+      return;
+    }
+    try {
+      const { name, phone, category, planTier, months, durationDays, customGeminiKey, notes } = req.body || {};
+      const ctx = await tenantManager.createAndStartSubscriber({
+        name: String(name || ''),
+        phone: String(phone || ''),
+        category: sanitizeCategory(category),
+        planTier: sanitizePlanTier(planTier, 'trial_free'),
+        months: months ? Number(months) : 1,
+        durationDays: durationDays ? Number(durationDays) : undefined,
+        customGeminiKey: customGeminiKey ? String(customGeminiKey) : undefined,
+        notes: notes ? String(notes) : undefined,
+      });
+      const portalUrl = `/client/${encodeURIComponent(ctx.tenant.id)}?token=${encodeURIComponent(ctx.tenant.accessToken)}`;
+      res.status(201).json({
+        status: 'ok',
+        portalUrl,
+        tenant: sanitizeTenantForResponse(ctx.tenant),
+      });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err?.message || 'Lama abuuri karin' });
+    }
+  });
+
+  app.patch('/api/admin/tenants/:id', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { name, allowedPhone, category, planTier, features, customGeminiKey, awayMode, extraAdmins } = req.body || {};
+    const updated = tenantManager.updateTenantAndRefresh(id, {
+      ...(name !== undefined ? { name: String(name) } : {}),
+      ...(allowedPhone !== undefined ? { allowedPhone: String(allowedPhone) } : {}),
+      ...(category !== undefined ? { category: sanitizeCategory(category) } : {}),
+      ...(planTier !== undefined ? { planTier: sanitizePlanTier(planTier) } : {}),
+      ...(features && typeof features === 'object' ? { features } : {}),
+      ...(customGeminiKey !== undefined ? { customGeminiKey: String(customGeminiKey) } : {}),
+      ...(awayMode !== undefined ? { awayMode: Boolean(awayMode) } : {}),
+      ...(Array.isArray(extraAdmins) ? { extraAdmins } : {}),
+    });
+    if (!updated) {
+      res.status(404).json({ status: 'error', message: 'Subscriber not found' });
+      return;
+    }
+    res.json({ status: 'ok', tenant: sanitizeTenantForResponse(updated) });
+  });
+
+  app.post('/api/admin/tenants/:id/approve', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = await tenantManager.approveAndStartTenant(id, {
+      planTier: sanitizePlanTier(req.body?.planTier, 'trial_free'),
+      months: req.body?.months ? Number(req.body.months) : 1,
+      durationDays: req.body?.durationDays ? Number(req.body.durationDays) : undefined,
+    });
+    if (!updated) {
+      res.status(404).json({ status: 'error', message: 'Tenant not found' });
+      return;
+    }
+    res.json({ status: 'ok', tenant: sanitizeTenantForResponse(updated) });
+  });
+
+  app.post('/api/admin/tenants/:id/reject', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = tenantManager.registry.rejectTenant(id);
+    res.json({ status: updated ? 'ok' : 'error', tenant: updated ? sanitizeTenantForResponse(updated) : null });
+  });
+
+  app.post('/api/admin/tenants/:id/renew', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const months = Number(req.body?.months || 1);
+    const nextTier = req.body?.planTier ? sanitizePlanTier(req.body.planTier) : undefined;
+    const durationDays = req.body?.durationDays ? Number(req.body.durationDays) : undefined;
+    const updated = await tenantManager.renewAndRestartTenant(id, months, nextTier, durationDays);
+    if (!updated) {
+      res.status(404).json({ status: 'error', message: 'Subscriber not found' });
+      return;
+    }
+    res.json({ status: 'ok', tenant: sanitizeTenantForResponse(updated) });
+  });
+
+  app.post('/api/admin/tenants/:id/suspend', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = await tenantManager.suspendAndStopTenant(id, req.body?.reason);
+    res.json({ status: updated ? 'ok' : 'error', tenant: updated ? sanitizeTenantForResponse(updated) : null });
+  });
+
+  app.post('/api/admin/tenants/:id/activate', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = await tenantManager.activateAndStartTenant(id);
+    res.json({ status: updated ? 'ok' : 'error', tenant: updated ? sanitizeTenantForResponse(updated) : null });
+  });
+
+  app.delete('/api/admin/tenants/:id', async (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = await tenantManager.deleteTenantAndCleanup(id);
+    res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  // Multi-Admin User CRUD
+  app.get('/api/admin/admins', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    res.json({ status: 'ok', admins: tenantManager.registry.listAdminUsers() });
+  });
+
+  app.post('/api/admin/admins', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    try {
+      const admin = tenantManager.registry.createAdminUser({
+        username: String(req.body?.username || ''),
+        password: String(req.body?.password || ''),
+        displayName: String(req.body?.displayName || ''),
+        phoneNumber: req.body?.phoneNumber ? String(req.body.phoneNumber) : '',
+        role: req.body?.role === 'super_admin' ? 'super_admin' : 'staff_admin',
+      });
+      res.status(201).json({ status: 'ok', admin });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err?.message || 'Admin lama abuuri karin' });
+    }
+  });
+
+  app.patch('/api/admin/admins/:id', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = tenantManager.registry.toggleAdminUser(id, Boolean(req.body?.active));
+    res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  app.delete('/api/admin/admins/:id', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = tenantManager.registry.deleteAdminUser(id);
+    res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  // Promo Codes CRUD
+  app.get('/api/admin/promos', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    res.json({ status: 'ok', promos: tenantManager.registry.listPromoCodes() });
+  });
+
+  app.post('/api/admin/promos', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    try {
+      const promo = tenantManager.registry.createPromoCode({
+        code: String(req.body?.code || ''),
+        planTier: sanitizePlanTier(req.body?.planTier, 'trial_free'),
+        durationDays: Number(req.body?.durationDays || 30),
+        maxUses: Number(req.body?.maxUses || 10),
+      });
+      res.status(201).json({ status: 'ok', promo });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err?.message || 'Promo code lama abuuri karin' });
+    }
+  });
+
+  app.patch('/api/admin/promos/:code', (req: Request, res: Response) => {
+    if (!tenantManager) {
+      res.status(503).json({ status: 'error', message: 'Unavailable' });
+      return;
+    }
+    const code = Array.isArray(req.params.code) ? req.params.code[0] : req.params.code;
+    const ok = tenantManager.registry.togglePromoCode(code, Boolean(req.body?.active));
+    res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  // ─── 5. Owner Bot Endpoints (Backwards Compatible) ─────────────────────────
   app.get('/api/status', (req: Request, res: Response) => {
+    const { transport, broadcast } = getOwnerRefs();
     const isBaileys = transport instanceof WhatsAppBaileysTransport;
     const isConnected = isBaileys ? (transport as WhatsAppBaileysTransport).isConnected : true;
     const currentQR = isBaileys ? (transport as WhatsAppBaileysTransport).currentQR : null;
+    const currentPairingCode = isBaileys ? (transport as WhatsAppBaileysTransport).currentPairingCode : null;
     const botNumber = isBaileys ? (transport as WhatsAppBaileysTransport).getBotNumber() : null;
-    const stats = broadcastService.getStats();
+    const stats = broadcast.getStats();
 
     res.json({
       status: 'ok',
       mode: config.messaging.mode,
       isConnected,
       currentQR,
+      currentPairingCode,
       botNumber,
       contacts: stats,
       uptimeSeconds: Math.floor(process.uptime()),
     });
   });
 
-  // 3. Get Bot Custom Configuration
+  app.post('/api/owner/pair', async (req: Request, res: Response) => {
+    const { transport } = getOwnerRefs();
+    if (!(transport instanceof WhatsAppBaileysTransport)) {
+      res.status(400).json({ status: 'error', message: 'Baileys transport is not active.' });
+      return;
+    }
+    const phone = String(req.body?.phone || config.security.adminPhoneNumbers[0] || '');
+    const result = await transport.requestPairingCodeForTenant(phone);
+    if (result.success) {
+      res.json({ status: 'ok', code: result.code, formattedCode: result.formattedCode, phone: result.phone });
+    } else {
+      res.status(400).json({ status: 'error', message: result.error || 'Pairing failed' });
+    }
+  });
+
+  app.post('/api/owner/sync-contacts', async (req: Request, res: Response) => {
+    const { transport } = getOwnerRefs();
+    if (!(transport instanceof WhatsAppBaileysTransport)) {
+      res.status(400).json({ status: 'error', message: 'Baileys transport is not active.' });
+      return;
+    }
+    const result = await transport.syncContactsFromWhatsApp(true);
+    res.json({ status: 'ok', ...result });
+  });
+
+  app.get('/api/owner/leads', async (req: Request, res: Response) => {
+    const { memory } = getOwnerRefs();
+    const leads = await memory.getLeads(150);
+    res.json({ status: 'ok', leads });
+  });
+
   app.get('/api/config', async (req: Request, res: Response) => {
     try {
+      const { memory } = getOwnerRefs();
       const botConfig = await memory.getBotConfig();
       res.json({ status: 'ok', config: botConfig });
     } catch (err: any) {
@@ -89,9 +877,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // 4. Save Bot Custom Configuration (Training)
   app.post('/api/config', async (req: Request, res: Response) => {
     try {
+      const { memory } = getOwnerRefs();
       const { botName, businessName, systemRole, knowledgeBase } = req.body;
       await memory.saveBotConfig({
         botName: (botName || '').trim(),
@@ -108,9 +896,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // 5. Live Interactive Chat Test (Browser Simulation)
   app.post('/api/test-chat', async (req: Request, res: Response) => {
     try {
+      const { engine } = getOwnerRefs();
       const userMessage = (req.body.message || '').trim();
       if (!userMessage) {
         res.status(400).json({ status: 'error', message: 'Fariintu ma bannaana' });
@@ -131,30 +919,30 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // 6. Direct Broadcast Trigger via Web
   app.post('/api/broadcast', async (req: Request, res: Response) => {
     try {
+      const { broadcast, transport } = getOwnerRefs();
       const text = (req.body.text || '').trim();
       if (!text) {
         res.status(400).json({ status: 'error', message: 'Fadlan qor qoraalka fariinta' });
         return;
       }
 
-      const result = await broadcastService.startDirectBroadcast('web_admin', text, transport, 50);
+      const result = await broadcast.startDirectBroadcast('web_admin', text, transport, 50);
       res.json({ status: 'ok', message: result.message, success: result.success });
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
     }
   });
 
-  // 7. Abort Broadcast
   app.post('/api/broadcast/abort', (req: Request, res: Response) => {
-    const aborted = broadcastService.abortBroadcast();
+    const { broadcast } = getOwnerRefs();
+    const aborted = broadcast.abortBroadcast();
     res.json({ status: 'ok', aborted, message: aborted ? '🛑 Fariin-wadareedka waa la joojiyay' : 'Hadda ma jirto fariin socota' });
   });
 
-  // 8. Unlink WhatsApp Session
   app.post('/api/unlink', async (req: Request, res: Response) => {
+    const { transport } = getOwnerRefs();
     if (transport instanceof WhatsAppBaileysTransport) {
       await (transport as WhatsAppBaileysTransport).unlinkSession();
       res.json({ status: 'ok', message: 'WhatsApp session waa la xidhay. QR cusub ayaa soo baxaya.' });
@@ -163,15 +951,15 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // ─── 9. WhatsApp Status & Stories Endpoints ────────────────────────────────
   app.post('/api/status/post', async (req: Request, res: Response) => {
     try {
+      const { whatsappManager } = getOwnerRefs();
       const { text, color, font } = req.body;
       if (!text || !text.trim()) {
         res.status(400).json({ status: 'error', message: 'Fadlan qor qoraalka status-ka' });
         return;
       }
-      const result = await whatsappManagerService.postTextStatus(text, {
+      const result = await whatsappManager.postTextStatus(text, {
         backgroundColor: color,
         font: font ? parseInt(font, 10) : undefined,
       });
@@ -183,8 +971,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/status/post-ai', async (req: Request, res: Response) => {
     try {
+      const { whatsappManager } = getOwnerRefs();
       const { topic } = req.body;
-      const result = await whatsappManagerService.generateAndPostAIStatus(topic);
+      const result = await whatsappManager.generateAndPostAIStatus(topic);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -192,33 +981,37 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   });
 
   app.get('/api/status/autoview', (req: Request, res: Response) => {
+    const { whatsappManager } = getOwnerRefs();
     res.json({
       status: 'ok',
-      enabled: whatsappManagerService.isAutoViewStatusEnabled(),
+      enabled: whatsappManager.isAutoViewStatusEnabled(),
     });
   });
 
   app.post('/api/status/autoview', (req: Request, res: Response) => {
+    const { whatsappManager } = getOwnerRefs();
     const { enabled } = req.body;
-    whatsappManagerService.setAutoViewStatus(Boolean(enabled));
+    whatsappManager.setAutoViewStatus(Boolean(enabled));
     res.json({
       status: 'ok',
-      enabled: whatsappManagerService.isAutoViewStatusEnabled(),
-      message: `Auto-View Status is now ${whatsappManagerService.isAutoViewStatusEnabled() ? 'ENABLED' : 'DISABLED'}`,
+      enabled: whatsappManager.isAutoViewStatusEnabled(),
+      message: `Auto-View Status is now ${whatsappManager.isAutoViewStatusEnabled() ? 'ENABLED' : 'DISABLED'}`,
     });
   });
 
   app.get('/api/status/reactor', (req: Request, res: Response) => {
+    const { statusReactor } = getOwnerRefs();
     res.json({
       status: 'ok',
-      config: statusReactorService.getConfig(),
-      recent: statusReactorService.getRecentInteractions(),
+      config: statusReactor.getConfig(),
+      recent: statusReactor.getRecentInteractions(),
     });
   });
 
   app.post('/api/status/reactor', (req: Request, res: Response) => {
+    const { statusReactor } = getOwnerRefs();
     const { enabled, autoReact, autoComment, mode, cooldownHours } = req.body;
-    const updated = statusReactorService.setConfig({
+    const updated = statusReactor.setConfig({
       ...(enabled !== undefined ? { enabled: Boolean(enabled) } : {}),
       ...(autoReact !== undefined ? { autoReact: Boolean(autoReact) } : {}),
       ...(autoComment !== undefined ? { autoComment: Boolean(autoComment) } : {}),
@@ -233,10 +1026,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   });
 
   app.post('/api/status/master-view', (req: Request, res: Response) => {
+    const { whatsappManager, statusReactor } = getOwnerRefs();
     const { enabled } = req.body;
     const isEn = Boolean(enabled);
-    whatsappManagerService.setAutoViewStatus(isEn);
-    const updated = statusReactorService.setConfig({
+    whatsappManager.setAutoViewStatus(isEn);
+    const updated = statusReactor.setConfig({
       enabled: isEn,
       autoReact: isEn,
       autoComment: isEn,
@@ -244,30 +1038,30 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     });
     res.json({
       status: 'ok',
-      autoView: whatsappManagerService.isAutoViewStatusEnabled(),
+      autoView: whatsappManager.isAutoViewStatusEnabled(),
       config: updated,
       message: `All-in-One Status Suite is now ${isEn ? 'ENABLED (ALL ON)' : 'DISABLED (ALL OFF)'}`,
     });
   });
 
-  // ─── 10. Direct Reply & Messaging Endpoint ─────────────────────────────────
   app.post('/api/direct-reply', async (req: Request, res: Response) => {
     try {
+      const { whatsappManager, transport } = getOwnerRefs();
       const { phone, message: replyText } = req.body;
       if (!phone || !replyText) {
         res.status(400).json({ status: 'error', message: 'Fadlan geli lambarka iyo fariinta' });
         return;
       }
-      const result = await whatsappManagerService.sendDirectReply(phone, replyText, transport);
+      const result = await whatsappManager.sendDirectReply(phone, replyText, transport);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
     }
   });
 
-  // ─── 11. Custom Auto-Replies Endpoints ─────────────────────────────────────
   app.get('/api/auto-replies', async (req: Request, res: Response) => {
     try {
+      const { memory } = getOwnerRefs();
       const replies = memory.getAutoReplies ? await memory.getAutoReplies() : [];
       res.json({ status: 'ok', autoReplies: replies });
     } catch (err: any) {
@@ -277,6 +1071,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/auto-replies', async (req: Request, res: Response) => {
     try {
+      const { memory } = getOwnerRefs();
       const { keyword, replyText } = req.body;
       if (!keyword || !replyText) {
         res.status(400).json({ status: 'error', message: 'Ereyga iyo jawaabta waa waajib' });
@@ -293,6 +1088,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.delete('/api/auto-replies/:keyword', async (req: Request, res: Response) => {
     try {
+      const { memory } = getOwnerRefs();
       const keyword = (Array.isArray(req.params.keyword) ? req.params.keyword[0] : req.params.keyword) || '';
       if (memory.deleteAutoReply && keyword) {
         await memory.deleteAutoReply(keyword);
@@ -303,1180 +1099,12 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // ─── 12. Main No-Code Studio Dashboard UI ──────────────────────────────────
+  // ─── 6. Main Super Admin SaaS Dashboard UI ─────────────────────────────────
   app.get('/', (req: Request, res: Response) => {
+    const adminLabel = (req as any).adminLabel || 'Owner Super Admin';
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderStudioHTML());
+    res.send(renderAdminDashboardHTML(adminLabel));
   });
 
-  const server = http.createServer(app);
-  return server;
+  return http.createServer(app);
 }
-
-function renderStudioHTML(): string {
-  return `<!DOCTYPE html>
-<html lang="so">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CARDOSO AI — No-Code WhatsApp Bot Studio</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg: #090d16;
-      --card-bg: #111827;
-      --card-border: #1f293d;
-      --card-hover: #172238;
-      --primary: #06b6d4;
-      --primary-hover: #0891b2;
-      --accent: #10b981;
-      --accent-glow: rgba(16, 185, 129, 0.2);
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --danger: #ef4444;
-      --warning: #f59e0b;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
-
-    body {
-      background: radial-gradient(circle at 50% 0%, #152238 0%, var(--bg) 60%);
-      color: var(--text-main);
-      min-height: 100vh;
-      padding-bottom: 3rem;
-    }
-
-    header {
-      padding: 1.25rem 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--card-border);
-      background: rgba(9, 13, 22, 0.85);
-      backdrop-filter: blur(12px);
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-
-    .logo-box {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .logo-icon {
-      width: 42px;
-      height: 42px;
-      background: linear-gradient(135deg, #06b6d4, #3b82f6);
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.4rem;
-      box-shadow: 0 4px 14px rgba(6, 182, 212, 0.35);
-    }
-
-    .logo-title {
-      font-size: 1.25rem;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      color: #fff;
-    }
-
-    .logo-title span { color: var(--primary); }
-
-    .logo-sub {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      font-weight: 500;
-    }
-
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.45rem 1rem;
-      border-radius: 9999px;
-      font-size: 0.825rem;
-      font-weight: 700;
-      transition: all 0.3s ease;
-    }
-
-    .status-connected {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    .status-waiting {
-      background: rgba(245, 158, 11, 0.15);
-      color: #fbbf24;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: currentColor;
-      box-shadow: 0 0 8px currentColor;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 2rem auto;
-      padding: 0 1.5rem;
-    }
-
-    .hero-banner {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
-
-    .hero-banner h1 {
-      font-size: 2.4rem;
-      font-weight: 800;
-      margin-bottom: 0.75rem;
-      letter-spacing: -1px;
-      background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .hero-banner p {
-      color: var(--text-muted);
-      font-size: 1.05rem;
-      max-width: 650px;
-      margin: 0 auto;
-      line-height: 1.6;
-    }
-
-    .grid-layout {
-      display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
-      gap: 1.75rem;
-    }
-
-    @media (max-width: 900px) {
-      .grid-layout { grid-template-columns: 1fr; }
-    }
-
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 18px;
-      padding: 1.75rem;
-      box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
-    }
-
-    .card-title {
-      font-size: 1.15rem;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      margin-bottom: 0.5rem;
-      color: #fff;
-    }
-
-    .card-desc {
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      margin-bottom: 1.5rem;
-      line-height: 1.5;
-    }
-
-    .form-group {
-      margin-bottom: 1.25rem;
-    }
-
-    label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: #cbd5e1;
-      margin-bottom: 0.4rem;
-    }
-
-    input, textarea, select {
-      width: 100%;
-      background: #0b1120;
-      border: 1px solid #23314a;
-      border-radius: 10px;
-      padding: 0.75rem 1rem;
-      color: #f8fafc;
-      font-size: 0.9rem;
-      transition: all 0.2s ease;
-      outline: none;
-    }
-
-    input:focus, textarea:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.2);
-    }
-
-    textarea {
-      min-height: 130px;
-      resize: vertical;
-      line-height: 1.5;
-    }
-
-    .template-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.45rem;
-      margin-top: 0.5rem;
-    }
-
-    .chip {
-      background: #172238;
-      border: 1px solid #283955;
-      padding: 0.35rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.75rem;
-      color: #94a3b8;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .chip:hover {
-      background: rgba(6, 182, 212, 0.2);
-      color: #38bdf8;
-      border-color: var(--primary);
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      width: 100%;
-      padding: 0.85rem 1.25rem;
-      border-radius: 10px;
-      font-weight: 700;
-      font-size: 0.925rem;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #06b6d4, #2563eb);
-      color: #fff;
-      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.35);
-    }
-
-    .btn-primary:hover {
-      opacity: 0.95;
-      transform: translateY(-1px);
-    }
-
-    .btn-danger {
-      background: rgba(239, 68, 68, 0.15);
-      color: #f87171;
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      margin-top: 0.75rem;
-    }
-
-    .btn-danger:hover {
-      background: rgba(239, 68, 68, 0.25);
-    }
-
-    /* QR Box */
-    .qr-container {
-      text-align: center;
-      padding: 1.5rem 1rem;
-      background: #090e1a;
-      border-radius: 14px;
-      border: 1px dashed #23314a;
-      margin-bottom: 1.25rem;
-      min-height: 280px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .qr-image-wrapper {
-      background: #ffffff;
-      padding: 14px;
-      border-radius: 14px;
-      display: inline-block;
-      box-shadow: 0 8px 25px rgba(0,0,0,0.4);
-    }
-
-    .qr-image-wrapper img {
-      display: block;
-      width: 210px;
-      height: 210px;
-    }
-
-    .qr-instructions {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      margin-top: 1rem;
-      line-height: 1.5;
-    }
-
-    .connected-box {
-      text-align: center;
-      padding: 2rem 1rem;
-    }
-
-    .connected-icon {
-      width: 70px;
-      height: 70px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 2px solid var(--accent);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 2.2rem;
-      color: var(--accent);
-      margin: 0 auto 1rem;
-      box-shadow: 0 0 25px var(--accent-glow);
-    }
-
-    /* Live Chat Tester */
-    .chat-card {
-      margin-top: 1.75rem;
-    }
-
-    .chat-box {
-      background: #090e1a;
-      border-radius: 12px;
-      border: 1px solid #1f293d;
-      height: 260px;
-      overflow-y: auto;
-      padding: 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      margin-bottom: 0.75rem;
-    }
-
-    .chat-msg {
-      max-width: 80%;
-      padding: 0.65rem 0.95rem;
-      border-radius: 12px;
-      font-size: 0.85rem;
-      line-height: 1.45;
-      word-break: break-word;
-    }
-
-    .msg-user {
-      align-self: flex-end;
-      background: #0284c7;
-      color: #fff;
-      border-bottom-right-radius: 3px;
-    }
-
-    .msg-bot {
-      align-self: flex-start;
-      background: #1e293b;
-      color: #e2e8f0;
-      border: 1px solid #334155;
-      border-bottom-left-radius: 3px;
-    }
-
-    .chat-input-row {
-      display: flex;
-      gap: 0.5rem;
-    }
-
-    .chat-input-row input {
-      flex: 1;
-    }
-
-    .chat-input-row button {
-      width: auto;
-      padding: 0 1.25rem;
-    }
-
-    /* Stats bar */
-    .stats-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
-      margin-bottom: 1.25rem;
-    }
-
-    .stat-pill {
-      background: #090e1a;
-      border: 1px solid #1f293d;
-      padding: 0.75rem;
-      border-radius: 10px;
-      text-align: center;
-    }
-
-    .stat-num {
-      font-size: 1.25rem;
-      font-weight: 800;
-      color: #fff;
-    }
-
-    .stat-label {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      font-weight: 700;
-      margin-top: 0.2rem;
-    }
-
-    .toast {
-      position: fixed;
-      bottom: 1.5rem;
-      right: 1.5rem;
-      background: #10b981;
-      color: #fff;
-      padding: 0.75rem 1.25rem;
-      border-radius: 10px;
-      font-size: 0.875rem;
-      font-weight: 600;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-      display: none;
-      z-index: 1000;
-    }
-  </style>
-</head>
-<body>
-
-  <header>
-    <div class="logo-box">
-      <div class="logo-icon">🤖</div>
-      <div>
-        <div class="logo-title">CARDOSO <span>AI</span></div>
-        <div class="logo-sub">No-Code WhatsApp Bot Studio</div>
-      </div>
-    </div>
-    <div id="statusBadge" class="status-badge status-waiting">
-      <div class="status-dot"></div>
-      <span id="connStatusText">Checking WhatsApp...</span>
-    </div>
-  </header>
-
-  <div class="container">
-    <div class="hero-banner">
-      <h1>Dhis WhatsApp Bot-kaaga 2 Daqiiqo Gudahood</h1>
-      <p>Ku tababar meheraddaada, gali xogtaada, ka dibna toos uga scan-garee WhatsApp-ka adoon hal xabbo oo koodh ah taaban!</p>
-    </div>
-
-    <div class="grid-layout">
-      <!-- LEFT: Bot Configuration & Training -->
-      <div>
-        <div class="card">
-          <div class="card-title">🧠 1. Ku Tababar Bot-kaaga (Train & Customize)</div>
-          <div class="card-desc">Gali magaca meheraddaada, doorka uu bot-ku qabanayo, iyo liiska alaabta ama adeegyada aad bixiso.</div>
-
-          <form id="botConfigForm">
-            <div class="form-group">
-              <label>Magaca Bot-ka / Meheradda</label>
-              <input type="text" id="businessName" placeholder="Tusaale: Dukaanka Hilaac, Hargeysa" />
-            </div>
-
-            <div class="form-group">
-              <label>Doorka Bot-ka (Persona / Role)</label>
-              <input type="text" id="systemRole" placeholder="Tusaale: Waxaad tahay iibiye dhar ah oo asluub badan, macaamiisha si asluub leh u soo dhawee..." />
-              <div class="template-chips">
-                <span class="chip" onclick="applyTemplate('shop')">🛍️ Dukaan & Iibiye</span>
-                <span class="chip" onclick="applyTemplate('clinic')">🩺 Farmashiye / Clinic</span>
-                <span class="chip" onclick="applyTemplate('edu')">🎓 Waxbarasho & Arday</span>
-                <span class="chip" onclick="applyTemplate('support')">💼 Adeeg Macmiil (24/7)</span>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label>Xogta Meheradda (Knowledge Base & Catalog)</label>
-              <textarea id="knowledgeBase" placeholder="Halkan ku qor dhammaan xogta meheraddaada:
-- Qiimaha: Shaadhka ($12), Surwaalka ($18)
-- Goobta: Suuqa Hoose, Hargeysa
-- Bixinta: Zaad / Sahal / EVC Plus
-- Gaarsiinta: Hargeysa dhexdeeda waa $1..."></textarea>
-            </div>
-
-            <button type="submit" class="btn btn-primary" id="saveBtn">
-              <span>💾 Keydi & Ku Tababar Bot-ka</span>
-            </button>
-          </form>
-        </div>
-
-        <!-- Live Chat Simulator -->
-        <div class="card chat-card">
-          <div class="card-title">🧪 3. Tijaabi Bot-kaaga (Live Browser Test)</div>
-          <div class="card-desc">Ula hadal bot-ka halkan tooska ah si aad u aragto siduu u bartay xogtaada ka hor inta aadan WhatsApp-ka ku xidhin.</div>
-
-          <div class="chat-box" id="chatBox">
-            <div class="chat-msg msg-bot">Salaan! Waxaan ahay bot-kaaga. I weydii wax ku saabsan meheraddaada si aan kuugu tijaabiyo! 😊</div>
-          </div>
-
-          <div class="chat-input-row">
-            <input type="text" id="chatInput" placeholder="Qor su'aal (tusaale: Maxaad iibisaan?)..." onkeydown="if(event.key==='Enter') sendTestChat()" />
-            <button class="btn btn-primary" onclick="sendTestChat()">Dir 🚀</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- RIGHT: WhatsApp Live QR & Broadcast -->
-      <div>
-        <div class="card">
-          <div class="card-title">📱 2. Ku Xidh WhatsApp-kaaga</div>
-          <div class="card-desc">Scan garee QR-ka hoose taleefankaaga WhatsApp-kiisa si bot-ku toos ugu bilaabo shaqada.</div>
-
-          <div id="qrArea" class="qr-container">
-            <div id="qrLoading" style="color:#94a3b8; font-size:0.85rem; padding:1.5rem; text-align:center;">
-              ⏳ Fadlan sug... QR Code-ka WhatsApp ayaa la diyaarinayaa...
-            </div>
-            <div class="qr-image-wrapper" id="qrWrapper" style="display:none;">
-              <img id="qrImage" src="" alt="WhatsApp QR Code" />
-            </div>
-            <div class="qr-instructions">
-              <strong>Tallaabooyinka:</strong><br>
-              1. Fur WhatsApp ➔ <strong>Settings</strong> ➔ <strong>Linked Devices</strong><br>
-              2. Riix <strong>Link a Device</strong> oo ku qabo kamarada QR-kan sare.
-            </div>
-          </div>
-
-          <div id="connectedArea" class="connected-box" style="display:none;">
-            <div class="connected-icon">✓</div>
-            <h3 style="font-size:1.2rem; margin-bottom:0.4rem; color:#fff;">Bot-ku Wuu Xidhan Yahay!</h3>
-            <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:1rem;">Wuxuu toos ugu xidhan yahay lambarka: <strong id="connectedPhone" style="color:#38bdf8;"></strong></p>
-            <p style="color:#34d399; font-size:0.8rem; background:rgba(16,185,129,0.1); padding:0.6rem; border-radius:8px;">Hadda macaamiishaadu markay WhatsApp fariin kuugu soo diraan, bot-ku isagaa si toos ah ugu jawaabaya 24/7!</p>
-            <button class="btn btn-danger" onclick="unlinkWhatsApp()">🛑 Ka Saar / Logout WhatsApp</button>
-          </div>
-        </div>
-
-        <!-- Smart Broadcast Card -->
-        <div class="card" style="margin-top: 1.75rem;">
-          <div class="card-title">📢 Fariin-Wadareed (Smart Broadcast)</div>
-          <div class="card-desc">Fariin u dir dhammaan dadka ku jira contacts-kaaga (50 qof mar kasta).</div>
-
-          <div class="stats-row">
-            <div class="stat-pill">
-              <div class="stat-num" id="totalContacts">0</div>
-              <div class="stat-label">Contacts</div>
-            </div>
-            <div class="stat-pill">
-              <div class="stat-num" id="sentContacts" style="color:#34d399;">0</div>
-              <div class="stat-label">Loo Diray</div>
-            </div>
-            <div class="stat-pill">
-              <div class="stat-num" id="remContacts" style="color:#38bdf8;">0</div>
-              <div class="stat-label">Hadhay</div>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>Qoraalka Fariinta</label>
-            <textarea id="broadcastText" style="min-height:90px;" placeholder="Qor fariinta aad rabto in loo diro macaamiishaada..."></textarea>
-          </div>
-
-          <button class="btn btn-primary" onclick="sendBroadcast()">🚀 Dir Fariinta (50 qof oo cusub)</button>
-          <button class="btn btn-danger" onclick="abortBroadcast()" style="margin-top:0.5rem;">🛑 Jooji Fariinta</button>
-        </div>
-
-        <!-- WhatsApp Status (Stories) Card -->
-        <div class="card" style="margin-top: 1.75rem;">
-          <div class="card-title">📱 WhatsApp Status (Stories) Manager</div>
-          <div class="card-desc">Toos WhatsApp Status ugu daabac fariimo qoraal ah ama adeegso AI dhiirigelin ah.</div>
-
-          <div class="form-group">
-            <label>Qoraalka Status-ka</label>
-            <textarea id="statusText" style="min-height:75px;" placeholder="Qor fariinta aad rabto inaad status soo dhigto..."></textarea>
-          </div>
-
-          <div class="form-group">
-            <label>Dooro Midabka Status-ka</label>
-            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
-              <input type="color" id="statusColor" value="#1e3c72" style="width:40px; height:40px; border-radius:8px; border:none; cursor:pointer;" />
-              <span style="font-size:0.8rem; color:var(--text-muted);">Riix midabka si aad mid custom ah u doorato</span>
-            </div>
-          </div>
-
-          <button class="btn btn-primary" onclick="postStatusNow()">📢 Daabac Status WhatsApp</button>
-          <button class="btn btn-primary" onclick="postAIStatusNow()" style="margin-top:0.5rem; background:linear-gradient(135deg, #10b981, #06b6d4);">✨ Ku Daabac AI Status (Automatic Quote)</button>
-
-          <hr style="border-color:var(--card-border); margin:1.25rem 0;" />
-
-          <div style="background:linear-gradient(135deg, rgba(6,182,212,0.18), rgba(16,185,129,0.18)); border:1px solid rgba(6,182,212,0.35); border-radius:12px; padding:0.9rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <div style="font-weight:700; font-size:0.95rem; color:#38bdf8;">⭐ Hal Amar: All-in-One View (view on / off)</div>
-              <div style="font-size:0.75rem; color:#cbd5e1; margin-top:0.25rem;">Hal mar wada shid ama wada dami Daawashada (Seen) + Falcelinta (React) + Faallada (Comment)</div>
-            </div>
-            <button id="masterViewBtn" class="btn btn-primary" style="width:auto; padding:0.45rem 1rem; font-size:0.8rem; font-weight:700; background:linear-gradient(135deg, #10b981, #06b6d4);" onclick="toggleMasterView()">WADA SHID (ALL ON)</button>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <div style="font-weight:700; font-size:0.9rem;">Auto-View Status (Auto Seen)</div>
-              <div style="font-size:0.75rem; color:var(--text-muted);">Bot-ku si toos ah ma u daawadaa status-yada dadka?</div>
-            </div>
-            <button id="autoViewBtn" class="btn btn-primary" style="width:auto; padding:0.4rem 0.9rem; font-size:0.8rem;" onclick="toggleAutoView()">ON (Furan)</button>
-          </div>
-
-          <hr style="border-color:var(--card-border); margin:1.25rem 0;" />
-
-          <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.4rem; color:#38bdf8; display:flex; align-items:center; gap:0.4rem;">
-            <span>🤖</span> Fal-celinta & Faallada Status-ka (Status AI Reactor)
-          </div>
-          <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:1rem; line-height:1.4;">
-            Bot-ku wuxuu fahmayaa waxa ay dadku soo dhigaan (qoraal, xikmad, sawir, qalinjabin, aroos, ganacsi, jimce) isagoo si dabiici ah uga bixinaya Emoji Reaction ama Faallo (Comment) Soomaali ah.
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-            <div>
-              <div style="font-weight:600; font-size:0.85rem;">❤️ Falcelinta Emoji-ga (Auto-React)</div>
-              <div style="font-size:0.72rem; color:var(--text-muted);">Status-ka toos emoji ugu dhufo (❤️, 😂, 👏, 🔥, 🤲)</div>
-            </div>
-            <button id="srReactBtn" class="btn btn-primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.75rem;" onclick="toggleStatusReactor('autoReact')">ON (Furan)</button>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-            <div>
-              <div style="font-weight:600; font-size:0.85rem;">💬 Faallada Tooska ah (Auto-Comment)</div>
-              <div style="font-size:0.72rem; color:var(--text-muted);">Faallo kooban oo Soomaali ah kaga dhiibo status-ka (Quote DM)</div>
-            </div>
-            <button id="srCommentBtn" class="btn btn-primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.75rem;" onclick="toggleStatusReactor('autoComment')">ON (Furan)</button>
-          </div>
-
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:0.75rem;">
-            <div>
-              <label style="font-size:0.75rem;">Nooca Falcelinta</label>
-              <select id="srMode" style="padding:0.4rem 0.6rem; font-size:0.8rem;" onchange="updateStatusReactorSettings()">
-                <option value="both">Labada (Reaction + Comment)</option>
-                <option value="reaction">Emoji Keliya (Reaction Only)</option>
-                <option value="comment">Faallo Keliya (Comment Only)</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:0.75rem;">Cooldown Qofkiiba</label>
-              <select id="srCooldown" style="padding:0.4rem 0.6rem; font-size:0.8rem;" onchange="updateStatusReactorSettings()">
-                <option value="2">2 Saacadood</option>
-                <option value="4" selected>4 Saacadood</option>
-                <option value="6">6 Saacadood</option>
-                <option value="12">12 Saacadood</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Direct Reply Card -->
-        <div class="card" style="margin-top: 1.75rem;">
-          <div class="card-title">💬 Qof Fariin u Dir (Direct Reply)</div>
-          <div class="card-desc">Lambar kasta oo WhatsApp ah si toos ah fariin ugu dir magaca bot-ka.</div>
-
-          <div class="form-group">
-            <label>Lambarka Telefoonka</label>
-            <input type="text" id="directPhone" placeholder="Tusaale: 252615000000 ama 0634000000" />
-          </div>
-
-          <div class="form-group">
-            <label>Fariinta</label>
-            <textarea id="directMsg" style="min-height:75px;" placeholder="Qor fariinta aad rabto in loo diro qofkaas..."></textarea>
-          </div>
-
-          <button class="btn btn-primary" onclick="sendDirectMessage()">📤 U Dir Qofka Hadda</button>
-        </div>
-
-        <!-- Custom Auto-Replies Card -->
-        <div class="card" style="margin-top: 1.75rem;">
-          <div class="card-title">⚡ Jawaabaha Tooska ah (Auto-Replies)</div>
-          <div class="card-desc">Sameyso ereyo gaar ah oo bot-ku isla markiiba ugu jawaabo macaamiisha adoon AI isticmaalin.</div>
-
-          <div class="form-group">
-            <label>Ereyga (Keyword / Trigger)</label>
-            <input type="text" id="arKeyword" placeholder="Tusaale: qiimaha, fiidkii, location" />
-          </div>
-
-          <div class="form-group">
-            <label>Jawaabta Tooska ah</label>
-            <textarea id="arReply" style="min-height:65px;" placeholder="Qor jawaabta degdegga ah..."></textarea>
-          </div>
-
-          <button class="btn btn-primary" onclick="addAutoReply()">➕ Ku Dar Auto-Reply</button>
-
-          <div id="arList" style="margin-top:1rem; display:flex; flex-direction:column; gap:0.5rem; max-height:180px; overflow-y:auto;">
-            <!-- Loaded dynamically -->
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="toast" class="toast">Keydiyay!</div>
-
-  <script>
-    const templates = {
-      shop: {
-        role: "Waxaad tahay shaqaale dhar iyo kabo iibiya oo aad u asluub badan. Macaamiisha si diirran u soo dhawee, qiimaha u sheeg, u faahfaahi midabada iyo cabbirada, dalabkana ka qaad.",
-        knowledge: "- Shaadhka Nimanka: $12 (Cabbirada: M, L, XL)\\n- Surwaalka Jiiniska: $18 (Midabada: Madow, Buluug)\\n- Kabaha Isboortiga: $25 (Size 40 ilaa 44)\\n- Goobta: Suuqa Hoose, Dabaqa 2aad, Hargeysa\\n- Lacag bixinta: Zaad (0634000000) ama Sahal\\n- Gaarsiinta: Hargeysa dhexdeeda waa $1, magaalooyinka kale waa $3."
-      },
-      clinic: {
-        role: "Waxaad tahay caawiye xarun caafimaad iyo farmashiye. Su'aalaha bukaanada si naxariis leh uga jawaab, u sheeg waqtiyada dhakhtarku joogo, u qabo ballamo, kana caawi dawooyinka.",
-        knowledge: "- Waqtiga Shaqada: 8:00 Subaxnimo ilaa 9:00 Habeenimo\\n- Qiimaha Balanta Dhakhtarka: $5\\n- Goobta: Wadada Wadnaha, Hargeysa\\n- Adeegyada: Shaybaadh (Lab), Ultrasound, iyo Dawooyinka Guud\\n- Xaaladaha Degdegga ah: Fadlan toos u soo wac lambarka 0634111111."
-      },
-      edu: {
-        role: "Waxaad tahay la-taliye arday iyo macallin caqli badan. Ardayda ka caawi casharada, xallinta su'aalaha, sharaxaadda cilmiga, iyo dhiirrigelinta waxbarashada.",
-        knowledge: "- Koorsooyinka: Python, Web Development, English, iyo Xisaabta\\n- Waqtiga: Galabtii iyo Habeenkii\\n- Qiimaha Koorso kasta: $15 bishii\\n- Shahaado: Arday kasta oo dhammeeya wuxuu helayaa Shahaado la aqoonsan yahay."
-      },
-      support: {
-        role: "Waxaad tahay wakiilka rasmiga ah ee adeegga macmiilka (Customer Support). Si edeb leh u xalli cabashooyinka, qor fariimaha loo reebayo maamulka, una sharax shirkadda.",
-        knowledge: "- Saacadaha Shaqada: 24 Saac / 7 Maalmood\\n- Telefoonka Xafiiska: 0634000000\\n- Email: support@meherad.com\\n- Jawaab-celinta Cabashooyinka: 2 saacadood gudahood."
-      }
-    };
-
-    function applyTemplate(type) {
-      const t = templates[type];
-      if (t) {
-        document.getElementById('systemRole').value = t.role;
-        document.getElementById('knowledgeBase').value = t.knowledge;
-        showToast('Template la doortay! Riix "Keydi" si aad u tababarto.');
-      }
-    }
-
-    function showToast(msg) {
-      const toast = document.getElementById('toast');
-      toast.innerText = msg;
-      toast.style.display = 'block';
-      setTimeout(() => { toast.style.display = 'none'; }, 3500);
-    }
-
-    // Load initial bot configuration
-    async function loadConfig() {
-      try {
-        const res = await fetch('/api/config');
-        const data = await res.json();
-        if (data.status === 'ok' && data.config) {
-          document.getElementById('businessName').value = data.config.businessName || '';
-          document.getElementById('systemRole').value = data.config.systemRole || '';
-          document.getElementById('knowledgeBase').value = data.config.knowledgeBase || '';
-        }
-      } catch (err) {
-        console.warn('Config load error:', err);
-      }
-    }
-
-    // Save Bot Configuration
-    document.getElementById('botConfigForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const saveBtn = document.getElementById('saveBtn');
-      saveBtn.disabled = true;
-      saveBtn.innerText = '⏳ Waa la tababarayaa...';
-
-      try {
-        const res = await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            businessName: document.getElementById('businessName').value,
-            systemRole: document.getElementById('systemRole').value,
-            knowledgeBase: document.getElementById('knowledgeBase').value,
-          })
-        });
-        const data = await res.json();
-        showToast(data.message || '✅ Bot-ka si buuxda ayaa loo tababaray!');
-      } catch (err) {
-        showToast('❌ Khalad ayaa dhacay: ' + err.message);
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.innerText = '💾 Keydi & Ku Tababar Bot-ka';
-      }
-    });
-
-    // Poll Status & QR
-    async function pollStatus() {
-      try {
-        const res = await fetch('/api/status');
-        const data = await res.json();
-
-        const badge = document.getElementById('statusBadge');
-        const statusText = document.getElementById('connStatusText');
-        const qrArea = document.getElementById('qrArea');
-        const connectedArea = document.getElementById('connectedArea');
-        const qrWrapper = document.getElementById('qrWrapper');
-        const qrLoading = document.getElementById('qrLoading');
-
-        if (data.isConnected) {
-          badge.className = 'status-badge status-connected';
-          if (statusText) statusText.innerText = 'Connected: +' + (data.botNumber || 'Active');
-          qrArea.style.display = 'none';
-          connectedArea.style.display = 'block';
-          document.getElementById('connectedPhone').innerText = '+' + (data.botNumber || 'WhatsApp');
-        } else {
-          badge.className = 'status-badge status-waiting';
-          if (statusText) statusText.innerText = 'Sugaya Scan-ka...';
-          qrArea.style.display = 'flex';
-          connectedArea.style.display = 'none';
-
-          if (data.currentQR) {
-            document.getElementById('qrImage').src = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(data.currentQR);
-            if (qrWrapper) qrWrapper.style.display = 'inline-block';
-            if (qrLoading) qrLoading.style.display = 'none';
-          } else {
-            if (qrWrapper) qrWrapper.style.display = 'none';
-            if (qrLoading) qrLoading.style.display = 'block';
-          }
-        }
-
-        if (data.contacts) {
-          document.getElementById('totalContacts').innerText = data.contacts.total || 0;
-          document.getElementById('sentContacts').innerText = data.contacts.sent || 0;
-          document.getElementById('remContacts').innerText = data.contacts.remaining || 0;
-        }
-      } catch (err) {
-        console.warn('Status poll error:', err);
-      }
-    }
-
-    // Send Test Chat in Browser
-    async function sendTestChat() {
-      const input = document.getElementById('chatInput');
-      const text = input.value.trim();
-      if (!text) return;
-
-      const chatBox = document.getElementById('chatBox');
-      chatBox.innerHTML += '<div class="chat-msg msg-user">' + escapeHtml(text) + '</div>';
-      input.value = '';
-      chatBox.scrollTop = chatBox.scrollHeight;
-
-      // Loading bubble
-      const loadingId = 'loading_' + Date.now();
-      chatBox.innerHTML += '<div class="chat-msg msg-bot" id="' + loadingId + '">⏳ Wuu fekerayaa...</div>';
-      chatBox.scrollTop = chatBox.scrollHeight;
-
-      try {
-        const res = await fetch('/api/test-chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
-        const data = await res.json();
-        const bubble = document.getElementById(loadingId);
-        if (bubble) {
-          bubble.innerHTML = escapeHtml(data.reply || 'Jawaab ma helin.');
-        }
-      } catch (err) {
-        const bubble = document.getElementById(loadingId);
-        if (bubble) bubble.innerText = '❌ Cilad: ' + err.message;
-      }
-      chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    // Send Broadcast from Web
-    async function sendBroadcast() {
-      const text = document.getElementById('broadcastText').value.trim();
-      if (!text) {
-        alert('Fadlan qor qoraalka fariinta!');
-        return;
-      }
-      if (!confirm('Ma hubtaa inaad 50-ka qof ee soo socda u dirto fariintan?')) return;
-
-      try {
-        const res = await fetch('/api/broadcast', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
-        });
-        const data = await res.json();
-        alert(data.message || 'Fariinta waa la bilaabay!');
-        document.getElementById('broadcastText').value = '';
-        pollStatus();
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Abort Broadcast
-    async function abortBroadcast() {
-      try {
-        const res = await fetch('/api/broadcast/abort', { method: 'POST' });
-        const data = await res.json();
-        showToast(data.message);
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Unlink / Logout
-    async function unlinkWhatsApp() {
-      if (!confirm('Ma hubtaa inaad ka saarto WhatsApp-ka hadda ku xidhan? Waxaad u baahan doontaa inaad QR cusub scan-garayso.')) return;
-      try {
-        await fetch('/api/unlink', { method: 'POST' });
-        showToast('WhatsApp waa la xidhay. Fadlan sug QR cusub...');
-        setTimeout(pollStatus, 2000);
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Post Status
-    async function postStatusNow() {
-      const text = document.getElementById('statusText').value.trim();
-      const color = document.getElementById('statusColor').value;
-      if (!text) {
-        alert('Fadlan qor qoraalka status-ka!');
-        return;
-      }
-      try {
-        const res = await fetch('/api/status/post', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, color })
-        });
-        const data = await res.json();
-        alert(data.message || 'Status-ka waa la daabacay!');
-        if (data.success) document.getElementById('statusText').value = '';
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Post AI Status
-    async function postAIStatusNow() {
-      try {
-        showToast('⏳ AI ayaa curinaya status-ka dhiirigelinta ah...');
-        const res = await fetch('/api/status/post-ai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
-        });
-        const data = await res.json();
-        alert(data.message || 'AI Status waa la daabacay!');
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Toggle Auto-View Status
-    let autoViewCurrent = true;
-    async function toggleAutoView() {
-      try {
-        const nextState = !autoViewCurrent;
-        const res = await fetch('/api/status/autoview', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: nextState })
-        });
-        const data = await res.json();
-        autoViewCurrent = Boolean(data.enabled);
-        updateAutoViewUI();
-        showToast(autoViewCurrent ? '👁️ Auto-View Status waa FURAN TAHAY' : '🛑 Auto-View Status waa LA DAMIYAY');
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    function updateAutoViewUI() {
-      const btn = document.getElementById('autoViewBtn');
-      if (btn) {
-        btn.innerText = autoViewCurrent ? 'ON (Furan)' : 'OFF (Xidhan)';
-        btn.style.background = autoViewCurrent ? '#10b981' : '#64748b';
-      }
-    }
-
-    // Status Reactor UI
-    let srConfig = { enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 4 };
-
-    async function loadStatusReactor() {
-      try {
-        const res = await fetch('/api/status/reactor');
-        const data = await res.json();
-        if (data.status === 'ok' && data.config) {
-          srConfig = data.config;
-          updateStatusReactorUI();
-        }
-      } catch (err) {}
-    }
-
-    function updateStatusReactorUI() {
-      const reactBtn = document.getElementById('srReactBtn');
-      const commentBtn = document.getElementById('srCommentBtn');
-      const modeSelect = document.getElementById('srMode');
-      const cdSelect = document.getElementById('srCooldown');
-      const masterBtn = document.getElementById('masterViewBtn');
-
-      if (reactBtn) {
-        reactBtn.innerText = srConfig.autoReact ? 'ON (Furan)' : 'OFF (Xidhan)';
-        reactBtn.style.background = srConfig.autoReact ? '#10b981' : '#64748b';
-      }
-      if (commentBtn) {
-        commentBtn.innerText = srConfig.autoComment ? 'ON (Furan)' : 'OFF (Xidhan)';
-        commentBtn.style.background = srConfig.autoComment ? '#10b981' : '#64748b';
-      }
-      if (modeSelect) modeSelect.value = srConfig.mode || 'both';
-      if (cdSelect) cdSelect.value = String(srConfig.cooldownHours || 4);
-
-      if (masterBtn) {
-        const isAllOn = autoViewCurrent && srConfig.autoReact && srConfig.autoComment;
-        masterBtn.innerText = isAllOn ? 'WADA DAMI (ALL OFF)' : 'WADA SHID (ALL ON)';
-        masterBtn.style.background = isAllOn ? '#ef4444' : 'linear-gradient(135deg, #10b981, #06b6d4)';
-      }
-    }
-
-    async function toggleMasterView() {
-      const isAllActive = autoViewCurrent && srConfig.autoReact && srConfig.autoComment;
-      const targetState = !isAllActive;
-      try {
-        const res = await fetch('/api/status/master-view', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: targetState })
-        });
-        const data = await res.json();
-        if (data.status === 'ok') {
-          autoViewCurrent = Boolean(data.autoView);
-          srConfig = data.config;
-          updateAutoViewUI();
-          updateStatusReactorUI();
-          showToast(targetState ? '👁️✨ All-in-One View: WAA LA WADA SHIDAY (ALL ON)!' : '🛑 All-in-One View: WAA LA WADA DAMIYAY (ALL OFF)!');
-        }
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    async function toggleStatusReactor(field) {
-      try {
-        const next = !srConfig[field];
-        const res = await fetch('/api/status/reactor', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [field]: next })
-        });
-        const data = await res.json();
-        if (data.status === 'ok') {
-          srConfig = data.config;
-          updateStatusReactorUI();
-          showToast(field === 'autoReact' ? (srConfig.autoReact ? '❤️ Auto-React waa la daaray' : '🛑 Auto-React waa la damiyay') : (srConfig.autoComment ? '💬 Auto-Comment waa la daaray' : '🛑 Auto-Comment waa la damiyay'));
-        }
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    async function updateStatusReactorSettings() {
-      const mode = document.getElementById('srMode').value;
-      const cooldownHours = parseInt(document.getElementById('srCooldown').value, 10);
-      try {
-        const res = await fetch('/api/status/reactor', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode, cooldownHours })
-        });
-        const data = await res.json();
-        if (data.status === 'ok') {
-          srConfig = data.config;
-          showToast('✅ Habaynta Status Reactor waa la keydiyay!');
-        }
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Direct Reply
-    async function sendDirectMessage() {
-      const phone = document.getElementById('directPhone').value.trim();
-      const message = document.getElementById('directMsg').value.trim();
-      if (!phone || !message) {
-        alert('Fadlan gali lambarka iyo fariinta!');
-        return;
-      }
-      try {
-        const res = await fetch('/api/direct-reply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone, message })
-        });
-        const data = await res.json();
-        alert(data.message || 'Fariinta waa la diray!');
-        if (data.success) document.getElementById('directMsg').value = '';
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    // Auto-Replies Management
-    async function loadAutoReplies() {
-      try {
-        const res = await fetch('/api/auto-replies');
-        const data = await res.json();
-        const list = document.getElementById('arList');
-        if (!list) return;
-        list.innerHTML = '';
-        if (data.autoReplies && data.autoReplies.length > 0) {
-          for (const ar of data.autoReplies) {
-            const item = document.createElement('div');
-            item.style.cssText = 'background:#090e1a; padding:0.5rem 0.75rem; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #1f293d; font-size:0.8rem;';
-            const contentDiv = document.createElement('div');
-            contentDiv.innerHTML = '<strong>"' + escapeHtml(ar.keyword) + '"</strong> ➔ <span style="color:#94a3b8;">' + escapeHtml(ar.replyText) + '</span>';
-            const delBtn = document.createElement('button');
-            delBtn.style.cssText = 'background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; margin-left:0.5rem; font-size:1rem;';
-            delBtn.innerText = '✕';
-            delBtn.onclick = function() {
-              deleteAutoReply(encodeURIComponent(ar.keyword));
-            };
-            item.appendChild(contentDiv);
-            item.appendChild(delBtn);
-            list.appendChild(item);
-          }
-        } else {
-          list.innerHTML = '<div style="color:#64748b; font-size:0.75rem;">Wali ma jiraan auto-replies.</div>';
-        }
-      } catch (err) {}
-    }
-
-    async function addAutoReply() {
-      const keyword = document.getElementById('arKeyword').value.trim();
-      const replyText = document.getElementById('arReply').value.trim();
-      if (!keyword || !replyText) {
-        alert('Fadlan gali ereyga iyo jawaabta!');
-        return;
-      }
-      try {
-        const res = await fetch('/api/auto-replies', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keyword, replyText })
-        });
-        const data = await res.json();
-        showToast(data.message || 'Auto-reply waa la keydiyay!');
-        document.getElementById('arKeyword').value = '';
-        document.getElementById('arReply').value = '';
-        loadAutoReplies();
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    async function deleteAutoReply(encodedKeyword) {
-      const keyword = decodeURIComponent(encodedKeyword);
-      if (!confirm('Ma hubtaa inaad tirtirto auto-reply-ga "' + keyword + '"?')) return;
-      try {
-        await fetch('/api/auto-replies/' + encodeURIComponent(keyword), { method: 'DELETE' });
-        showToast('Auto-reply waa la tirtiray');
-        loadAutoReplies();
-      } catch (err) {
-        alert('Cilad: ' + err.message);
-      }
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.innerText = text;
-      return div.innerHTML.replace(/\\n/g, '<br>');
-    }
-
-    // Init
-    loadConfig();
-    loadAutoReplies();
-    loadStatusReactor();
-    pollStatus();
-    setInterval(pollStatus, 3500); // Poll status every 3.5s
-  </script>
-</body>
-</html>`;
-}
-

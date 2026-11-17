@@ -27,6 +27,17 @@ export interface StudentProfile {
   topicsDiscussed?: string[];
 }
 
+export interface LeadRecord {
+  id?: number;
+  chatId: string;
+  senderName: string;
+  senderPhone: string;
+  category: string;
+  summary: string;
+  status: 'new' | 'contacted' | 'resolved' | 'closed';
+  createdAt: number;
+}
+
 /**
  * Pluggable Database / Memory Repository Interface.
  * Implemented initially by SQLite, easily swapped for PostgreSQL later.
@@ -115,6 +126,21 @@ export interface IStudentMemory {
    * Checks if a message text matches any configured auto-reply
    */
   findMatchingAutoReply?(text: string): Promise<string | null>;
+
+  /**
+   * Saves a captured customer lead, order, student inquiry, or missed-message note
+   */
+  recordLead?(lead: Omit<LeadRecord, 'id' | 'createdAt' | 'status'> & { status?: LeadRecord['status'] }): Promise<void>;
+
+  /**
+   * Lists captured leads/notes
+   */
+  getLeads?(limit?: number): Promise<LeadRecord[]>;
+
+  /**
+   * Updates lead status
+   */
+  updateLeadStatus?(id: number, status: LeadRecord['status']): Promise<boolean>;
 
   /**
    * Closes database connections cleanly

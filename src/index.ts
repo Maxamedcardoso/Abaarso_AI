@@ -1,23 +1,16 @@
-import http from 'http';
+import path from 'path';
 import { config, validateConfig } from './config/env.js';
-import { SQLiteStudentMemory } from './memory/sqlite-memory.js';
-import { AIOrchestrator } from './ai/ai-orchestrator.js';
-import { StudentAdvisorEngine } from './advisor/advisor-engine.js';
-import { MessageRouter } from './pipeline/message-router.js';
 import { IMessagingTransport } from './transports/transport.interface.js';
 import { ConsoleSimulatorTransport } from './transports/console-simulator.js';
-import { WhatsAppBaileysTransport } from './transports/whatsapp-baileys.js';
 import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
-import { reminderService } from './services/reminder.service.js';
-import { broadcastService } from './services/broadcast.service.js';
-import { whatsappManagerService } from './services/whatsapp-manager.service.js';
-import { statusReactorService } from './services/status-reactor.service.js';
+import { TenantRegistry } from './tenants/tenant-registry.js';
+import { TenantManager } from './tenants/tenant-manager.js';
 import { createStudioServer } from './web/studio-server.js';
 
 async function bootstrap() {
   console.log(`\n======================================================`);
-  console.log(`  CARDOSO AI — Your Smart Personal AI Assistant        `);
-  console.log(`  Tagline: Barasho, Dhiirigelin, iyo Horumar          `);
+  console.log(`  CARDOSO AI — Multi-Tenant WhatsApp SaaS Platform     `);
+  console.log(`  Tagline: Barasho, Ganacsi, Waxbarasho & Horumar     `);
   console.log(`======================================================\n`);
 
   // 1. Validate environment configuration
@@ -30,82 +23,72 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // 2. Initialize Memory Database
-  const memory = new SQLiteStudentMemory(config.database.path);
-  await memory.initialize();
-  console.log(`✅ [Database] SQLite Student Memory initialized at ${config.database.path}`);
+  // 2. Initialize SaaS Tenant Registry & Tenant Manager
+  const registryPath = path.join(path.dirname(config.database.path) || './data', 'tenants_registry.db');
+  const registry = new TenantRegistry(registryPath);
+  registry.initialize();
 
-  // 2b. Initialize Broadcast Service with persistent database
-  broadcastService.setMemory(memory);
-  await broadcastService.loadPersistedContacts();
+  const webPort = process.env.PORT || config.server.port || 3000;
+  const tenantManager = new TenantManager(registry, config, {
+    startSockets: config.messaging.mode === 'baileys',
+    publicBaseUrl: process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${webPort}`,
+  });
+  await tenantManager.initialize();
 
-  // 3. Initialize AI Orchestrator
-  const ai = new AIOrchestrator(config);
-  await ai.initialize();
-  whatsappManagerService.setAIOrchestrator(ai);
-  statusReactorService.setAIOrchestrator(ai);
+  const ownerCtx = tenantManager.getOwnerContext();
+  if (!ownerCtx) {
+    throw new Error('Failed to initialize primary owner tenant context.');
+  }
+
+  console.log(`✅ [Database] Registry initialized at ${registryPath} & Owner DB at ${config.database.path}`);
   console.log(`✅ [AI Engine] Primary Model: ${config.gemini.model} (Daily free limit: ${config.gemini.dailyLimit})`);
 
-  // 4. Initialize Advisor Engine & Message Router
-  const engine = new StudentAdvisorEngine(memory, ai);
-  const router = new MessageRouter(engine, config, undefined, undefined, memory);
+  // 3. If non-Baileys transport mode (webhook / console), wire external transport onto Owner router
+  let activeTransport: IMessagingTransport = ownerCtx.transport as IMessagingTransport;
+  let externalTransport: IMessagingTransport | null = null;
 
-  // 5. Select and initialize active transport
-  let transport: IMessagingTransport;
-
-  switch (config.messaging.mode) {
-    case 'baileys':
-      console.log(`📱 [Transport] Starting WhatsApp Multi-Device Transport (Baileys)...`);
-      transport = new WhatsAppBaileysTransport();
-      break;
-
-    case 'webhook':
-      console.log(`🌐 [Transport] Starting Meta WhatsApp Cloud API Webhook Gateway...`);
-      transport = new MetaCloudWebhookTransport({
-        port: config.server.port,
-        verifyToken: config.security.webhookVerifyToken,
-      });
-      break;
-
-    case 'console':
-    default:
-      console.log(`💻 [Transport] Starting Interactive Console Simulator...`);
-      transport = new ConsoleSimulatorTransport();
-      break;
+  if (config.messaging.mode === 'webhook') {
+    console.log(`🌐 [Transport] Starting Meta WhatsApp Cloud API Webhook Gateway...`);
+    externalTransport = new MetaCloudWebhookTransport({
+      port: config.server.port,
+      verifyToken: config.security.webhookVerifyToken,
+    });
+  } else if (config.messaging.mode === 'console') {
+    console.log(`💻 [Transport] Starting Interactive Console Simulator...`);
+    externalTransport = new ConsoleSimulatorTransport();
+  } else {
+    console.log(`📱 [Transport] Multi-Tenant WhatsApp Multi-Device Mode (Baileys) Active.`);
   }
 
-  // Register router message handler
-  transport.onMessage(async (message) => {
-    await router.handleIncomingMessage(message, transport);
-  });
-
-  // Start transport
-  await transport.start();
-
-  // Wire reminder service so it can send WhatsApp messages
-  reminderService.setSendFunction(async (chatId: string, text: string) => {
-    await transport.sendMessage(chatId, text);
-  });
-  reminderService.start();
-  console.log('⏰ [Reminders] Reminder scheduler is active.');
-
-  // If console simulator, start interactive prompt loop
-  if (transport instanceof ConsoleSimulatorTransport) {
-    transport.startInteractiveCLI();
+  if (externalTransport) {
+    activeTransport = externalTransport;
+    externalTransport.onMessage(async (message) => {
+      await ownerCtx.router.handleIncomingMessage(message, externalTransport!);
+    });
+    await externalTransport.start();
+    ownerCtx.reminderService.setSendFunction(async (chatId: string, text: string) => {
+      await externalTransport!.sendMessage(chatId, text);
+    });
+    if (externalTransport instanceof ConsoleSimulatorTransport) {
+      externalTransport.startInteractiveCLI();
+    }
   }
 
-  // Start No-Code Bot Studio Web Platform (Render & Cloud Hosting Ready)
-  const webPort = process.env.PORT || config.server.port || 3000;
+  // 4. Start Multi-Tenant Admin Studio & Client Portal Web Platform
   const server = createStudioServer({
     port: webPort,
-    memory,
-    engine,
-    transport,
+    memory: ownerCtx.memory,
+    engine: ownerCtx.engine,
+    transport: activeTransport,
     config,
+    tenantManager,
   });
 
   server.listen(webPort, () => {
-    console.log(`🌐 [Studio Server] CARDOSO AI No-Code Studio running on port ${webPort} (Render ready!)`);
+    console.log(`🌐 [Studio Server] CARDOSO AI SaaS running on port ${webPort}`);
+    console.log(`   👑 Admin Studio: http://localhost:${webPort}/`);
+    console.log(`   📝 Self-Signup:  http://localhost:${webPort}/join`);
+    console.log(`   🔑 Client Login: http://localhost:${webPort}/portal`);
   });
 
   // Render Anti-Sleep Keep-Alive (pings itself every 10 minutes if RENDER_EXTERNAL_URL is set)
@@ -119,23 +102,24 @@ async function bootstrap() {
       } catch (err: any) {
         console.warn(`⚠️ [Keep-Alive] Ping error: ${err.message}`);
       }
-    }, 10 * 60 * 1000); // Every 10 mins
+    }, 10 * 60 * 1000);
   }
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\nGracefully shutting down CARDOSO AI...');
-    reminderService.stop();
     server.close();
-    await transport.stop();
-    await memory.close();
+    if (externalTransport) {
+      await externalTransport.stop().catch(() => {});
+    }
+    await tenantManager.shutdown();
+    registry.close();
     process.exit(0);
   };
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Process-level guards against unexpected socket or async rejections
   process.on('uncaughtException', (err) => {
     console.error('🛡️ [Process Guard] Uncaught Exception caught safely:', err?.message || err);
   });
@@ -144,8 +128,7 @@ async function bootstrap() {
   });
 }
 
-bootstrap().catch(err => {
+bootstrap().catch((err) => {
   console.error('Fatal initialization error:', err);
   process.exit(1);
 });
-
