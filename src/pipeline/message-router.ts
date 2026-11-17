@@ -375,8 +375,9 @@ SHURUUCDA DUGSIIYA:
       const isPendingSaveMe = this.statusReactor?.isPendingSaveMe(message.chatId);
       const isAffirmative = /^(?:haye|ok|haa|ha|waa\s*yahay|waayahay|done|saved?|save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)(?:\s+(?:sxb|wll|walaal|walaalo|bro))?[.!👍📲✅\s]*$/i.test(lowerText);
       const isExplicitSavePhrase = /^(?:save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)[.!👍📲✅\s]*$/i.test(lowerText);
+      const isStickerReply = Boolean(message.media?.mimeType === 'image/webp' || message.content.includes('[WhatsApp Sticker'));
 
-      if ((isPendingSaveMe && isAffirmative) || isExplicitSavePhrase) {
+      if ((isPendingSaveMe && (isAffirmative || isStickerReply)) || isExplicitSavePhrase) {
         this.statusReactor?.resolvePendingSaveMe(message.chatId);
         const contactName = message.senderName && message.senderName.trim().length > 0 ? message.senderName.trim() : 'Walaal';
         this.broadcast.recordContact(message.chatId, contactName, false, Boolean(message.senderName));
