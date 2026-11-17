@@ -57,15 +57,21 @@ export class WhatsAppManagerService {
   private configuredAdminPhones: string[] | null = null;
   private postedStatuses: Map<string, PostedStatusRecord> = new Map();
   private inProgressDeletes: Set<string> = new Set();
+  private rejectAllCalls: boolean = true;
+  private rejectedCallNumbers: Set<string> = new Set();
+  private allowedCallNumbers: Set<string> = new Set();
+  private readonly callRejectStoragePath: string;
 
   constructor(options?: WhatsAppManagerOptions) {
     this.authDir = options?.authDir || path.join(process.cwd(), 'baileys_auth_info');
     this.statusStoragePath = options?.statusStoragePath || path.join(process.cwd(), 'data', 'posted-statuses.json');
+    this.callRejectStoragePath = path.join(path.dirname(this.statusStoragePath), 'call-reject-config.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
     }
     this.loadPersistedStatuses();
+    this.loadCallRejectConfig();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -1593,6 +1599,118 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     } catch (err: any) {
       return { success: false, message: `Cilad unblock-garaynta: ${err.message}` };
     }
+  }
+
+  // ─── CALL MANAGEMENT (REJECT ALL, REJECT NUMBER, UNREJECT) ────────────────
+
+  private loadCallRejectConfig(): void {
+    try {
+      if (fs.existsSync(this.callRejectStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.callRejectStoragePath, 'utf8'));
+        this.rejectAllCalls = raw.rejectAll !== undefined ? Boolean(raw.rejectAll) : true;
+        if (Array.isArray(raw.rejectedNumbers)) {
+          this.rejectedCallNumbers = new Set(raw.rejectedNumbers.map((n: string) => String(n).replace(/\D/g, '')).filter(Boolean));
+        }
+        if (Array.isArray(raw.allowedNumbers)) {
+          this.allowedCallNumbers = new Set(raw.allowedNumbers.map((n: string) => String(n).replace(/\D/g, '')).filter(Boolean));
+        }
+      }
+    } catch {}
+  }
+
+  private saveCallRejectConfig(): void {
+    try {
+      const dir = path.dirname(this.callRejectStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data = {
+        rejectAll: this.rejectAllCalls,
+        rejectedNumbers: Array.from(this.rejectedCallNumbers),
+        allowedNumbers: Array.from(this.allowedCallNumbers),
+      };
+      fs.writeFileSync(this.callRejectStoragePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch {}
+  }
+
+  /**
+   * Enables automatic call rejection for ALL callers.
+   */
+  public setRejectAllCalls(enabled: boolean): { success: boolean; message: string } {
+    this.rejectAllCalls = enabled;
+    if (enabled) {
+      this.allowedCallNumbers.clear();
+    }
+    this.saveCallRejectConfig();
+    return {
+      success: true,
+      message: enabled
+        ? '📵 *[Call Reject - Dhammaan]*: Dhammaan wicitaannada soo dhaca waa la xidhay (Auto-Reject ON)! Qof kasta oo soo waca toos ayaa looga goyn doonaa cod redirect ahna loogu diri doonaa.'
+        : '📞 *[Call Reject - Dhammaan]*: Wicitaannada dhammaan waa la furay (Auto-Reject OFF). Dadku hadda way soo wici karaan.',
+    };
+  }
+
+  /**
+   * Unrejects / opens calls for ALL callers.
+   */
+  public unrejectAllCalls(): { success: boolean; message: string } {
+    this.rejectAllCalls = false;
+    this.rejectedCallNumbers.clear();
+    this.allowedCallNumbers.clear();
+    this.saveCallRejectConfig();
+    return {
+      success: true,
+      message: '📞 *[Call Unreject - Dhammaan]*: Wicitaannada dhammaan waa la furay (Auto-Reject OFF). Cid kasta way soo wici kartaa hadda.',
+    };
+  }
+
+  /**
+   * Rejects incoming calls from a specific phone number.
+   */
+  public rejectCallNumber(phoneOrJid: string): { success: boolean; message: string } {
+    const cleanPhone = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) {
+      return { success: false, message: 'Fadlan geli lambar sax ah (tusaale: `!reject 252634123456`).' };
+    }
+    this.rejectedCallNumbers.add(cleanPhone);
+    this.allowedCallNumbers.delete(cleanPhone);
+    this.saveCallRejectConfig();
+    return {
+      success: true,
+      message: `📵 *[Call Reject]*: Lambarka +${cleanPhone} wicitaannadiisa waa la xidhay! Marka uu soo waco toos ayaa looga goyn doonaa oo cod loogu diri doonaa.`,
+    };
+  }
+
+  /**
+   * Unrejects / opens calls for a specific phone number.
+   */
+  public unrejectCallNumber(phoneOrJid: string): { success: boolean; message: string } {
+    const cleanPhone = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) {
+      return { success: false, message: 'Fadlan geli lambar sax ah (tusaale: `!unreject 252634123456`).' };
+    }
+    this.rejectedCallNumbers.delete(cleanPhone);
+    this.allowedCallNumbers.add(cleanPhone);
+    this.saveCallRejectConfig();
+    return {
+      success: true,
+      message: `📞 *[Call Unreject]*: Lambarka +${cleanPhone} wicitaankiisa waa loo furay! Hadda wuu soo wici karaa xataa haddii guud ahaan wicitaannada la xidhay.`,
+    };
+  }
+
+  /**
+   * Checks whether an incoming call from a caller should be rejected.
+   */
+  public shouldRejectCall(callerJidOrPhone: string): boolean {
+    const cleanPhone = callerJidOrPhone.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (this.allowedCallNumbers.has(cleanPhone)) {
+      return false;
+    }
+    if (this.rejectedCallNumbers.has(cleanPhone)) {
+      return true;
+    }
+    if (this.rejectAllCalls) {
+      return true;
+    }
+    return false;
   }
 
   // ─── 5. MESSAGE MANAGEMENT (DELETE, REACT, PIN) ───────────────────────────

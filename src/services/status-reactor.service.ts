@@ -87,6 +87,8 @@ export class StatusReactorService {
   private processedStatusIds: Set<string> = new Set();
   private readonly broadcast: BroadcastService;
   private configuredAdminPhones: string[] | null = null;
+  private ownerName: string = 'Mohamed';
+  private pendingSaveMeNumbers: Map<string, number> = new Map();
 
   constructor(customConfigPath?: string, broadcast?: BroadcastService, adminPhones?: string[]) {
     this.configPath = customConfigPath || path.resolve(process.cwd(), 'data', 'status_reactor_config.json');
@@ -95,6 +97,43 @@ export class StatusReactorService {
       this.configuredAdminPhones = adminPhones;
     }
     this.config = this.loadConfig();
+  }
+
+  public setOwnerName(name: string): void {
+    if (name && name.trim()) {
+      this.ownerName = name.trim();
+    }
+  }
+
+  public getOwnerName(): string {
+    return this.ownerName;
+  }
+
+  public markSaveMeSent(phoneOrJid: string): void {
+    const clean = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (clean) {
+      this.pendingSaveMeNumbers.set(clean, Date.now());
+    }
+  }
+
+  public isPendingSaveMe(phoneOrJid: string): boolean {
+    const clean = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!clean) return false;
+    const ts = this.pendingSaveMeNumbers.get(clean);
+    if (!ts) return false;
+    // Expire pending status after 48 hours
+    if (Date.now() - ts > 48 * 60 * 60 * 1000) {
+      this.pendingSaveMeNumbers.delete(clean);
+      return false;
+    }
+    return true;
+  }
+
+  public resolvePendingSaveMe(phoneOrJid: string): void {
+    const clean = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (clean) {
+      this.pendingSaveMeNumbers.delete(clean);
+    }
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -261,7 +300,7 @@ export class StatusReactorService {
     if (visualCategory === 'business') {
       return {
         category: 'business',
-        suggestedEmojis: ['💚'],
+        suggestedEmojis: ['💚', '💼'],
         suggestedComments: [], // NO REPLY: Business status only gets official Status Like 💚
         extractedText: clean,
         hasMedia,
@@ -562,7 +601,7 @@ export class StatusReactorService {
     ) {
       return {
         category: 'business',
-        suggestedEmojis: ['💚'],
+        suggestedEmojis: ['💚', '💼'],
         suggestedComments: [], // STRICT: No reply/comment for business statuses per user request! Only official Status Like 💚
         extractedText: clean,
         hasMedia,
@@ -1030,14 +1069,16 @@ Respond with ONLY valid JSON:
 
         if (targetPhone.length >= 8 && targetPhone.length <= 15) {
           const phoneJid = `${targetPhone}@s.whatsapp.net`;
-          await socket.sendMessage(phoneJid, { text: 'Walaal i keydi 📲' });
-          console.log(`📲 [StatusReactor] Sent DM "Walaal i keydi 📲" directly to contact ${targetPhone} (extracted from status of ${senderName || senderJid})`);
+          const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
+          await socket.sendMessage(phoneJid, { text: saveMsg });
+          this.markSaveMeSent(targetPhone);
+          console.log(`📲 [StatusReactor] Sent DM "${saveMsg}" directly to contact ${targetPhone} (extracted from status of ${senderName || senderJid})`);
           this.recordInteraction({
             id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             senderJid,
             senderName,
             type: 'comment',
-            content: `Walaal i keydi 📲 (DM sent directly to ${targetPhone})`,
+            content: `${saveMsg} (DM sent directly to ${targetPhone})`,
             category: analysis.category,
             statusText: rawText,
             timestamp: Date.now(),

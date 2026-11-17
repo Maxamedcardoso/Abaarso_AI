@@ -216,6 +216,13 @@ export function detectInstantGreetingReply(text: string, context?: GreetingConte
 
   // Role-tailored personalized greetings when full context is supplied
   if (context && !/^(s[\s.]*c[\s.]*w|scw|sallallahu|calayhi\s*salaatu|nnkh)/i.test(t)) {
+    const isGoodbye = /^(?:macasalaam[ao]|macasalaama|nabad[\s-]?gelyo|is\s*arag\s*dambe|ha\s*isku\s*aragno|bye+|goodbye|good\s*bye|bye\s*bye|ok\s*bye|okay\s*bye|haye\s*bye|hye\s*bye|haye\s*nabad[\s-]?gelyo|hye\s*nabad[\s-]?gelyo|haye\s*macasalaam[ao]|hye\s*macasalaam[ao])(?:\s+(?:sxb|wll|walaal|abti|inaadeer|saaxiib))?[.!👋]*$/i.test(t);
+    if (isGoodbye) {
+      return nameTag
+        ? `Haye${nameTag}, nabad gelyo! 👋`
+        : `Haye walaal, nabad gelyo! 👋`;
+    }
+
     const isIslamicSalam = /^(assalaamu?\s*calaykum|a[\s.]*s[\s.]*c|asc|salaam(u?\s*(calaykum)?)?|al[\s-]?salaam[\s-]?calaykum|alsalamu alaykum)(\s+warahmatullahi\s+wabarakaatuh)?$/i.test(t);
     const isSomaliCheckin = /^(iska\s*warran|iskawarran|warran|ii\s*warran|iwaran|sidee\s*tahay|see\s*tahy|see\s*tahay|sideed\s*tahay)(\?)?$/i.test(t);
     const isEnglishHi = /^(hi+|hey+|hello+|helo|howdy)(\s+there)?[.!]?$/i.test(t);
@@ -275,9 +282,13 @@ export function detectInstantGreetingReply(text: string, context?: GreetingConte
     [/^(wa[\s.]*calaykum[\s.]*salaam?|w[\s.]*c[\s.]*s|wcs)(\s+warahmatullahi.*)?$/i,
      ['Alhamdulillah walaal, Ilaahay kaa barakeeyo! 🌿', 'Barakallahu fiik! Maxaa cusub? 😊']],
 
+    // Goodbyes / Farewells (STRICT: End gracefully, NO trailing questions!)
+    [/^(?:macasalaam[ao]|macasalaama|nabad[\s-]?gelyo|is\s*arag\s*dambe|ha\s*isku\s*aragno|bye+|goodbye|good\s*bye|bye\s*bye|ok\s*bye|okay\s*bye|haye\s*bye|hye\s*bye|haye\s*nabad[\s-]?gelyo|hye\s*nabad[\s-]?gelyo|haye\s*macasalaam[ao]|hye\s*macasalaam[ao])(?:\s+(?:sxb|wll|walaal|abti|inaadeer|saaxiib))?[.!👋]*$/i,
+     ['Haye walaal, nabad gelyo! 👋', 'Macasalaama walaal, is arag dambe! 👋', 'Nabad gelyo walaal! 👋']],
+
     // Somali greetings
-    [/^(nabad[\s-]?miyaa|nabad|nabadgelyo)$/i,
-     ['Nabad iyo nolol! Sidee tahay? 😊', 'Nabadgelyo walaal! Maxaa cusub? 😄']],
+    [/^(nabad[\s-]?miyaa|nabad)$/i,
+     ['Nabad iyo nolol! Sidee tahay? 😊', 'Nabad iyo khayr! Maxaa cusub? 😄']],
 
     [/^(iska\s*warran|iskawarran|warran|ii\s*warran|iwaran|sidee\s*tahay|see\s*tahy|see\s*tahay|sideed\s*tahay)(\?)?$/i,
      ['Waan fiicanahay, mahadsanid walaal! Adiguna sidee tahay? 😊', 'Nabad iyo khayr! Adiguna xaggaaga see wax yihiin? 😄', 'Alhamdulillah! Adiguna nabad miyaa? 🤲']],

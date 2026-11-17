@@ -182,6 +182,10 @@ export class WhatsAppOnboardingService {
     const rejectMatch = text.match(/^[!./#]?(?:reject|diid)(?:\s+(.+))?$/i);
     if (isAdminUser && rejectMatch) {
       const targetArg = (rejectMatch[1] || '').trim().split(/\s+/)[0] || '';
+      // If the target is 'all', 'dhammaan', or a phone number, pass through to Call Reject handler
+      if (/^(?:all|dhammaan|dhamaan|kulligood)$/i.test(targetArg) || /^[0-9+]{7,16}$/.test(targetArg)) {
+        return { handled: false, reason: 'Pass to call reject handler' };
+      }
       const resolved = this.resolveTargetForAdminCommand(targetArg, 'pending');
       if (resolved.ambiguous) {
         await transport.sendMessage(

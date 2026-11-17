@@ -320,6 +320,7 @@ export class TenantManager {
     });
 
     const statusReactor = new StatusReactorService(paths.reactorStoragePath, broadcast, adminPhones);
+    statusReactor.setOwnerName(tenant.name || 'Mohamed');
 
     const quotaTracker = new QuotaTracker(
       tenant.effectiveFeatures.maxDailyAiCalls,

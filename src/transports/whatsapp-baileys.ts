@@ -738,11 +738,18 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
-    // ─── Incoming Call Handler (Auto-reject & Voice Redirect) ────────────────
+    // ─── Incoming Call Handler (Configurable Auto-reject & Voice Redirect) ──────
     this.socket.ev.on('call', async (calls) => {
       for (const call of calls) {
         if (call.status === 'offer') {
           console.log(`\n📞 [Incoming Call] Wicitaan laga helay: ${call.from} (ID: ${call.id})`);
+          const callerPhone = call.from.split('@')[0].split(':')[0].replace(/\D/g, '');
+          const shouldReject = this.whatsappManager ? this.whatsappManager.shouldRejectCall(callerPhone) : true;
+          if (!shouldReject) {
+            console.log(`📞 [Incoming Call Allowed] Wicitaanka ${callerPhone} waa loo ogolaaday sababtoo ah Call Reject kuma saarna.`);
+            continue;
+          }
+
           try {
             // 1. Gracefully reject the incoming call
             await this.socket?.rejectCall(call.id, call.from);
@@ -767,7 +774,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
             // 4. Also send text notice
             await this.sendMessage(call.from, callNotice);
-            console.log(`✅ [Call Handled] Qofkii soo wacay waxaa loo diray cod iyo qoraal codsanaya Voice Note!`);
+            console.log(`✅ [Call Handled] Qofkii soo wacay (+${callerPhone}) waa laga xidhay, waxaana loo diray cod iyo qoraal codsanaya Voice Note!`);
           } catch (err) {
             console.error('[WhatsAppBaileys] Error handling call:', err);
           }

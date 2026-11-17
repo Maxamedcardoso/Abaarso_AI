@@ -370,6 +370,21 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Recipient opted out of broadcasts' };
     }
 
+    // 1c-saveme. Auto-save contact on "save me" DM response (e.g. "haye", "save", "ok", "waa yahay", "saved")
+    if (!message.isGroup && !message.isFromMe) {
+      const isPendingSaveMe = this.statusReactor?.isPendingSaveMe(message.chatId);
+      const isAffirmative = /^(?:haye|ok|haa|ha|waa\s*yahay|waayahay|done|saved?|save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)(?:\s+(?:sxb|wll|walaal|walaalo|bro))?[.!👍📲✅\s]*$/i.test(lowerText);
+      const isExplicitSavePhrase = /^(?:save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)[.!👍📲✅\s]*$/i.test(lowerText);
+
+      if ((isPendingSaveMe && isAffirmative) || isExplicitSavePhrase) {
+        this.statusReactor?.resolvePendingSaveMe(message.chatId);
+        const contactName = message.senderName && message.senderName.trim().length > 0 ? message.senderName.trim() : 'Walaal';
+        this.broadcast.recordContact(message.chatId, contactName, false, Boolean(message.senderName));
+        await transport.sendMessage(message.chatId, 'Waan ku save gareeyay walaalo! ✅📲');
+        return { handled: true, reason: 'Auto-saved contact from save-me status flow' };
+      }
+    }
+
     // 1d. SaaS WhatsApp Onboarding (!join form, !approve, !reject, !pending, !pair, !pdf)
     if (this.onboardingHandler) {
       const onboardingRes = await this.onboardingHandler(message, transport, isAdminUser);
@@ -423,6 +438,10 @@ SHURUUCDA DUGSIIYA:
         `• \`!setpp\` (sawir la socdo) — Beddel sawirka profile-ka bot-ka\n` +
         `• \`!block <lambar>\` — Block garee qof\n` +
         `• \`!unblock <lambar>\` — Unblock ka qaad qof\n` +
+        `• \`!reject all\` — Xidh dhammaan wicitaannada (Auto-Reject ON + Voice Note)\n` +
+        `• \`!reject <lambar>\` — Wicitaannada ka xidh lambar gaar ah\n` +
+        `• \`!unreject all\` — Fur dhammaan wicitaannada (Auto-Reject OFF)\n` +
+        `• \`!unreject <lambar>\` — Wicitaanka u fur lambar gaar ah\n` +
         `• \`!delete\` (quote fariin) — Delete for everyone fariintaas\n` +
         `• \`!react <emoji>\` (quote fariin) — Emoji ku dhufo fariintaas\n` +
         `• \`!pin\` (quote fariin) — Pin garee fariintaas\n\n` +
@@ -946,6 +965,33 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'unblock executed' };
     }
 
+    // ─── Call Reject Management (!reject all, !reject <number>, !unreject all, !unreject <number>) ───
+    if (/^[!./#]?(?:reject|xidh[-_\s]*calls?)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:reject|xidh[-_\s]*calls?)\s+(.+)$/i);
+      const target = match![1].trim();
+      let res: { success: boolean; message: string };
+      if (/^(?:all|dhammaan|dhamaan|kulligood)$/i.test(target)) {
+        res = this.whatsappManager.setRejectAllCalls(true);
+      } else {
+        res = this.whatsappManager.rejectCallNumber(target);
+      }
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'reject executed' };
+    }
+
+    if (/^[!./#]?(?:unreject|inreject|fur[-_\s]*calls?)\s+(.+)$/i.test(text) && isAdminUser) {
+      const match = text.match(/^[!./#]?(?:unreject|inreject|fur[-_\s]*calls?)\s+(.+)$/i);
+      const target = match![1].trim();
+      let res: { success: boolean; message: string };
+      if (/^(?:all|dhammaan|dhamaan|kulligood)$/i.test(target)) {
+        res = this.whatsappManager.unrejectAllCalls();
+      } else {
+        res = this.whatsappManager.unrejectCallNumber(target);
+      }
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: 'unreject executed' };
+    }
+
     // ─── Status Deletion (Delete for everyone) ───
     const statusDeletePattern = /^[!./#]?(?:deletet?statuse?|delete[-_\s]+statuse?|tirtir[-_\s]*statuse?|statuse?[-_\s]*delete)(?:\s+(.+))?$/i;
     if (statusDeletePattern.test(lowerText) && isAdminUser) {
@@ -991,7 +1037,7 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletet?status|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletet?status|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|reject|unreject|inreject|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);

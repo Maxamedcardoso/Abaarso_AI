@@ -1,6 +1,8 @@
 import { TestSuite, assertEqual, assertTrue, assertFalse } from './runner.js';
-import { whatsappManagerService } from '../src/services/whatsapp-manager.service.js';
+import { whatsappManagerService, WhatsAppManagerService } from '../src/services/whatsapp-manager.service.js';
 import { broadcastService } from '../src/services/broadcast.service.js';
+import { detectInstantGreetingReply } from '../src/advisor/somali-dictionary.js';
+import { StatusReactorService } from '../src/services/status-reactor.service.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
@@ -664,6 +666,74 @@ suite.test('WhatsAppBaileysTransport caches status@broadcast and restores owner-
   assertEqual(relayedCalls.length, 3);
   assertEqual(relayedCalls[2].options.participant, undefined, 'Direct @lid participant retry must be stripped before Baileys turns it into @s.whatsapp.net');
   assertEqual(JSON.stringify(relayedCalls[2].options.statusJidList), JSON.stringify(['252633171649@s.whatsapp.net']), 'Direct @lid owner retry must target owner PN statusJidList');
+});
+
+suite.test('Call Reject Management (!reject all, !reject <number>, !unreject all, !unreject <number>)', () => {
+  const testConfigPath = path.resolve(process.cwd(), 'data', 'test-call-reject-config.json');
+  try { if (fs.existsSync(testConfigPath)) fs.unlinkSync(testConfigPath); } catch {}
+  
+  const mgr = new WhatsAppManagerService({
+    statusStoragePath: testConfigPath,
+  });
+
+  // 1. By default, rejectAllCalls is true
+  assertTrue(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'Default should reject calls');
+  assertTrue(mgr.shouldRejectCall('+252634333444'), 'Default should reject caller');
+
+  // 2. Unreject specific number
+  const unrejectOne = mgr.unrejectCallNumber('252634111222');
+  assertTrue(unrejectOne.success, 'Unreject single number should succeed');
+  assertFalse(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'Unrejected number must be allowed through');
+  assertTrue(mgr.shouldRejectCall('252634333444'), 'Other callers must still be rejected');
+
+  // 3. Unreject all
+  const unrejectAll = mgr.unrejectAllCalls();
+  assertTrue(unrejectAll.success, 'Unreject all should succeed');
+  assertFalse(mgr.shouldRejectCall('252634111222'), 'All callers should be allowed');
+  assertFalse(mgr.shouldRejectCall('252634333444'), 'All callers should be allowed');
+
+  // 4. Reject specific number when rejectAll is off
+  const rejectOne = mgr.rejectCallNumber('252634999888');
+  assertTrue(rejectOne.success, 'Reject single number should succeed');
+  assertTrue(mgr.shouldRejectCall('252634999888'), 'Rejected number must be blocked');
+  assertFalse(mgr.shouldRejectCall('252634333444'), 'Non-rejected number must still be allowed');
+
+  // 5. Reject all
+  const rejectAll = mgr.setRejectAllCalls(true);
+  assertTrue(rejectAll.success, 'Reject all should succeed');
+  assertTrue(mgr.shouldRejectCall('252634333444'), 'All callers must now be blocked');
+  assertTrue(mgr.shouldRejectCall('252634111222'), 'All callers must now be blocked');
+
+  // Clean up
+  try { if (fs.existsSync(testConfigPath)) fs.unlinkSync(testConfigPath); } catch {}
+});
+
+suite.test('Instant Goodbye & Farewell Detection (stops dragging conversations)', () => {
+  const g1 = detectInstantGreetingReply('bye');
+  assertTrue(Boolean(g1 && /nabad\s*gelyo|macasalaama/i.test(g1)), 'bye should return farewell');
+  assertFalse(Boolean(g1 && /maxaa\s*cusub|sidee\s*tahay/i.test(g1)), 'farewell must NOT ask questions');
+
+  const g2 = detectInstantGreetingReply('macasalaamo');
+  assertTrue(Boolean(g2 && /nabad\s*gelyo|macasalaama/i.test(g2)), 'macasalaamo should return farewell');
+
+  const g3 = detectInstantGreetingReply('haye bye', { userName: 'Farxaan' });
+  assertTrue(Boolean(g3 && g3.includes('Farxaan') && /nabad\s*gelyo/i.test(g3)), 'personalized farewell with name');
+
+  const g4 = detectInstantGreetingReply('nabad gelyo');
+  assertTrue(Boolean(g4 && /nabad\s*gelyo|macasalaama/i.test(g4)), 'nabad gelyo should return farewell');
+});
+
+suite.test('Status Reactor save-me tracking and owner name customization', () => {
+  const sr = new StatusReactorService();
+  sr.setOwnerName('Mohamed Dahir');
+  assertEqual(sr.getOwnerName(), 'Mohamed Dahir', 'Owner name should be updated');
+
+  assertFalse(sr.isPendingSaveMe('252634555666'), 'Should not be pending initially');
+  sr.markSaveMeSent('252634555666');
+  assertTrue(sr.isPendingSaveMe('252634555666@s.whatsapp.net'), 'Should be pending after markSaveMeSent');
+
+  sr.resolvePendingSaveMe('252634555666');
+  assertFalse(sr.isPendingSaveMe('252634555666'), 'Should no longer be pending after resolution');
 });
 
 suite.run().then(summary => {
