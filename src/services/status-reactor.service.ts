@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
-import { BroadcastService, broadcastService } from './broadcast.service.js';
+import { BroadcastService, broadcastService, normalizePhoneNumber } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { config } from '../config/env.js';
 import { UserProfiler } from './user-profiler.service.js';
@@ -266,8 +266,27 @@ export class StatusReactorService {
       };
     }
 
-    // 0b. URL / link detection — if text contains a URL, skip comment (react only)
-    if (/https?:\/\/|tiktok\.com|youtube\.com|youtu\.be|instagram\.com|twitter\.com|t\.me/i.test(clean)) {
+    // 0b. Phone number & WhatsApp link detection (HIGHEST PRIORITY before generic URLs)
+    // Supports: wa.me/25263..., https://wa.me/..., api.whatsapp.com/send?phone=..., or raw phone numbers (063..., +25263...)
+    const waPhoneMatch = clean.match(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{8,15})/i);
+    const digitsOnly = clean.replace(/[^0-9]/g, '');
+    const isDirectPhone = digitsOnly.length >= 8 && digitsOnly.length <= 15 && clean.length <= 30;
+
+    if (waPhoneMatch || isDirectPhone) {
+      return {
+        category: 'phone_number_status',
+        suggestedEmojis: ['💚'],
+        suggestedComments: [],
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 0.98,
+      };
+    }
+
+    // 0c. URL / external link detection (TikTok, YouTube, IG, external websites) — skip comment (react only)
+    if (/https?:\/\/|tiktok\.com|youtube\.com|youtu\.be|instagram\.com|twitter\.com|facebook\.com|t\.me/i.test(clean)) {
       return {
         category: 'link_status',
         suggestedEmojis: ['💚'],
@@ -277,21 +296,6 @@ export class StatusReactorService {
         mediaKind,
         gender,
         confidence: 1.0,
-      };
-    }
-
-    // 0c. Phone number status detection — strip to digits, check if 9-15 chars with minimal other content
-    const digitsOnly = clean.replace(/[^0-9]/g, '');
-    if (digitsOnly.length >= 9 && digitsOnly.length <= 15 && clean.length <= 20) {
-      return {
-        category: 'phone_number_status',
-        suggestedEmojis: ['💚'],
-        suggestedComments: [],
-        extractedText: clean,
-        hasMedia,
-        mediaKind,
-        gender,
-        confidence: 0.95,
       };
     }
 
@@ -923,20 +927,27 @@ SHURUUCO ADAG (MAMNUUC):
   ): Promise<void> {
     if (!socket) return;
 
-    // --- Handle phone_number_status: skip both react and comment, send DM instead ---
+    // --- Handle phone_number_status: skip both react and comment, send DM directly to the phone owner ---
     if (analysis.category === 'phone_number_status') {
       try {
-        const digits = rawText.replace(/[^0-9]/g, '');
-        if (digits.length >= 9 && digits.length <= 15) {
-          const phoneJid = `${digits}@s.whatsapp.net`;
+        let targetPhone = '';
+        const waMatch = rawText.match(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{8,15})/i);
+        if (waMatch && waMatch[1]) {
+          targetPhone = normalizePhoneNumber(waMatch[1]);
+        } else {
+          targetPhone = normalizePhoneNumber(rawText);
+        }
+
+        if (targetPhone.length >= 8 && targetPhone.length <= 15) {
+          const phoneJid = `${targetPhone}@s.whatsapp.net`;
           await socket.sendMessage(phoneJid, { text: 'Walaal i keydi 📲' });
-          console.log(`📲 [StatusReactor] Sent DM "Walaal i keydi 📲" to phone number ${digits} from status of ${senderName || senderJid}`);
+          console.log(`📲 [StatusReactor] Sent DM "Walaal i keydi 📲" directly to contact ${targetPhone} (extracted from status of ${senderName || senderJid})`);
           this.recordInteraction({
             id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             senderJid,
             senderName,
             type: 'comment',
-            content: 'Walaal i keydi 📲 (DM to phone number in status)',
+            content: `Walaal i keydi 📲 (DM sent directly to ${targetPhone})`,
             category: analysis.category,
             statusText: rawText,
             timestamp: Date.now(),
