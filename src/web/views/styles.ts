@@ -293,5 +293,144 @@ export const COMMON_CLIENT_JS = `
     if (st === 'suspended') return '<span class="pill pill-red">⛔ SUSPENDED</span>';
     return '<span class="pill pill-muted">' + escapeHtml(st) + '</span>';
   }
+
+  function _splitDelimitedRow(line, sep) {
+    const cells = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === sep && !inQuotes) {
+        cells.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  function parseImportedCatalogText(rawText, fileName) {
+    const clean = String(rawText || '').replace(/^\\uFEFF/, '').split(String.fromCharCode(13)).join('').trim();
+    if (!clean) return { formatted: '', count: 0 };
+    const ext = String(fileName || '').toLowerCase();
+    const NL = String.fromCharCode(10);
+
+    // 1. JSON array or object
+    if (ext.endsWith('.json') || clean.startsWith('[') || clean.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(clean);
+        if (Array.isArray(parsed)) {
+          const lines = parsed.map(function(row) {
+            if (typeof row === 'string') return '- ' + row.trim();
+            if (!row || typeof row !== 'object') return '';
+            const name = row.name || row.title || row.product || row.item || row.alaab || row.course || row.koorso || row.magac || '';
+            const price = row.price || row.qiimo || row.qiimaha || row.cost || row.fee || row.lacagta || '';
+            const desc = row.description || row.desc || row.faahfaahin || row.details || row.duration || row.muddo || row.category || '';
+            let out = '- ' + (String(name || Object.values(row)[0] || '').trim());
+            if (price !== '' && price != null) out += ' — ' + String(price).trim();
+            if (desc) out += ' (' + String(desc).trim() + ')';
+            return out;
+          }).filter(Boolean);
+          return { formatted: lines.join(NL), count: lines.length };
+        }
+        if (parsed && typeof parsed === 'object') {
+          const lines = Object.entries(parsed).map(function(pair) {
+            return '- ' + pair[0] + ': ' + (typeof pair[1] === 'object' ? JSON.stringify(pair[1]) : String(pair[1]));
+          });
+          return { formatted: lines.join(NL), count: lines.length };
+        }
+      } catch {}
+    }
+
+    // 2. CSV / TSV
+    const rawLines = clean.split(NL).map(function(l) { return l.trim(); }).filter(Boolean);
+    const first = rawLines[0] || '';
+    const TAB = String.fromCharCode(9);
+    const looksTabular = ext.endsWith('.csv') || ext.endsWith('.tsv') || first.includes(TAB) || (rawLines.length >= 2 && (first.includes(',') || first.includes(';')) && !first.startsWith('-'));
+    if (looksTabular && rawLines.length > 0) {
+      const sep = first.includes(TAB) ? TAB : ((first.split(';').length > first.split(',').length) ? ';' : ',');
+      const rows = rawLines.map(function(l) { return _splitDelimitedRow(l, sep); }).filter(function(r) { return r.some(Boolean); });
+      let startIdx = 0;
+      const head = (rows[0] || []).join(' ').toLowerCase();
+      if (/name|product|item|alaab|course|koorso|title|magac|price|qiim/.test(head)) {
+        startIdx = 1;
+      }
+      const outLines = [];
+      for (let r = startIdx; r < rows.length; r++) {
+        const cols = rows[r].filter(Boolean);
+        if (cols.length === 0) continue;
+        if (cols.length === 1) outLines.push('- ' + cols[0]);
+        else if (cols.length === 2) outLines.push('- ' + cols[0] + ' — ' + cols[1]);
+        else outLines.push('- ' + cols[0] + ' — ' + cols[1] + ' (' + cols.slice(2).join(', ') + ')');
+      }
+      if (outLines.length > 0) {
+        return { formatted: outLines.join(NL), count: outLines.length };
+      }
+    }
+
+    // 3. TXT / MD / plain WhatsApp list
+    return { formatted: rawLines.join(NL), count: rawLines.length };
+  }
+
+  function importCatalogFile(inputEl, targetId, appendIfNonEmpty) {
+    const file = inputEl && inputEl.files && inputEl.files[0];
+    if (!file) return;
+    const lowerName = String(file.name || '').toLowerCase();
+    if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+      showToast('❌ Fadlan Excel-ka marka hore ka dhig CSV (Save As -> CSV) kadibna soo geli, ama isticmaal TXT / JSON', true);
+      inputEl.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function() {
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      const parsed = parseImportedCatalogText(reader.result, file.name);
+      if (!parsed.formatted) {
+        showToast('❌ Faylku wuu madhan yahay ama lama akhriyi karin', true);
+        return;
+      }
+      const NL = String.fromCharCode(10);
+      const existing = target.value.trim();
+      if (appendIfNonEmpty && existing) {
+        target.value = existing + NL + NL + '--- Xog La Soo Galiyay (' + file.name + ') ---' + NL + parsed.formatted;
+      } else {
+        target.value = existing ? (existing + NL + parsed.formatted) : parsed.formatted;
+      }
+      target.dataset.edited = '1';
+      showToast('✅ ' + parsed.count + ' sadarro xog ah ayaa laga soo geliyay "' + file.name + '"!');
+      inputEl.value = '';
+    };
+    reader.onerror = function() {
+      showToast('❌ Faylka lama akhriyi karin', true);
+      inputEl.value = '';
+    };
+    reader.readAsText(file);
+  }
+
+  function downloadCatalogCsvTemplate(mode) {
+    const NL = String.fromCharCode(10);
+    const csv = mode === 'education'
+      ? ('Koorsada,Qiimaha,Muddada & Waqtiga' + NL + 'Graphic Design,$30/bil,3 bilood (Subax & Galab)' + NL + 'English Fluency,$20/bil,4 bilood (Online & Toos)' + NL + 'Web Development,$40/bil,4 bilood (Mashruucyo)')
+      : ('Alaabta,Qiimaha,Faahfaahinta' + NL + 'Shaadh Casri ah,$15,Midab Madow & Caddaan (M/L/XL)' + NL + 'Kabo Sport Original,$28,Size 40-44' + NL + 'Saacad Smart Watch,$35,Waterproof + Bluetooth');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = mode === 'education' ? 'cardoso-courses-template.csv' : 'cardoso-products-template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  }
 `;
 

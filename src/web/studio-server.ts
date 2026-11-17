@@ -321,6 +321,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       if (category) {
         tenantManager.updateTenantAndRefresh(tenant.id, { category: sanitizeCategory(category) });
       }
+      tenantManager.markTenantDirty(tenant.id, ['db'], true);
       res.json({ status: 'ok', message: 'Maskaxda bot-ka & hab-dhaqanka si guul leh ayaa loo keydiyay!' });
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -335,12 +336,16 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     try {
       if (pin !== undefined && String(pin).trim().length > 0) {
         tenantManager.registry.setTenantPin(tenant.id, String(pin));
+        tenantManager.markRegistryDirty(true);
       }
       const updated = tenantManager.updateTenantAndRefresh(tenant.id, {
         ...(awayMode !== undefined ? { awayMode: Boolean(awayMode) } : {}),
         ...(customGeminiKey !== undefined ? { customGeminiKey: String(customGeminiKey) } : {}),
         ...(Array.isArray(extraAdmins) ? { extraAdmins: extraAdmins.map((s: any) => String(s || '')) } : {}),
       });
+      if (updated) {
+        tenantManager.markRegistryDirty(true);
+      }
       res.json({
         status: 'ok',
         tenant: updated ? sanitizeTenantForResponse(updated) : null,
@@ -417,6 +422,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return;
     }
     const ok = await pair.ctx.memory.updateLeadStatus(leadId, nextStatus);
+    if (ok) {
+      tenantManager?.markTenantDirty(pair.tenant.id, ['db'], false);
+    }
     res.json({ status: ok ? 'ok' : 'error' });
   });
 
@@ -437,6 +445,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return;
     }
     await pair.ctx.memory.saveAutoReply(String(keyword), String(replyText));
+    tenantManager?.markTenantDirty(pair.tenant.id, ['db'], false);
     res.json({ status: 'ok', message: 'Auto-reply waa la keydiyay' });
   });
 
@@ -444,7 +453,10 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const pair = await requireActiveClientCtx(req, res);
     if (!pair) return;
     const kw = Array.isArray(req.params.keyword) ? req.params.keyword[0] : req.params.keyword;
-    if (kw) await pair.ctx.memory.deleteAutoReply(kw);
+    if (kw) {
+      await pair.ctx.memory.deleteAutoReply(kw);
+      tenantManager?.markTenantDirty(pair.tenant.id, ['db'], false);
+    }
     res.json({ status: 'ok' });
   });
 
@@ -478,6 +490,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       autoComment: isEn,
       mode: 'both',
     });
+    tenantManager?.markTenantDirty(pair.tenant.id, ['meta'], false);
     res.json({
       status: 'ok',
       config: updated,
@@ -499,6 +512,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return;
     }
     const result = await pair.ctx.whatsappManager.postTextStatus(text, { backgroundColor: req.body?.color });
+    if (result?.success) {
+      tenantManager?.markTenantDirty(pair.tenant.id, ['meta'], false);
+    }
     res.json(result);
   });
 
@@ -679,6 +695,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const updated = tenantManager.registry.rejectTenant(id);
+    if (updated) tenantManager.markRegistryDirty(true);
     res.json({ status: updated ? 'ok' : 'error', tenant: updated ? sanitizeTenantForResponse(updated) : null });
   });
 
@@ -751,6 +768,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         phoneNumber: req.body?.phoneNumber ? String(req.body.phoneNumber) : '',
         role: req.body?.role === 'super_admin' ? 'super_admin' : 'staff_admin',
       });
+      tenantManager.markRegistryDirty(true);
       res.status(201).json({ status: 'ok', admin });
     } catch (err: any) {
       res.status(400).json({ status: 'error', message: err?.message || 'Admin lama abuuri karin' });
@@ -764,6 +782,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const ok = tenantManager.registry.toggleAdminUser(id, Boolean(req.body?.active));
+    if (ok) tenantManager.markRegistryDirty(true);
     res.json({ status: ok ? 'ok' : 'error' });
   });
 
@@ -774,6 +793,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const ok = tenantManager.registry.deleteAdminUser(id);
+    if (ok) tenantManager.markRegistryDirty(true);
     res.json({ status: ok ? 'ok' : 'error' });
   });
 
@@ -798,6 +818,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         durationDays: Number(req.body?.durationDays || 30),
         maxUses: Number(req.body?.maxUses || 10),
       });
+      tenantManager.markRegistryDirty(true);
       res.status(201).json({ status: 'ok', promo });
     } catch (err: any) {
       res.status(400).json({ status: 'error', message: err?.message || 'Promo code lama abuuri karin' });
@@ -811,7 +832,52 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     const code = Array.isArray(req.params.code) ? req.params.code[0] : req.params.code;
     const ok = tenantManager.registry.togglePromoCode(code, Boolean(req.body?.active));
+    if (ok) tenantManager.markRegistryDirty(true);
     res.json({ status: ok ? 'ok' : 'error' });
+  });
+
+  // Cloud State Backup Status & Manual Sync (Neon $0 Postgres Persistence)
+  app.get('/api/admin/cloud-sync', (req: Request, res: Response) => {
+    const cloudSync = tenantManager?.getCloudSync();
+    if (!cloudSync) {
+      res.json({
+        status: 'ok',
+        enabled: false,
+        initialized: false,
+        lastSyncedAt: null,
+        lastError: null,
+        pendingDirtyCount: 0,
+      });
+      return;
+    }
+    res.json({
+      status: 'ok',
+      enabled: true,
+      ...cloudSync.getStatus(),
+    });
+  });
+
+  app.post('/api/admin/cloud-sync', async (req: Request, res: Response) => {
+    const cloudSync = tenantManager?.getCloudSync();
+    if (!tenantManager || !cloudSync) {
+      res.status(400).json({
+        status: 'error',
+        message: 'CLOUD_DB_URL lama gelin Render Environment Variables. Ku dar Neon PostgreSQL URL ($0) si backup joogto ah u shaqeeyo.',
+      });
+      return;
+    }
+    try {
+      const tenantIds = tenantManager.registry.listTenants(true).map((t) => t.id);
+      const result = await cloudSync.syncAllActiveNow(tenantIds);
+      res.json({
+        status: 'ok',
+        synced: result.synced,
+        ...cloudSync.getStatus(),
+        message: `Backup-ka Cloud DB waa guuleystay (${result.synced} files synced).`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err?.message || 'Cloud sync failed' });
+    }
   });
 
   // ─── 5. Owner Bot Endpoints (Backwards Compatible) ─────────────────────────
@@ -858,6 +924,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return;
     }
     const result = await transport.syncContactsFromWhatsApp(true);
+    if (result.synced) {
+      tenantManager?.markTenantDirty('owner', ['db'], false);
+    }
     res.json({ status: 'ok', ...result });
   });
 
@@ -887,6 +956,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         systemRole: (systemRole || '').trim(),
         knowledgeBase: (knowledgeBase || '').trim(),
       });
+      tenantManager?.markTenantDirty('owner', ['db'], true);
       res.json({
         status: 'ok',
         message: '✅ Tababarka bot-ka iyo xogta meheradda si guul leh ayaa loo kaydiyay!',
@@ -945,6 +1015,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const { transport } = getOwnerRefs();
     if (transport instanceof WhatsAppBaileysTransport) {
       await (transport as WhatsAppBaileysTransport).unlinkSession();
+      await tenantManager?.getCloudSync()?.deleteAuthSnapshot('owner').catch(() => {});
       res.json({ status: 'ok', message: 'WhatsApp session waa la xidhay. QR cusub ayaa soo baxaya.' });
     } else {
       res.status(400).json({ status: 'error', message: 'Baileys transport is not active.' });
@@ -963,6 +1034,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         backgroundColor: color,
         font: font ? parseInt(font, 10) : undefined,
       });
+      if (result?.success) {
+        tenantManager?.markTenantDirty('owner', ['meta'], false);
+      }
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -974,6 +1048,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       const { whatsappManager } = getOwnerRefs();
       const { topic } = req.body;
       const result = await whatsappManager.generateAndPostAIStatus(topic);
+      if (result?.success) {
+        tenantManager?.markTenantDirty('owner', ['meta'], false);
+      }
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
@@ -992,6 +1069,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const { whatsappManager } = getOwnerRefs();
     const { enabled } = req.body;
     whatsappManager.setAutoViewStatus(Boolean(enabled));
+    tenantManager?.markTenantDirty('owner', ['meta'], false);
     res.json({
       status: 'ok',
       enabled: whatsappManager.isAutoViewStatusEnabled(),
@@ -1018,6 +1096,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       ...(mode ? { mode } : {}),
       ...(cooldownHours !== undefined ? { cooldownHours: Number(cooldownHours) } : {}),
     });
+    tenantManager?.markTenantDirty('owner', ['meta'], false);
     res.json({
       status: 'ok',
       config: updated,
@@ -1036,6 +1115,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       autoComment: isEn,
       mode: 'both',
     });
+    tenantManager?.markTenantDirty('owner', ['meta'], false);
     res.json({
       status: 'ok',
       autoView: whatsappManager.isAutoViewStatusEnabled(),
@@ -1079,6 +1159,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
       if (memory.saveAutoReply) {
         await memory.saveAutoReply(keyword, replyText);
+        tenantManager?.markTenantDirty('owner', ['db'], false);
       }
       res.json({ status: 'ok', message: 'Auto-reply si guul leh ayaa loo keydiyay' });
     } catch (err: any) {
@@ -1092,6 +1173,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       const keyword = (Array.isArray(req.params.keyword) ? req.params.keyword[0] : req.params.keyword) || '';
       if (memory.deleteAutoReply && keyword) {
         await memory.deleteAutoReply(keyword);
+        tenantManager?.markTenantDirty('owner', ['db'], false);
       }
       res.json({ status: 'ok', message: `Auto-reply '${keyword}' waa la tirtiray` });
     } catch (err: any) {

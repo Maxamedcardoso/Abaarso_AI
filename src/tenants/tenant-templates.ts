@@ -37,10 +37,10 @@ export function getCategoryStarterTemplate(
         `hubina dalabaadka & rasiidhada lacag bixinta (Zaad/eDahab/Sahal).`,
       knowledgeBase:
         `• Magaca Meheradda: ${brand}\n` +
-        `• Goobta / Cinwaanka: [Ku qor xaafadda ama suuqa]\n` +
+        `• Goobta / Magaalada & Xaafadda: [Ku qor magaalada, xaafadda ama suuqa]\n` +
         `• Saacadaha Shaqada: Sabti–Khamiis (8:00 AM – 9:00 PM)\n` +
-        `• Lacag Bixinta (Zaad / eDahab): [Ku qor lambarka merchant-ka ama taleefanka]\n` +
-        `• Delivery: Waa diyaar magaalada gudaheeda (30–60 daqiiqo)\n\n` +
+        `• Lacag Bixinta (Zaad / eDahab / Sahal): [Ku qor lambarka merchant-ka ama taleefanka]\n` +
+        `• Adeegga Delivery-ga: Labadaba — Magaalada gudaheeda (xaafadaha oo dhan: 30–60 daqiiqo) iyo Magaalooyinka kale ee dalka!\n\n` +
         `Alaabta & Qiimaha:\n` +
         `- [Magaca Alaabta 1] — $[Qiimaha]\n` +
         `- [Magaca Alaabta 2] — $[Qiimaha]\n`,

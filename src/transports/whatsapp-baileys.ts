@@ -33,6 +33,7 @@ export interface BaileysTransportOptions {
   whatsappManager?: WhatsAppManagerService;
   statusReactor?: StatusReactorService;
   onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
+  onCredsSaved?: () => void;
 }
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
@@ -53,6 +54,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private whatsappManager: WhatsAppManagerService;
   private statusReactor: StatusReactorService;
   private onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
+  private onCredsSaved?: () => void;
   private manualStopped: boolean = false;
   private suppressCloseReconnect: boolean = false;
   private contactsResyncAttempted: boolean = false;
@@ -93,6 +95,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       this.whatsappManager = opts.whatsappManager || whatsappManagerService;
       this.statusReactor = opts.statusReactor || statusReactorService;
       this.onConnectionChange = opts.onConnectionChange;
+      this.onCredsSaved = opts.onCredsSaved;
     }
   }
 
@@ -577,6 +580,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     this.socket.ev.on('creds.update', async () => {
       await saveCreds();
       this.writeAtomicCredsBackup();
+      this.onCredsSaved?.();
     });
 
     this.socket.ev.on('connection.update', (update) => {

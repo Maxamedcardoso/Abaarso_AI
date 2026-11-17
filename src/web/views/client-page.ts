@@ -180,11 +180,15 @@ export function renderClientPortalHTML(tenantId: string, token: string, category
             </div>
 
             <div class="form-group">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.35rem;">
                 <label class="field-label" style="margin:0;">Xogta Ganacsiga / Shakhsi / Koorsooyinka (Knowledge Base)</label>
-                <button type="button" class="btn btn-ghost btn-sm" onclick="loadStarterTemplate()">💡 Soo Geli Tusaale Diyaarsan</button>
+                <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                  <input type="file" id="clientKbFile" accept=".csv,.tsv,.txt,.json,.md,text/csv,text/plain,application/json" style="display:none;" onchange="importCatalogFile(this, 'cfgKnowledgeBase', true)" />
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('clientKbFile').click()">📥 Import Xog (CSV/TXT/JSON)</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="loadStarterTemplate()">💡 Soo Geli Tusaale Diyaarsan</button>
+                </div>
               </div>
-              <textarea class="field" id="cfgKnowledgeBase" style="min-height:190px;" placeholder="Geli qiimaha alaabta, Zaad/eDahab, goobta, ama xogta lagugu heli karo..."></textarea>
+              <textarea class="field" id="cfgKnowledgeBase" style="min-height:190px;" placeholder="Geli qiimaha alaabta, Zaad/eDahab, delivery-ga, magaalada/xaafadda, ama ka soo geli fayl..."></textarea>
             </div>
 
             <button class="btn btn-primary" onclick="saveClientBrain()" style="width:100%;">💾 Keydi Maskaxda &amp; Role-ka</button>

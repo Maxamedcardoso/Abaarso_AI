@@ -1,5 +1,6 @@
 import { DetectedLanguage } from './language-detector.js';
 import { findTechnicalTermsInText } from './somali-dictionary.js';
+import { buildSomaliGeographyPromptHint } from './somali-geography.js';
 import { EmotionResult, EmotionDetector } from './emotion-detector.js';
 
 export interface PromptContext {
@@ -94,9 +95,10 @@ export class PromptBuilder {
 ## ACTIVE ROLE MODE: BUSINESS SALES & CUSTOMER CARE (GANACSATO)
 - You are actively working as the Customer Service & Sales Specialist for *${context.customConfig?.businessName || activeOwner}*.
 - Speak courteously, persuasively, and clearly like a trusted shop/business representative.
-- Answer prices, stock, hours, delivery, and payment methods (Zaad/eDahab) ONLY from the Verified Business Knowledge Base below. Never invent prices!
+- Answer prices, stock, hours, delivery (intra-city xaafadaha & inter-city magaalooyinka kale), and payment methods (Zaad/eDahab) ONLY from the Verified Business Knowledge Base below. Never invent prices!
+- **SOMALI CITIES & DISTRICTS AWARENESS (Magaalooyinka & Xaafadaha):** You accurately know all Somali cities and their districts/neighborhoods (xaafado & degmooyin). When a customer mentions a neighborhood or district (e.g., 26 June, Jigjiga Yar, Axmed Dhagax, New Hargeisa, Lixle, Hodan, KM4, Bakaaraha, Suuq Bacaad, New Bosaso, Garsoor, etc.), recognize its city seamlessly and confirm their exact Magaalo + Xaafad + Phone for delivery.
 - When customers send payment receipts/screenshots or place an order or ask to buy/reserve, confirm clearly and append a hidden summary line at the very end:
-  <!-- lead: order | [Customer name or phone] ordered/inquired: [item/payment/summary] -->
+  <!-- lead: order | [Customer name or phone] ordered/inquired: [item/payment/location/summary] -->
 `;
     } else if (roleCategory === 'education') {
       roleBehaviorBlock = `
@@ -622,17 +624,33 @@ ${customConfig.knowledgeBase || 'No extra catalog specified yet.'}
   }
 
   /**
-   * Prepares the user prompt, appending dictionary hints for technical terms if present.
+   * Prepares the user prompt, appending glossary hints and Somali city/district context when relevant.
    */
-  public static enrichUserPrompt(rawPrompt: string, detectedLanguage: DetectedLanguage): string {
+  public static enrichUserPrompt(
+    rawPrompt: string,
+    detectedLanguage: DetectedLanguage,
+    businessKnowledge: string = ''
+  ): string {
+    const contextNotes: string[] = [];
+
     if (detectedLanguage === 'so' || detectedLanguage === 'mixed') {
       const terms = findTechnicalTermsInText(rawPrompt);
       if (terms.length > 0) {
-        const glossaryHints = terms
-          .map(t => `[Glossary Note for ${t.term}: In Somali, explain as "${t.somaliName}" - ${t.simpleExplanation}]`)
-          .join('\n');
-        return `${rawPrompt}\n\n<!-- Context for AI:\n${glossaryHints}\n-->`;
+        contextNotes.push(
+          ...terms.map(
+            t => `[Glossary Note for ${t.term}: In Somali, explain as "${t.somaliName}" - ${t.simpleExplanation}]`
+          )
+        );
       }
+    }
+
+    const geoHint = buildSomaliGeographyPromptHint(rawPrompt, businessKnowledge);
+    if (geoHint) {
+      contextNotes.push(geoHint);
+    }
+
+    if (contextNotes.length > 0) {
+      return `${rawPrompt}\n\n<!-- Context for AI:\n${contextNotes.join('\n')}\n-->`;
     }
     return rawPrompt;
   }

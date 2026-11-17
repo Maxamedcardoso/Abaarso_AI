@@ -5,6 +5,7 @@ import { ConsoleSimulatorTransport } from './transports/console-simulator.js';
 import { MetaCloudWebhookTransport } from './transports/meta-cloud-webhook.js';
 import { TenantRegistry } from './tenants/tenant-registry.js';
 import { TenantManager } from './tenants/tenant-manager.js';
+import { CloudStateSync, PostgresSnapshotStore } from './tenants/cloud-state-sync.js';
 import { createStudioServer } from './web/studio-server.js';
 
 async function bootstrap() {
@@ -23,8 +24,39 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // 2. Initialize SaaS Tenant Registry & Tenant Manager
-  const registryPath = path.join(path.dirname(config.database.path) || './data', 'tenants_registry.db');
+  // 2. Initialize Cloud State Persistence (if CLOUD_DB_URL / NEON_DATABASE_URL is set)
+  // Restores registry DB, tenant DBs, and WhatsApp sessions BEFORE SQLite/Baileys boot!
+  const baseDataDir = path.dirname(config.database.path) || './data';
+  const registryPath = path.join(baseDataDir, 'tenants_registry.db');
+  const ownerAuthDir =
+    process.env.BAILEYS_AUTH_DIR ||
+    (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'owner_auth') : './baileys_auth_info');
+
+  let cloudSync: CloudStateSync | undefined;
+  const cloudDbUrl = (process.env.CLOUD_DB_URL || process.env.NEON_DATABASE_URL || '').trim();
+  if (cloudDbUrl) {
+    try {
+      const store = new PostgresSnapshotStore(cloudDbUrl);
+      cloudSync = new CloudStateSync({
+        store,
+        baseDataDir,
+        registryDbPath: registryPath,
+        ownerDbPath: config.database.path,
+        ownerAuthDir,
+      });
+      await cloudSync.initialize();
+      const forceRestore = process.env.CLOUD_FORCE_RESTORE === 'true';
+      await cloudSync.restoreAllIfMissing(forceRestore);
+      console.log(`☁️ [CloudStateSync] Persistent Neon/Postgres sync ACTIVE ($0 restart-safe mode).`);
+    } catch (err: any) {
+      console.warn(`⚠️ [CloudStateSync] Cloud DB unavailable on startup (${err?.message || err}); continuing with local disk.`);
+      cloudSync = undefined;
+    }
+  } else {
+    console.log(`ℹ️ [CloudStateSync] Local disk mode (set CLOUD_DB_URL to enable $0 Postgres persistence on Render).`);
+  }
+
+  // 3. Initialize SaaS Tenant Registry & Tenant Manager
   const registry = new TenantRegistry(registryPath);
   registry.initialize();
 
@@ -32,6 +64,7 @@ async function bootstrap() {
   const tenantManager = new TenantManager(registry, config, {
     startSockets: config.messaging.mode === 'baileys',
     publicBaseUrl: process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${webPort}`,
+    cloudSync,
   });
   await tenantManager.initialize();
 

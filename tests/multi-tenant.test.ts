@@ -8,10 +8,12 @@ import { PassThrough } from 'stream';
 import { AppConfig } from '../src/config/env.js';
 import { TenantRegistry } from '../src/tenants/tenant-registry.js';
 import { TenantManager } from '../src/tenants/tenant-manager.js';
+import { CloudSnapshotRow, CloudStateSync, ICloudSnapshotStore } from '../src/tenants/cloud-state-sync.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { ResponseCacheService } from '../src/services/response-cache.service.js';
 import { detectInstantGreetingReply } from '../src/advisor/somali-dictionary.js';
 import { PromptBuilder } from '../src/advisor/prompt-builder.js';
+import { buildSomaliGeographyPromptHint, getSomaliGeographyOverview } from '../src/advisor/somali-geography.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { WhatsAppBaileysTransport } from '../src/transports/whatsapp-baileys.js';
@@ -52,6 +54,30 @@ function createTempAppConfig(tempRoot: string): AppConfig {
       port: 0,
     },
   };
+}
+
+class MemorySnapshotStore implements ICloudSnapshotStore {
+  public readonly rows = new Map<string, CloudSnapshotRow>();
+  public initialized = false;
+  public async initialize(): Promise<void> {
+    this.initialized = true;
+  }
+  public async upsertSnapshot(scopeKey: string, payloadGz: Buffer, updatedAt: number): Promise<void> {
+    this.rows.set(scopeKey, { scopeKey, payloadGz: Buffer.from(payloadGz), updatedAt });
+  }
+  public async listSnapshots(): Promise<CloudSnapshotRow[]> {
+    return Array.from(this.rows.values()).map((r) => ({
+      scopeKey: r.scopeKey,
+      payloadGz: Buffer.from(r.payloadGz),
+      updatedAt: r.updatedAt,
+    }));
+  }
+  public async deleteSnapshotsByPrefix(prefix: string): Promise<void> {
+    for (const key of Array.from(this.rows.keys())) {
+      if (key.startsWith(prefix)) this.rows.delete(key);
+    }
+  }
+  public async close(): Promise<void> {}
 }
 
 class MockTransport implements IMessagingTransport {
@@ -455,9 +481,14 @@ async function runTests() {
       joinHtml.text.includes('id="fields-personal"') &&
       joinHtml.text.includes('id="fields-business"') &&
       joinHtml.text.includes('id="fields-education"') &&
+      joinHtml.text.includes('id="bizDeliveryScope"') &&
+      joinHtml.text.includes('Labadaba: Magaalada gudaheeda') &&
+      joinHtml.text.includes('id="bizCatalogFile"') &&
+      joinHtml.text.includes('id="eduCoursesFile"') &&
+      joinHtml.text.includes('parseImportedCatalogText') &&
       joinHtml.text.includes('ROLE_UI_META') &&
       joinHtml.text.includes('buildRoleNotes'),
-      '/join must render distinct dynamic form blocks for all 3 categories'
+      '/join must render distinct dynamic form blocks, Dual Delivery select & Catalog File Import'
     );
     assert(!joinHtml.text.includes('fonts.googleapis.com'), 'Must not require external fonts');
     assertValidHtmlScripts(joinHtml.text, '/join');
@@ -523,10 +554,15 @@ async function runTests() {
     );
     assertValidHtmlScripts(clientPageRes.text, '/client/:id');
 
-    // Business client portal includes Leads and Plan tabs
+    // Business client portal includes Leads, Plan tabs, and KB Import button
     const bizPortalRes = await invokeServer('GET', `/client/${bizCtx.tenant.id}?token=${encodeURIComponent(bizCtx.tenant.accessToken)}`);
     assert.strictEqual(bizPortalRes.status, 200);
-    assert(bizPortalRes.text.includes('id="tabBtnLeads"') && bizPortalRes.text.includes('id="tabBtnPlan"'), 'Business client portal must display Leads and Plan tabs');
+    assert(
+      bizPortalRes.text.includes('id="tabBtnLeads"') &&
+      bizPortalRes.text.includes('id="tabBtnPlan"') &&
+      bizPortalRes.text.includes('id="clientKbFile"'),
+      'Business client portal must display Leads, Plan tabs and Import Xog button'
+    );
     assertValidHtmlScripts(bizPortalRes.text, '/client/:id(business)');
 
     const clientStatusRes = await invokeServer('GET', `/api/client/${webTenantId}/status?token=${encodeURIComponent(webToken)}`);
@@ -593,6 +629,224 @@ async function runTests() {
     }
 
     console.log('✅ Test 7 passed: Multi-admin Basic Auth, /portal PIN & OTP login, and SaaS HTTP endpoints verified.');
+
+    // ─── TEST 8: CloudStateSync ($0 Forever Render Wipe & Restart Recovery) ─────────
+    const cloudTempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-cloud-sync-'));
+    const memStore = new MemorySnapshotStore();
+    const prevBaileysAuth = process.env.BAILEYS_AUTH_DIR;
+    const ownerAuthDir = path.join(cloudTempRoot, 'owner_auth');
+    process.env.BAILEYS_AUTH_DIR = ownerAuthDir;
+
+    let cloudRegistryA: TenantRegistry | null = null;
+    let cloudManagerA: TenantManager | null = null;
+    let cloudRegistryB: TenantRegistry | null = null;
+    let cloudManagerB: TenantManager | null = null;
+    try {
+      const cfg = createTempAppConfig(cloudTempRoot);
+      const regPath = path.join(cloudTempRoot, 'tenants_registry.db');
+
+      const syncA = new CloudStateSync({
+        store: memStore,
+        baseDataDir: cloudTempRoot,
+        registryDbPath: regPath,
+        ownerDbPath: cfg.database.path,
+        ownerAuthDir,
+        debounceMs: 30,
+      });
+      await syncA.initialize();
+
+      cloudRegistryA = new TenantRegistry(regPath);
+      cloudRegistryA.initialize();
+      cloudManagerA = new TenantManager(cloudRegistryA, cfg, {
+        startSockets: false,
+        maxActiveTenants: 10,
+        expiryCheckIntervalMs: 600_000,
+        cloudSync: syncA,
+      });
+      await cloudManagerA.initialize();
+
+      const khadraCtx = await cloudManagerA.createAndStartSubscriber({
+        name: 'Khadra Boutique',
+        phone: '252634887766',
+        category: 'business',
+        planTier: 'starter',
+        months: 1,
+        pin: '2468',
+      });
+      await khadraCtx.memory.saveBotConfig({
+        botName: 'Khadra Assistant',
+        businessName: 'Khadra Boutique',
+        systemRole: 'Sales bot',
+        knowledgeBase: 'Qiimaha shaadhka waa $15 via Zaad.',
+      });
+      await khadraCtx.memory.recordLead({
+        chatId: '252634998877@s.whatsapp.net',
+        senderPhone: '252634998877',
+        senderName: 'Farxaan',
+        category: 'order',
+        summary: '1x Shaadh Madow ($15)',
+      });
+
+      // Seed valid registered Baileys auth files for both Owner & Khadra
+      fs.mkdirSync(ownerAuthDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(ownerAuthDir, 'creds.json'),
+        JSON.stringify({ registered: true, me: { id: '252634000001:1@s.whatsapp.net' } })
+      );
+      fs.mkdirSync(khadraCtx.authDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(khadraCtx.authDir, 'creds.json'),
+        JSON.stringify({ registered: true, me: { id: '252634887766:2@s.whatsapp.net' } })
+      );
+      fs.writeFileSync(
+        path.join(khadraCtx.authDir, 'app-state-sync-key-1.json'),
+        JSON.stringify({ keyData: 'mock-signal-key' })
+      );
+
+      // Flush cleanly via shutdown (simulates Render container stopping before redeploy)
+      await cloudManagerA.shutdown();
+      cloudManagerA = null;
+      cloudRegistryA.close();
+      cloudRegistryA = null;
+
+      assert(memStore.rows.has('registry'), 'Cloud DB must store registry snapshot');
+      assert(memStore.rows.has(`tenant:${khadraCtx.tenantId}:db`), 'Cloud DB must store subscriber SQLite DB');
+      assert(memStore.rows.has(`tenant:${khadraCtx.tenantId}:auth`), 'Cloud DB must store subscriber registered auth bundle');
+      assert(memStore.rows.has('tenant:owner:auth'), 'Cloud DB must store owner registered auth bundle');
+
+      // Simulate complete Render container filesystem wipe!
+      fs.rmSync(cloudTempRoot, { recursive: true, force: true });
+      fs.mkdirSync(cloudTempRoot, { recursive: true });
+      assert(!fs.existsSync(regPath), 'Local registry.db must be wiped before restore test');
+
+      // New container boot restores state BEFORE opening SQLite / Baileys
+      const syncB = new CloudStateSync({
+        store: memStore,
+        baseDataDir: cloudTempRoot,
+        registryDbPath: regPath,
+        ownerDbPath: cfg.database.path,
+        ownerAuthDir,
+        debounceMs: 30,
+      });
+      await syncB.initialize();
+      const restored = await syncB.restoreAllIfMissing();
+      assert(restored.restoredCount >= 4, `Expected >=4 restored snapshots, got ${restored.restoredCount}`);
+
+      cloudRegistryB = new TenantRegistry(regPath);
+      cloudRegistryB.initialize();
+      cloudManagerB = new TenantManager(cloudRegistryB, cfg, {
+        startSockets: false,
+        maxActiveTenants: 10,
+        expiryCheckIntervalMs: 600_000,
+        cloudSync: syncB,
+      });
+      await cloudManagerB.initialize();
+
+      // Verify subscriber record + PIN + SQLite knowledge + Leads + WhatsApp auth files all survived!
+      const pinCheck = cloudRegistryB.verifyTenantPin('252634887766', '2468');
+      assert(pinCheck && pinCheck.id === khadraCtx.tenantId, 'Restored subscriber must keep exact ID and PIN');
+
+      const restoredCtx = cloudManagerB.getContext(khadraCtx.tenantId);
+      assert(restoredCtx, 'Restored active subscriber must mount automatically');
+      const restoredCfg = await restoredCtx!.memory.getBotConfig();
+      assert(restoredCfg.knowledgeBase.includes('$15 via Zaad'), 'Restored subscriber knowledge base must survive wipe');
+      const restoredLeads = await restoredCtx!.memory.getLeads(10);
+      assert.strictEqual(restoredLeads.length, 1, 'Restored subscriber leads must survive wipe');
+      assert.strictEqual(restoredLeads[0].senderName, 'Farxaan');
+
+      assert(fs.existsSync(path.join(ownerAuthDir, 'creds.json')), 'Owner WhatsApp creds.json must be restored');
+      const khadraCredsRaw = fs.readFileSync(path.join(restoredCtx!.authDir, 'creds.json'), 'utf8');
+      assert.strictEqual(JSON.parse(khadraCredsRaw).registered, true, 'Subscriber registered WhatsApp creds.json must be restored');
+      assert(
+        fs.existsSync(path.join(restoredCtx!.authDir, 'app-state-sync-key-1.json')),
+        'Subscriber Signal key bundle files must be restored'
+      );
+
+      // Verify explicit unlink deletes cloud auth snapshot so unlinked WhatsApp does not ghost-restore
+      await cloudManagerB.unlinkTenantSession(khadraCtx.tenantId);
+      assert(!memStore.rows.has(`tenant:${khadraCtx.tenantId}:auth`), 'Explicit unlink must remove cloud auth snapshot');
+
+      console.log('✅ Test 8 passed: CloudStateSync full container wipe recovery (registry, PINs, leads, KB & WhatsApp auth) verified!');
+    } finally {
+      if (cloudManagerA) await cloudManagerA.shutdown().catch(() => {});
+      if (cloudRegistryA) cloudRegistryA.close();
+      if (cloudManagerB) await cloudManagerB.shutdown().catch(() => {});
+      if (cloudRegistryB) cloudRegistryB.close();
+      if (prevBaileysAuth === undefined) delete process.env.BAILEYS_AUTH_DIR;
+      else process.env.BAILEYS_AUTH_DIR = prevBaileysAuth;
+      try {
+        fs.rmSync(cloudTempRoot, { recursive: true, force: true });
+      } catch {}
+    }
+
+    // ─── TEST 9: Somali Cities & Districts Knowledge + Catalog Importer ──────
+    const overview = getSomaliGeographyOverview();
+    assert(
+      overview.includes('Hargeysa') &&
+      overview.includes('Burco') &&
+      overview.includes('Muqdisho') &&
+      overview.includes('Boosaaso') &&
+      overview.includes('Garoowe') &&
+      overview.includes('Baydhabo') &&
+      overview.includes('Kismaayo') &&
+      overview.includes('Jabuuti') &&
+      overview.includes('Jigjiga'),
+      'Geography overview must cover all major Somali cities across regions'
+    );
+
+    const hargHint = buildSomaliGeographyPromptHint('Asc xaafadda 26 June ma keentaan?', 'Goobta: Hargeysa');
+    assert(
+      hargHint && hargHint.includes('Hargeysa') && hargHint.includes('26 June') && hargHint.includes('Jigjiga Yar'),
+      'Must map 26 June neighborhood cleanly to Hargeysa and list sibling districts'
+    );
+
+    const burcoHint = buildSomaliGeographyPromptHint('Dalab waxaan u rabaa Lixle iyo Faarax Oomaar');
+    assert(burcoHint && burcoHint.includes('Burco') && burcoHint.includes('Lixle'), 'Must map Lixle cleanly to Burco');
+
+    const mogHint = buildSomaliGeographyPromptHint('Waxaan joogaa KM4 iyo Suuq Bacaad');
+    assert(
+      mogHint && mogHint.includes('Muqdisho') && mogHint.includes('Hodan') && mogHint.includes('Yaqshiid'),
+      'Must map KM4 and Suuq Bacaad to Muqdisho districts'
+    );
+
+    const sharedDistrictHint = buildSomaliGeographyPromptHint('Waxaan joogaa Hodan');
+    assert(
+      sharedDistrictHint && sharedDistrictHint.includes('multiple cities') && sharedDistrictHint.includes('Muqdisho') && sharedDistrictHint.includes('Burco'),
+      'Must disambiguate shared district names like Hodan across Somali cities'
+    );
+
+    const enrichedLocPrompt = PromptBuilder.enrichUserPrompt('Asc New Bosaso delivery ma jirtaa?', 'so', 'Boosaaso');
+    assert(enrichedLocPrompt.includes('Boosaaso') && enrichedLocPrompt.includes('New Bosaso'), 'enrichUserPrompt must inject Somali geography reference');
+
+    // Execute rendered COMMON_CLIENT_JS parseImportedCatalogText via vm
+    const joinScriptMatch = joinHtml.text.match(/<script>([\s\S]*?)<\/script>/i);
+    assert(joinScriptMatch, 'join script needed for importer runtime check');
+    const vmCtx: any = {
+      window: {},
+      addEventListener: () => {},
+      document: {
+        getElementById: () => null,
+        querySelectorAll: () => [],
+        addEventListener: () => {},
+      },
+      fetch: async () => ({ ok: true, json: async () => ({}) }),
+      navigator: { clipboard: { writeText: async () => {} } },
+      setTimeout,
+      clearTimeout,
+    };
+    vmCtx.window = vmCtx;
+    vm.runInNewContext(joinScriptMatch![1], vmCtx);
+
+    const csvParsed = vmCtx.parseImportedCatalogText('Alaabta,Qiimaha,Faahfaahin\nShaadh Casri ah,$15,Midab Madow\nKabo Sport,$28,Size 42', 'alaab.csv');
+    assert.strictEqual(csvParsed.count, 2);
+    assert(csvParsed.formatted.includes('Shaadh Casri ah — $15 (Midab Madow)'));
+
+    const jsonParsed = vmCtx.parseImportedCatalogText('[{"name":"Baati","price":"$12","description":"Bombaay"},{"name":"Hijab","price":"$8"}]', 'catalog.json');
+    assert.strictEqual(jsonParsed.count, 2);
+    assert(jsonParsed.formatted.includes('- Baati — $12 (Bombaay)') && jsonParsed.formatted.includes('- Hijab — $8'));
+
+    console.log('✅ Test 9 passed: Somali cities/districts knowledge, disambiguation & CSV/JSON catalog importer verified!');
+
     console.log('\n🎉 ALL MULTI-TENANT SAAS TESTS PASSED CLEANLY!\n');
   } finally {
     if (manager) await manager.shutdown().catch(() => {});

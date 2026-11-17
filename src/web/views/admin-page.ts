@@ -318,7 +318,13 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
             <textarea class="field" id="ownRole" style="min-height:80px;"></textarea>
           </div>
           <div class="form-group">
-            <label class="field-label">Knowledge Base</label>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.35rem;">
+              <label class="field-label" style="margin:0;">Knowledge Base</label>
+              <div>
+                <input type="file" id="ownerKbFile" accept=".csv,.tsv,.txt,.json,.md,text/csv,text/plain,application/json" style="display:none;" onchange="importCatalogFile(this, 'ownKB', true)" />
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('ownerKbFile').click()">📥 Import Xog (CSV/TXT/JSON)</button>
+              </div>
+            </div>
             <textarea class="field" id="ownKB" style="min-height:150px;"></textarea>
           </div>
           <button class="btn btn-primary" onclick="saveOwnerConfig()">💾 Keydi Owner Config</button>

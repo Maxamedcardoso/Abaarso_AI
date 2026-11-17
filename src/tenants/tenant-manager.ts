@@ -14,6 +14,7 @@ import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { BotCategory, GuardedFeature, PlanFeatures, PlanGuard, PlanTier } from './plan-catalog.js';
 import { normalizeSubscriptionPhone, TenantRecord, TenantRegistry } from './tenant-registry.js';
 import { getCategoryStarterTemplate } from './tenant-templates.js';
+import { CloudStateSync } from './cloud-state-sync.js';
 
 export interface TenantContext {
   tenantId: string;
@@ -40,6 +41,7 @@ export interface TenantManagerOptions {
   maxActiveTenants?: number;
   expiryCheckIntervalMs?: number;
   publicBaseUrl?: string;
+  cloudSync?: CloudStateSync;
 }
 
 export class TenantManager {
@@ -49,6 +51,7 @@ export class TenantManager {
   private readonly maxActiveTenants: number;
   private readonly expiryCheckIntervalMs: number;
   private readonly publicBaseUrl: string;
+  private cloudSync?: CloudStateSync;
   private contexts: Map<string, TenantContext> = new Map();
   private expiryTimer: NodeJS.Timeout | null = null;
   private portalOtps: Map<string, { code: string; tenantId: string; expiresAt: number; attempts: number }> = new Map();
@@ -60,6 +63,31 @@ export class TenantManager {
     this.maxActiveTenants = options?.maxActiveTenants ?? (Number(process.env.MAX_ACTIVE_TENANTS) || 25);
     this.expiryCheckIntervalMs = options?.expiryCheckIntervalMs ?? 60_000;
     this.publicBaseUrl = options?.publicBaseUrl || process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
+    this.cloudSync = options?.cloudSync;
+  }
+
+  public setCloudSync(cloudSync?: CloudStateSync): void {
+    this.cloudSync = cloudSync;
+  }
+
+  public getCloudSync(): CloudStateSync | undefined {
+    return this.cloudSync;
+  }
+
+  public markRegistryDirty(urgent: boolean = false): void {
+    this.cloudSync?.markDirty('registry', urgent);
+  }
+
+  public markTenantDirty(
+    tenantId: string,
+    kinds: Array<'db' | 'auth' | 'meta'> = ['db'],
+    urgent: boolean = false
+  ): void {
+    if (!this.cloudSync || !tenantId) return;
+    const safe = tenantId === 'owner' ? 'owner' : tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
+    for (const kind of kinds) {
+      this.cloudSync.markDirty(`tenant:${safe}:${kind}`, urgent);
+    }
   }
 
   public getTenantPaths(tenant: TenantRecord): {
@@ -342,10 +370,19 @@ export class TenantManager {
       broadcastService: broadcast,
       whatsappManager,
       statusReactor,
+      onConnectionChange: (state) => {
+        if (state.connected) {
+          this.markTenantDirty(tenant.id, ['auth'], true);
+        }
+      },
+      onCredsSaved: () => {
+        this.markTenantDirty(tenant.id, ['auth'], false);
+      },
     });
 
     transport.onMessage(async (msg) => {
       await router.handleIncomingMessage(msg, transport);
+      this.markTenantDirty(tenant.id, ['db'], false);
     });
 
     reminderService.setSendFunction(async (chatId: string, text: string) => {
@@ -428,11 +465,13 @@ export class TenantManager {
     const autoApproved = Boolean(result.autoActivated);
     if (autoApproved) {
       await this.mountTenant(result.tenant, this.startSockets);
+      this.markTenantDirty(result.tenant.id, ['db'], true);
     } else if (!result.alreadyPending) {
       this.notifyAdminsOfPendingSignup(result.tenant).catch((err) => {
         console.warn('[TenantManager] Failed notifying admins of pending signup:', err?.message || err);
       });
     }
+    this.markRegistryDirty(true);
     return {
       tenant: result.tenant,
       autoApproved,
@@ -573,7 +612,10 @@ export class TenantManager {
     pin?: string;
   }): Promise<TenantContext> {
     const tenant = this.registry.createActiveTenant(input);
-    return this.mountTenant(tenant, this.startSockets);
+    const ctx = await this.mountTenant(tenant, this.startSockets);
+    this.markRegistryDirty(true);
+    this.markTenantDirty(tenant.id, ['db'], true);
+    return ctx;
   }
 
   public async approveAndStartTenant(
@@ -583,6 +625,8 @@ export class TenantManager {
     const updated = this.registry.approveTenant(id, options);
     if (!updated) return null;
     await this.mountTenant(updated, this.startSockets);
+    this.markRegistryDirty(true);
+    this.markTenantDirty(updated.id, ['db'], true);
     this.notifySubscriberOfApproval(updated).catch(() => {});
     return updated;
   }
@@ -610,6 +654,7 @@ export class TenantManager {
     const updated = this.registry.renewSubscription(id, months, newPlanTier, durationDays);
     if (!updated) return null;
     await this.mountTenant(updated, this.startSockets);
+    this.markRegistryDirty(true);
     return updated;
   }
 
@@ -624,6 +669,7 @@ export class TenantManager {
         await ctx.transport.stopWithoutLogout();
       }
     }
+    this.markRegistryDirty(true);
     return updated;
   }
 
@@ -631,6 +677,7 @@ export class TenantManager {
     const updated = this.registry.activateTenant(id);
     if (!updated) return null;
     await this.mountTenant(updated, this.startSockets);
+    this.markRegistryDirty(true);
     return updated;
   }
 
@@ -644,6 +691,7 @@ export class TenantManager {
     if (ctx) {
       this.refreshContextSettings(ctx, updated);
     }
+    this.markRegistryDirty(false);
     return updated;
   }
 
@@ -658,7 +706,12 @@ export class TenantManager {
       ctx.memory.close();
       this.contexts.delete(id);
     }
-    return this.registry.deleteTenant(id);
+    const deleted = this.registry.deleteTenant(id);
+    if (deleted) {
+      await this.cloudSync?.deleteTenantSnapshots(id).catch(() => {});
+      this.markRegistryDirty(true);
+    }
+    return deleted;
   }
 
   public async requestPairingCode(
@@ -680,13 +733,18 @@ export class TenantManager {
     const ctx = this.contexts.get(id);
     if (!ctx?.transport) return false;
     await ctx.transport.unlinkSession();
+    await this.cloudSync?.deleteAuthSnapshot(id).catch(() => {});
     return true;
   }
 
   public async syncTenantContacts(id: string): Promise<{ synced: boolean; total: number }> {
     const ctx = this.contexts.get(id);
     if (!ctx?.transport) return { synced: false, total: 0 };
-    return ctx.transport.syncContactsFromWhatsApp(true);
+    const result = await ctx.transport.syncContactsFromWhatsApp(true);
+    if (result.synced) {
+      this.markTenantDirty(id, ['db'], false);
+    }
+    return result;
   }
 
   public async runExpirySweep(now: number = Date.now()): Promise<TenantRecord[]> {
@@ -710,6 +768,9 @@ export class TenantManager {
         }
       }
     }
+    if (expiredList.length > 0) {
+      this.markRegistryDirty(true);
+    }
     return expiredList;
   }
 
@@ -718,6 +779,7 @@ export class TenantManager {
       clearInterval(this.expiryTimer);
       this.expiryTimer = null;
     }
+    const tenantIds = Array.from(this.contexts.keys());
     for (const ctx of this.contexts.values()) {
       ctx.reminderService.stop();
       if (ctx.transport) {
@@ -726,5 +788,6 @@ export class TenantManager {
       ctx.memory.close();
     }
     this.contexts.clear();
+    await this.cloudSync?.shutdown(tenantIds).catch(() => {});
   }
 }

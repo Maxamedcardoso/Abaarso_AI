@@ -135,17 +135,33 @@ export function renderJoinHTML(): string {
           </div>
           <div class="grid-2">
             <div class="form-group">
-              <label class="field-label">Magaalada &amp; Goobta + Saacadaha Furitaanka</label>
-              <input class="field" id="bizLocation" placeholder="Tusaale: Hargeysa, Suuqa Gobonimo (8:00 AM - 9:00 PM)" />
+              <label class="field-label">Magaalada, Xaafadda/Suuqa &amp; Saacadaha Furitaanka</label>
+              <input class="field" id="bizLocation" placeholder="Tusaale: Hargeysa (26 June / Gobonimo), 8:00 AM - 9:00 PM" />
             </div>
             <div class="form-group">
               <label class="field-label">Adeegga Delivery-ga</label>
-              <input class="field" id="bizDelivery" placeholder="Tusaale: Waa diyaar magaalada gudaheeda ($2)" />
+              <select class="field" id="bizDeliveryScope">
+                <option value="Labadaba: Magaalada gudaheeda &amp; Magaalooyinka kale" selected>🚚 Labadaba — Magaalada Gudaheeda &amp; Magaalooyinka Kale</option>
+                <option value="Magaalada gudaheeda kaliya">🛵 Magaalada Gudaheeda Kaliya (Xaafadaha oo dhan)</option>
+                <option value="Magaalooyinka kale &amp; Gobollada kaliya">📦 Magaalooyinka Kale &amp; Gobollada Kaliya</option>
+                <option value="Pick-up kaliya (Dukaanka lagala baxo)">🏬 Pick-up Kaliya (Dukaanka lagala baxo)</option>
+              </select>
             </div>
           </div>
           <div class="form-group">
-            <label class="field-label">Alaabta &amp; Qiimaha Ugu Muhiimsan (Ikhtiyaari — si bot-ku isla markiiba u barto)</label>
-            <textarea class="field" id="bizCatalog" style="min-height:85px;" placeholder="Tusaale:&#10;- Shaadh Casri ah: $15&#10;- Kabo Sport: $28"></textarea>
+            <label class="field-label">Khidmadda &amp; Faahfaahinta Delivery-ga (Ikhtiyaari)</label>
+            <input class="field" id="bizDelivery" placeholder="Tusaale: Magaalada gudaheeda $2 (xaafadaha oo dhan), Magaalooyinka kale $5 (24 saac)" />
+          </div>
+          <div class="form-group">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem;">
+              <label class="field-label" style="margin:0;">Alaabta &amp; Qiimaha Ugu Muhiimsan (Ikhtiyaari — si bot-ku isla markiiba u barto)</label>
+              <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                <input type="file" id="bizCatalogFile" accept=".csv,.tsv,.txt,.json,.md,text/csv,text/plain,application/json" style="display:none;" onchange="importCatalogFile(this, 'bizCatalog', false)" />
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('bizCatalogFile').click()">📥 Import Fayl (CSV / TXT / JSON)</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="downloadCatalogCsvTemplate('business')">📄 Template CSV</button>
+              </div>
+            </div>
+            <textarea class="field" id="bizCatalog" style="min-height:95px;" placeholder="Gacanta ku qor ama kor ka guji 'Import Fayl' si aad u soo geliso liis CSV / TXT / JSON ah:&#10;- Shaadh Casri ah: $15&#10;- Kabo Sport: $28"></textarea>
           </div>
         </div>
 
@@ -166,8 +182,15 @@ export function renderJoinHTML(): string {
             </div>
           </div>
           <div class="form-group">
-            <label class="field-label">Koorsooyinka, Muddada &amp; Qiimaha / Shuruudaha (Ikhtiyaari)</label>
-            <textarea class="field" id="eduCourses" style="min-height:85px;" placeholder="Tusaale:&#10;- Graphic Design: $30/bil (3 bilood)&#10;- English Fluency: $20/bil"></textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem;">
+              <label class="field-label" style="margin:0;">Koorsooyinka, Muddada &amp; Qiimaha / Shuruudaha (Ikhtiyaari)</label>
+              <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                <input type="file" id="eduCoursesFile" accept=".csv,.tsv,.txt,.json,.md,text/csv,text/plain,application/json" style="display:none;" onchange="importCatalogFile(this, 'eduCourses', false)" />
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('eduCoursesFile').click()">📥 Import Fayl (CSV / TXT / JSON)</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="downloadCatalogCsvTemplate('education')">📄 Template CSV</button>
+              </div>
+            </div>
+            <textarea class="field" id="eduCourses" style="min-height:95px;" placeholder="Gacanta ku qor ama kor ka guji 'Import Fayl' si aad u soo geliso liis CSV / TXT / JSON ah:&#10;- Graphic Design: $30/bil (3 bilood)&#10;- English Fluency: $20/bil"></textarea>
           </div>
         </div>
 
@@ -282,12 +305,14 @@ export function renderJoinHTML(): string {
         var bizType = document.getElementById("bizType").value.trim();
         var bizPayment = document.getElementById("bizPayment").value.trim();
         var bizLocation = document.getElementById("bizLocation").value.trim();
+        var bizDeliveryScope = document.getElementById("bizDeliveryScope").value.trim();
         var bizDelivery = document.getElementById("bizDelivery").value.trim();
         var bizCatalog = document.getElementById("bizCatalog").value.trim();
         if (bizType) lines.push("Nooca Ganacsiga: " + bizType);
         if (bizPayment) lines.push("Lacag Bixinta: " + bizPayment);
         if (bizLocation) lines.push("Goobta & Saacadaha: " + bizLocation);
-        if (bizDelivery) lines.push("Delivery: " + bizDelivery);
+        var fullDelivery = bizDelivery ? (bizDeliveryScope + " — " + bizDelivery) : bizDeliveryScope;
+        if (fullDelivery) lines.push("Adeegga Delivery-ga: " + fullDelivery);
         if (bizCatalog) lines.push("Alaabta & Qiimaha:\\n" + bizCatalog);
       } else if (cat === "education") {
         var eduMode = document.getElementById("eduMode").value;

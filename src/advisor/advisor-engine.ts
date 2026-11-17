@@ -582,7 +582,11 @@ export class StudentAdvisorEngine {
       (lang === 'so' || lang === 'mixed') && langResult.normalizedText
         ? langResult.normalizedText
         : content;
-    let enrichedPrompt = PromptBuilder.enrichUserPrompt(promptSource, lang);
+    let enrichedPrompt = PromptBuilder.enrichUserPrompt(
+      promptSource,
+      lang,
+      customConfig?.knowledgeBase || ''
+    );
 
     // Spoken Voice Note Natural & Proportional Guidance:
     if (wantsVoice) {
