@@ -27,6 +27,7 @@ export interface TenantRecord {
   extraAdmins: string[];
   signupNotes: string;
   promoCodeUsed: string;
+  applicantChatId?: string;
   hasPin?: boolean;
   createdAt: number;
   updatedAt: number;
@@ -145,6 +146,7 @@ export class TenantRegistry {
 
     try { this.db.exec("ALTER TABLE tenants ADD COLUMN pin_salt TEXT DEFAULT ''"); } catch {}
     try { this.db.exec("ALTER TABLE tenants ADD COLUMN pin_hash TEXT DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE tenants ADD COLUMN applicant_chat_id TEXT DEFAULT ''"); } catch {}
   }
 
   public close(): void {
@@ -191,6 +193,7 @@ export class TenantRegistry {
       extraAdmins,
       signupNotes: row.signup_notes || '',
       promoCodeUsed: row.promo_code_used || '',
+      applicantChatId: row.applicant_chat_id || '',
       hasPin: Boolean(row.pin_hash),
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at),
@@ -287,6 +290,24 @@ export class TenantRegistry {
     return row ? this.mapTenantRow(row) : null;
   }
 
+  public getTenantByApplicantChatId(chatId: string): TenantRecord | null {
+    const db = this.ensureDb();
+    const clean = (chatId || '').trim();
+    if (!clean) return null;
+    const row = db.prepare(
+      "SELECT * FROM tenants WHERE applicant_chat_id = ? AND id != 'owner' ORDER BY created_at DESC LIMIT 1"
+    ).get(clean) as any;
+    return row ? this.mapTenantRow(row) : null;
+  }
+
+  public getTenantByIdOrPhone(target: string): TenantRecord | null {
+    const raw = (target || '').trim();
+    if (!raw) return null;
+    const byId = this.getTenant(raw);
+    if (byId) return byId;
+    return this.getTenantByPhone(raw);
+  }
+
   public listTenants(includeOwner: boolean = true): TenantRecord[] {
     const db = this.ensureDb();
     const rows = includeOwner
@@ -337,6 +358,7 @@ export class TenantRegistry {
     promoCode?: string;
     notes?: string;
     pin?: string;
+    applicantChatId?: string;
   }): {
     success: boolean;
     message: string;
@@ -347,6 +369,7 @@ export class TenantRegistry {
     const db = this.ensureDb();
     const cleanName = (input.name || '').trim();
     const cleanPhone = normalizeSubscriptionPhone(input.phone || '');
+    const cleanApplicantChatId = (input.applicantChatId || '').trim();
     const category: BotCategory = ['personal', 'business', 'education'].includes(input.category)
       ? input.category
       : 'personal';
@@ -361,11 +384,15 @@ export class TenantRegistry {
     const existing = this.getTenantByPhone(cleanPhone);
     if (existing) {
       if (existing.status === 'pending') {
+        if (cleanApplicantChatId && !existing.applicantChatId) {
+          db.prepare('UPDATE tenants SET applicant_chat_id = ?, updated_at = ? WHERE id = ?')
+            .run(cleanApplicantChatId, Date.now(), existing.id);
+        }
         return {
           success: true,
           alreadyPending: true,
           autoActivated: false,
-          tenant: existing,
+          tenant: this.getTenant(existing.id)!,
           message: 'Codsigaagii hore weli wuu ku jiraa liiska sugitaanka.',
         };
       }
@@ -409,8 +436,8 @@ export class TenantRegistry {
       INSERT INTO tenants (
         id, name, allowed_phone, category, plan_tier, status, access_token,
         months_purchased, trial_used, started_at, expires_at, expiry_notified,
-        features_json, signup_notes, promo_code_used, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'trial_free', ?, ?, 0, ?, ?, ?, 0, '{}', ?, ?, ?, ?)
+        features_json, signup_notes, promo_code_used, applicant_chat_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'trial_free', ?, ?, 0, ?, ?, ?, 0, '{}', ?, ?, ?, ?, ?)
     `).run(
       id,
       cleanName,
@@ -423,6 +450,7 @@ export class TenantRegistry {
       expiresAt,
       (input.notes || '').trim().slice(0, 1200),
       appliedPromo,
+      cleanApplicantChatId,
       now,
       now
     );

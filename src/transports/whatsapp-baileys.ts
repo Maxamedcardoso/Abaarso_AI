@@ -1472,9 +1472,27 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       quotedInner?.documentMessage?.caption ||
       '';
 
+    let resolvedSenderPhone = '';
+    const pnCandidate =
+      (msg.key as any)?.senderPn ||
+      (msg.key as any)?.participantPn ||
+      (msg.key as any)?.remoteJidAlt ||
+      (senderId.endsWith('@s.whatsapp.net') ? senderId : (!isGroup && chatId.endsWith('@s.whatsapp.net') ? chatId : ''));
+    if (pnCandidate && !String(pnCandidate).endsWith('@lid')) {
+      resolvedSenderPhone = String(pnCandidate).split('@')[0].split(':')[0].replace(/\D/g, '');
+    } else if (senderId.endsWith('@lid') && (this.socket as any)?.signalRepository?.lidMapping?.getPNForLID) {
+      try {
+        const pnJid = await (this.socket as any).signalRepository.lidMapping.getPNForLID(senderId);
+        if (pnJid && !String(pnJid).endsWith('@lid')) {
+          resolvedSenderPhone = String(pnJid).split('@')[0].split(':')[0].replace(/\D/g, '');
+        }
+      } catch {}
+    }
+
     const incoming: IncomingMessage = {
       id: msg.key.id || `baileys_${Date.now()}`,
       senderId,
+      senderPhone: resolvedSenderPhone || undefined,
       senderName: msg.pushName || undefined,
       chatId,
       isGroup,
@@ -1657,6 +1675,26 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
               audioPayload
+            );
+          }
+        } else if (media.type === 'document') {
+          const docPayload: any = {
+            document: media.dataBuffer,
+            mimetype: media.mimeType || 'application/pdf',
+            fileName: media.fileName || 'CARDOSO_AI_Guide.pdf',
+            ...(media.caption ? { caption: media.caption } : {}),
+          };
+          try {
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              docPayload,
+              sendOptions
+            );
+          } catch (quotedErr) {
+            console.warn('[WhatsAppBaileys] Quoted document send failed, falling back to direct send:', quotedErr);
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              docPayload
             );
           }
         }

@@ -11,10 +11,13 @@ import { ReminderService } from '../services/reminder.service.js';
 import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { MessageRouter } from '../pipeline/message-router.js';
 import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
+import { IMessagingTransport } from '../transports/transport.interface.js';
 import { BotCategory, GuardedFeature, PlanFeatures, PlanGuard, PlanTier } from './plan-catalog.js';
 import { normalizeSubscriptionPhone, TenantRecord, TenantRegistry } from './tenant-registry.js';
 import { getCategoryStarterTemplate } from './tenant-templates.js';
 import { CloudStateSync } from './cloud-state-sync.js';
+import { WhatsAppOnboardingService } from './whatsapp-onboarding.js';
+import { generateSubscriberGuidePdfBuffer } from '../services/user-guide-pdf.service.js';
 
 export interface TenantContext {
   tenantId: string;
@@ -52,6 +55,7 @@ export class TenantManager {
   private readonly expiryCheckIntervalMs: number;
   private readonly publicBaseUrl: string;
   private cloudSync?: CloudStateSync;
+  private readonly onboarding: WhatsAppOnboardingService;
   private contexts: Map<string, TenantContext> = new Map();
   private expiryTimer: NodeJS.Timeout | null = null;
   private portalOtps: Map<string, { code: string; tenantId: string; expiresAt: number; attempts: number }> = new Map();
@@ -62,8 +66,17 @@ export class TenantManager {
     this.startSockets = options?.startSockets ?? config.messaging.mode === 'baileys';
     this.maxActiveTenants = options?.maxActiveTenants ?? (Number(process.env.MAX_ACTIVE_TENANTS) || 25);
     this.expiryCheckIntervalMs = options?.expiryCheckIntervalMs ?? 60_000;
-    this.publicBaseUrl = options?.publicBaseUrl || process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
+    this.publicBaseUrl = (options?.publicBaseUrl || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, '');
     this.cloudSync = options?.cloudSync;
+    this.onboarding = new WhatsAppOnboardingService(this);
+  }
+
+  public getTenantPortalUrl(tenant: TenantRecord): string {
+    return `${this.publicBaseUrl}/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
+  }
+
+  public getPublicPortalLoginUrl(): string {
+    return `${this.publicBaseUrl}/portal`;
   }
 
   public setCloudSync(cloudSync?: CloudStateSync): void {
@@ -359,6 +372,10 @@ export class TenantManager {
           : { active: false, reason: `Subscription ${latest.status}` };
       },
       getExtraAdmins: () => this.getTenantAdminPhones(tenant.id),
+      onboardingHandler: paths.isOwner
+        ? (msg, tr, isAdm) => this.onboarding.handleMessage(msg, tr, isAdm)
+        : undefined,
+      sendGuidePdfHandler: (chatId, tr) => this.sendSubscriberGuidePdf(tenant, chatId, null, tr),
     });
 
     const transport = new WhatsAppBaileysTransport({
@@ -457,6 +474,8 @@ export class TenantManager {
     promoCode?: string;
     notes?: string;
     pin?: string;
+    applicantChatId?: string;
+    ownerOnlyNotification?: boolean;
   }): Promise<{ tenant: TenantRecord; autoApproved: boolean; alreadyPending?: boolean; message: string }> {
     const result = this.registry.registerSelfSignup(input);
     if (!result.success || !result.tenant) {
@@ -464,10 +483,10 @@ export class TenantManager {
     }
     const autoApproved = Boolean(result.autoActivated);
     if (autoApproved) {
-      await this.mountTenant(result.tenant, this.startSockets);
+      await this.mountTenant(result.tenant, false);
       this.markTenantDirty(result.tenant.id, ['db'], true);
     } else if (!result.alreadyPending) {
-      this.notifyAdminsOfPendingSignup(result.tenant).catch((err) => {
+      this.notifyAdminsOfPendingSignup(result.tenant, { ownerOnly: Boolean(input.ownerOnlyNotification) }).catch((err) => {
         console.warn('[TenantManager] Failed notifying admins of pending signup:', err?.message || err);
       });
     }
@@ -561,13 +580,28 @@ export class TenantManager {
     return this.registry.getTenant(entry.tenantId);
   }
 
-  public async notifyAdminsOfPendingSignup(tenant: TenantRecord): Promise<{ notified: number }> {
+  public async notifyAdminsOfPendingSignup(
+    tenant: TenantRecord,
+    options?: { ownerOnly?: boolean }
+  ): Promise<{ notified: number }> {
     const ownerCtx = this.getOwnerContext();
     if (!ownerCtx?.transport?.isConnected) {
       return { notified: 0 };
     }
 
-    const recipients = this.registry.getAllActiveAdminPhones(this.config.security.adminPhoneNumbers);
+    let recipients: string[] = [];
+    if (options?.ownerOnly) {
+      const primaryEnvOwner = this.config.security.adminPhoneNumbers[0]
+        ? normalizeSubscriptionPhone(this.config.security.adminPhoneNumbers[0])
+        : '';
+      const botOwnerPhone = ownerCtx.transport?.getBotNumber?.()
+        ? normalizeSubscriptionPhone(ownerCtx.transport.getBotNumber()!)
+        : '';
+      const soleOwner = primaryEnvOwner || botOwnerPhone;
+      if (soleOwner) recipients = [soleOwner];
+    } else {
+      recipients = this.registry.getAllActiveAdminPhones(this.config.security.adminPhoneNumbers);
+    }
     if (recipients.length === 0) {
       return { notified: 0 };
     }
@@ -581,14 +615,16 @@ export class TenantManager {
 
     const msg =
       `🔔 *[CARDOSO AI — CODSI RUKHSAD CUSUB]* 🔔\n\n` +
-      `Qof cusub ayaa hadda iska diiwaangeliyay bogga \`/join\`:\n` +
+      `Qof cusub ayaa hadda iska diiwaangeliyay${tenant.applicantChatId ? ' (WhatsApp `!join`)' : ' (`/join`)'}:\n` +
       `• *Magaca*: ${tenant.name}\n` +
       `• *Lambarka WhatsApp*: +${tenant.allowedPhone}\n` +
       `• *Qaybta Bot-ka*: ${categoryLabel}\n` +
       (tenant.signupNotes ? `• *Faahfaahin*: ${tenant.signupNotes}\n` : '') +
       `• *ID*: \`${tenant.id}\`\n\n` +
-      `Markii uu lacagta bixiyo (ama bisha bilaashka ah loo oggolaado), hal mar guji *Approve* gudaha Dashboard-ka:\n` +
-      `👉 ${this.publicBaseUrl}`;
+      `✅ *Halkaan WhatsApp ka Ogolow (Number & PDF u fur):*\n` +
+      `👉 \`!approve ${tenant.id}\`  (ama \`!aqbal ${tenant.id}\`)\n` +
+      `❌ *Diid Codsiga:* \`!reject ${tenant.id}\`\n\n` +
+      `🌐 Ama ka maamul Dashboard-ka: ${this.publicBaseUrl}`;
 
     let sent = 0;
     for (const phone of recipients) {
@@ -621,28 +657,116 @@ export class TenantManager {
   public async approveAndStartTenant(
     id: string,
     options: { planTier: PlanTier; months?: number; durationDays?: number }
-  ): Promise<TenantRecord | null> {
+  ): Promise<(TenantRecord & { generatedPairingCode?: string | null }) | null> {
     const updated = this.registry.approveTenant(id, options);
     if (!updated) return null;
-    await this.mountTenant(updated, this.startSockets);
+    await this.mountTenant(updated, false);
     this.markRegistryDirty(true);
     this.markTenantDirty(updated.id, ['db'], true);
-    this.notifySubscriberOfApproval(updated).catch(() => {});
-    return updated;
+    const { pairingCode } = await this.approveAndSendOnboardingBundle(updated);
+    return Object.assign(updated, { generatedPairingCode: pairingCode });
+  }
+
+  public async approveAndSendOnboardingBundle(
+    tenant: TenantRecord
+  ): Promise<{ pairingCode: string | null; notified: boolean; pdfSent: boolean }> {
+    let pairingCode: string | null = null;
+    if (this.startSockets && tenant.id !== 'owner') {
+      const pairRes = await this.requestPairingCode(tenant.id, tenant.allowedPhone).catch(() => null);
+      if (pairRes?.success && pairRes.formattedCode) {
+        pairingCode = pairRes.formattedCode;
+      }
+    }
+    const { notified, pdfSent } = await this.deliverOnboardingToSubscriber(tenant, pairingCode);
+    return { pairingCode, notified, pdfSent };
+  }
+
+  private resolveApplicantTargets(tenant: TenantRecord): string[] {
+    const targets: string[] = [];
+    if (tenant.applicantChatId && tenant.applicantChatId.trim()) {
+      targets.push(tenant.applicantChatId.trim());
+    }
+    const cleanPhone = normalizeSubscriptionPhone(tenant.allowedPhone);
+    if (cleanPhone) {
+      targets.push(`${cleanPhone}@s.whatsapp.net`);
+    }
+    return Array.from(new Set(targets));
+  }
+
+  public async sendSubscriberGuidePdf(
+    tenant: TenantRecord,
+    targetChatId: string,
+    pairingCode: string | null = null,
+    explicitTransport?: IMessagingTransport
+  ): Promise<boolean> {
+    const transport = explicitTransport || this.getOwnerContext()?.transport || this.getContext(tenant.id)?.transport;
+    if (!transport?.isConnected || !transport.sendMedia) return false;
+    const portalUrl = this.getTenantPortalUrl(tenant);
+    const pdfBuffer = generateSubscriberGuidePdfBuffer({
+      subscriberName: tenant.name,
+      phone: normalizeSubscriptionPhone(tenant.allowedPhone),
+      category: tenant.category,
+      portalUrl,
+      pairingCode,
+    });
+    return transport
+      .sendMedia(targetChatId, {
+        type: 'document',
+        dataBuffer: pdfBuffer,
+        mimeType: 'application/pdf',
+        fileName: 'CARDOSO_AI_Buugga_Isticmaalka.pdf',
+        caption: '📄 *Buugga Amarrada & Sida Loo Isticmaalo CARDOSO AI (PDF)* — Keydso!',
+      })
+      .catch(() => false);
+  }
+
+  private async deliverOnboardingToSubscriber(
+    tenant: TenantRecord,
+    pairingCode: string | null
+  ): Promise<{ notified: boolean; pdfSent: boolean }> {
+    const ownerCtx = this.getOwnerContext();
+    if (!ownerCtx?.transport?.isConnected) {
+      return { notified: false, pdfSent: false };
+    }
+    const cleanPhone = normalizeSubscriptionPhone(tenant.allowedPhone);
+    const targets = this.resolveApplicantTargets(tenant);
+    if (targets.length === 0) return { notified: false, pdfSent: false };
+
+    const portalLink = this.getTenantPortalUrl(tenant);
+    const loginPortalLink = this.getPublicPortalLoginUrl();
+    const pairingSection = pairingCode
+      ? `🔑 *LAMBARKAAGA 8-DA GOD EE KU XIDHISTA WHATSAPP:*\n` +
+        `👉 *${pairingCode}*\n\n` +
+        `📲 *Sida Loo Geliyo (2 daqiiqo gudahood):*\n` +
+        `1. Fur WhatsApp ➔ *Linked Devices* ➔ *Link a Device*\n` +
+        `2. Hoosta taabo *"Link with phone number instead"*\n` +
+        `3. Geli koodhka: *${pairingCode}*\n` +
+        `_(Haddii koodhku dhaco, halkaan ku qor *!pair* ama ka furo Link-ga Dashboard-kaaga hoose)_\n\n`
+      : `🔑 *Si aad u hesho Lambarka 8-da God ee WhatsApp:*\n` +
+        `Halkan ku soo qor *!pair* ama fur Link-ga Dashboard-kaaga hoose oo guji *"Soo Saar 8-Lambar"*\n\n`;
+
+    const msg =
+      `🎉 *[CARDOSO AI — CODSIGAAGA WAA LA AQBALAY!]* 🎉\n\n` +
+      `Hambalyo *${tenant.name}*, bot-kaagii WhatsApp (+${cleanPhone}) hadda waa furan yahay!\n\n` +
+      pairingSection +
+      `🌐 *LINK-GA DASHBOARD-KAAGA GAARKA AH (Guji oo Kaydso):*\n${portalLink}\n\n` +
+      `🔐 Haddii uu kaa lumo link-gu, mar kasta ka soo gal: ${loginPortalLink}\n_(Geli lambarkaaga +${cleanPhone} & PIN-kii aad samaysatay)_\n\n` +
+      `📄 *Hoos waxaa kuugu soo dhacaya faylka PDF-ka* oo ay ku qoran yihiin dhammaan amarrada & sida loo isticmaalo!`;
+
+    let notified = false;
+    let pdfSent = false;
+    const primaryTarget = targets[0];
+    const okMsg = await ownerCtx.transport.sendMessage(primaryTarget, msg).catch(() => false);
+    if (okMsg) notified = true;
+    const okPdf = await this.sendSubscriberGuidePdf(tenant, primaryTarget, pairingCode, ownerCtx.transport);
+    if (okPdf) pdfSent = true;
+
+    return { notified, pdfSent };
   }
 
   public async notifySubscriberOfApproval(tenant: TenantRecord): Promise<boolean> {
-    const ownerCtx = this.getOwnerContext();
-    if (!ownerCtx?.transport?.isConnected) return false;
-    const cleanPhone = normalizeSubscriptionPhone(tenant.allowedPhone);
-    if (!cleanPhone) return false;
-    const portalLink = `${this.publicBaseUrl}/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
-    const msg =
-      `🎉 *[CARDOSO AI — CODSIGAAGA WAA LA AQBALAY!]* 🎉\n\n` +
-      `Hambalyo *${tenant.name}*, bot-kaagii WhatsApp hadda waa furan yahay!\n` +
-      `🔗 *Link-gaaga Dashboard-ka (Kaydso):*\n${portalLink}\n\n` +
-      `💡 Haddii uu kaa lumo link-gu, booqo \`${this.publicBaseUrl}/portal\` kuna soo gal lambarkaaga (+${cleanPhone}).`;
-    return ownerCtx.transport.sendMessage(`${cleanPhone}@s.whatsapp.net`, msg).catch(() => false);
+    const { notified } = await this.deliverOnboardingToSubscriber(tenant, null);
+    return notified;
   }
 
   public async renewAndRestartTenant(

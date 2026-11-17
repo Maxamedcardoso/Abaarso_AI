@@ -530,7 +530,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         body: JSON.stringify({ planTier, months: 1 }),
       });
       const data = await res.json();
-      showToast(res.ok ? '✅ Waa la oggolaaday!' : '❌ ' + data.message, !res.ok);
+      const extraMsg = data.pairingCode ? (' Koodhka: ' + data.pairingCode + ' & PDF-kii waa la diray!') : '';
+      showToast(res.ok ? ('✅ Waa la oggolaaday!' + extraMsg) : ('❌ ' + data.message), !res.ok);
       loadAdminOverview();
     }
 

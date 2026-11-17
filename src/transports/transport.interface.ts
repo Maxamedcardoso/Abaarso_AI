@@ -12,6 +12,7 @@ export interface MessageMedia {
 export interface IncomingMessage {
   id: string;                    // Unique message ID (e.g. wamid.xxx or console-uuid)
   senderId: string;              // Student WhatsApp number or console ID
+  senderPhone?: string;          // Normalized phone digits when resolved from JID / senderPn / lidMapping
   senderName?: string;           // Push name / nickname if available
   chatId: string;                // Group JID or 1-to-1 conversation JID
   isGroup: boolean;              // True if originating from a group

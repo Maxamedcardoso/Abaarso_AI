@@ -685,7 +685,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       res.status(404).json({ status: 'error', message: 'Tenant not found' });
       return;
     }
-    res.json({ status: 'ok', tenant: sanitizeTenantForResponse(updated) });
+    res.json({
+      status: 'ok',
+      tenant: sanitizeTenantForResponse(updated),
+      pairingCode: (updated as any).generatedPairingCode || null,
+    });
   });
 
   app.post('/api/admin/tenants/:id/reject', (req: Request, res: Response) => {

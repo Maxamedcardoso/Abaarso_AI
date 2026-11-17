@@ -18,6 +18,12 @@ export interface MessageRouterOptions {
   planGuard?: PlanGuard;
   subscriptionCheck?: () => { active: boolean; reason?: string };
   getExtraAdmins?: () => string[];
+  onboardingHandler?: (
+    message: IncomingMessage,
+    transport: IMessagingTransport,
+    isAdminUser: boolean
+  ) => Promise<{ handled: boolean; reason?: string }>;
+  sendGuidePdfHandler?: (chatId: string, transport: IMessagingTransport) => Promise<boolean>;
 }
 
 export class MessageRouter {
@@ -34,6 +40,8 @@ export class MessageRouter {
   private planGuard?: PlanGuard;
   private subscriptionCheck?: () => { active: boolean; reason?: string };
   private getExtraAdmins?: () => string[];
+  private onboardingHandler?: MessageRouterOptions['onboardingHandler'];
+  private sendGuidePdfHandler?: MessageRouterOptions['sendGuidePdfHandler'];
 
   constructor(
     engine: StudentAdvisorEngine,
@@ -54,6 +62,8 @@ export class MessageRouter {
     this.planGuard = options?.planGuard;
     this.subscriptionCheck = options?.subscriptionCheck;
     this.getExtraAdmins = options?.getExtraAdmins;
+    this.onboardingHandler = options?.onboardingHandler;
+    this.sendGuidePdfHandler = options?.sendGuidePdfHandler;
   }
 
   public isAdmin(senderNumber: string, isGroup: boolean = false): boolean {
@@ -358,6 +368,19 @@ SHURUUCDA DUGSIIYA:
         'Waa hagaag walaal, fariimaha dambe laguu soo diri maayo. Raalli ahow haddii ay ku dhibtay. Nabadgelyo. 🙏'
       );
       return { handled: true, reason: 'Recipient opted out of broadcasts' };
+    }
+
+    // 1d. SaaS WhatsApp Onboarding (!join form, !approve, !reject, !pending, !pair, !pdf)
+    if (this.onboardingHandler) {
+      const onboardingRes = await this.onboardingHandler(message, transport, isAdminUser);
+      if (onboardingRes.handled) {
+        return onboardingRes;
+      }
+    } else if (!message.isGroup && isAdminUser && this.sendGuidePdfHandler && /^[!./#]?(?:pdf|buug|guide|amarada)\b/i.test(lowerText)) {
+      const sentPdf = await this.sendGuidePdfHandler(message.chatId, transport);
+      if (sentPdf) {
+        return { handled: true, reason: 'Sent subscriber guide PDF' };
+      }
     }
 
     // ─── 1e. Comprehensive WhatsApp Management Help Command (!maamul / !whatsapp) ──

@@ -26,7 +26,8 @@ import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { WhatsAppBaileysTransport } from '../src/transports/whatsapp-baileys.js';
 import { createStudioServer } from '../src/web/studio-server.js';
-import { IMessagingTransport, IncomingMessage } from '../src/transports/transport.interface.js';
+import { IMessagingTransport, IncomingMessage, OutgoingMedia } from '../src/transports/transport.interface.js';
+import { generateSubscriberGuidePdfBuffer } from '../src/services/user-guide-pdf.service.js';
 
 function createTempAppConfig(tempRoot: string): AppConfig {
   return {
@@ -92,11 +93,16 @@ class MockTransport implements IMessagingTransport {
   public readonly name = 'mock';
   public readonly isConnected = true;
   public sentMessages: Array<{ chatId: string; text: string }> = [];
+  public sentMedia: Array<{ chatId: string; media: OutgoingMedia }> = [];
   private handler: ((message: IncomingMessage) => Promise<void>) | null = null;
   public async start(): Promise<void> {}
   public async stop(): Promise<void> {}
   public async sendMessage(chatId: string, text: string): Promise<boolean> {
     this.sentMessages.push({ chatId, text });
+    return true;
+  }
+  public async sendMedia(chatId: string, media: OutgoingMedia): Promise<boolean> {
+    this.sentMedia.push({ chatId, media });
     return true;
   }
   public onMessage(h: (message: IncomingMessage) => Promise<void>): void {
@@ -1036,6 +1042,169 @@ async function runTests() {
     );
     await receiptMem.close();
     console.log('✅ Test 10 passed: Anti-fraud ZAAD/eDahab receipt parser (SLSH vs USD, Wrong Receiver, Replay Tix/Hash & Zero-History Isolation) verified!');
+
+    // ─── TEST 11: WhatsApp !join Interactive Form -> !approve -> 8-Char Pairing Code & PDF Guide ───
+    const onbTransport = new MockTransport();
+    const prevOwnerTr2 = ownerCtx.transport;
+    const prevStartSockets = (manager as any).startSockets;
+    const prevReqPair = manager.requestPairingCode.bind(manager);
+    (ownerCtx as any).transport = onbTransport;
+
+    try {
+      let msgSeq = 1;
+      const sendWa = async (
+        chatId: string,
+        senderId: string,
+        content: string,
+        opts?: { isGroup?: boolean; isFromMe?: boolean; senderPhone?: string }
+      ) => {
+        return ownerCtx.router.handleIncomingMessage(
+          {
+            id: `onb-msg-${msgSeq++}-${Date.now()}`,
+            chatId,
+            senderId,
+            senderPhone: opts?.senderPhone,
+            senderName: 'Cabdi Cali',
+            isGroup: Boolean(opts?.isGroup),
+            isFromMe: Boolean(opts?.isFromMe),
+            content,
+            rawTimestamp: Date.now(),
+            isMentioned: false,
+          },
+          onbTransport
+        );
+      };
+
+      // Group !join redirects cleanly to DM
+      const grpRes = await sendWa('123456@g.us', '252634778899@s.whatsapp.net', '!join', { isGroup: true });
+      assert.strictEqual(grpRes.handled, true);
+      assert(onbTransport.sentMessages.some((m) => m.chatId === '123456@g.us' && m.text.includes('DM')));
+
+      // Streamlined WhatsApp !join: Personal ONLY, auto-captures sender's WhatsApp phone (via senderPhone / JID),
+      // asks ONLY Name + 4-digit PIN, forwards form ONLY to Owner, and tells applicant to wait!
+      const applicantLid = '991122334455@lid';
+      await sendWa(applicantLid, applicantLid, '!join', { senderPhone: '252634778899' });
+      const welcomeStep = onbTransport.sentMessages[onbTransport.sentMessages.length - 1].text;
+      assert(
+        welcomeStep.includes('Personal') &&
+        welcomeStep.includes('+252634778899') &&
+        welcomeStep.includes('Magacaaga') &&
+        !welcomeStep.includes('Ganacsi') &&
+        !welcomeStep.includes('Education'),
+        '!join must display Personal ONLY, auto-show sender phone, and ask Name right away'
+      );
+
+      // Step 1: User enters Name -> immediately asks ONLY 4-digit numeric PIN (never asks phone/other info!)
+      await sendWa(applicantLid, applicantLid, 'Cabdi Cali', { senderPhone: '252634778899' });
+      const pinStep = onbTransport.sentMessages[onbTransport.sentMessages.length - 1].text;
+      assert(pinStep.includes('4 lambar') && !pinStep.includes('Lambarkaaga'), 'After Name, must ask ONLY 4-digit PIN');
+
+      // Invalid PINs (letters or != 4 digits) are rejected cleanly
+      await sendWa(applicantLid, applicantLid, 'abcd', { senderPhone: '252634778899' });
+      assert(onbTransport.sentMessages[onbTransport.sentMessages.length - 1].text.includes('4 lambar oo keliya'));
+
+      // Step 2: Valid 4-digit PIN -> submits immediately!
+      onbTransport.sentMessages = [];
+      await sendWa(applicantLid, applicantLid, '2026', { senderPhone: '252634778899' });
+      await new Promise((r) => setTimeout(r, 40)); // allow async notifyAdminsOfPendingSignup
+
+      const personalApplicant = registry.getTenantByPhone('0634778899');
+      assert(personalApplicant && personalApplicant.status === 'pending', 'Submitted !join must create pending Personal tenant');
+      assert.strictEqual(personalApplicant!.category, 'personal', 'WhatsApp !join must enroll strictly as Personal');
+      assert.strictEqual(personalApplicant!.name, 'Cabdi Cali');
+      assert.strictEqual(personalApplicant!.applicantChatId, applicantLid);
+      assert(registry.verifyTenantPin('0634778899', '2026'), '4-digit PIN must verify cleanly');
+
+      // Applicant is told politely to WAIT for approval
+      assert(
+        onbTransport.sentMessages.some((m) => m.chatId === applicantLid && m.text.includes('FADLAN SUG') && m.text.includes('sug inta')),
+        'Applicant must be told clearly to wait until request is approved'
+      );
+      // Request form is sent ONLY to primary Owner (252634000001), NOT to staff admin sub_admin1 (252634889900)!
+      assert(
+        onbTransport.sentMessages.some((m) => m.chatId === '252634000001@s.whatsapp.net' && m.text.includes(`!approve ${personalApplicant!.id}`)),
+        'Owner must receive WhatsApp notification with !approve command'
+      );
+      assert(
+        !onbTransport.sentMessages.some((m) => m.chatId === '252634889900@s.whatsapp.net'),
+        'WhatsApp !join request form must go ONLY to Owner, NOT staff admins'
+      );
+
+      // Admin lists pending requests via !pending
+      onbTransport.sentMessages = [];
+      await sendWa('252634000001@s.whatsapp.net', '252634000001@s.whatsapp.net', '!pending');
+      assert(onbTransport.sentMessages[0].text.includes(personalApplicant!.id));
+
+      // Mock live 8-char pairing code generator for approval verification
+      (manager as any).startSockets = true;
+      (manager as any).requestPairingCode = async (_id: string, phone?: string) => ({
+        success: true,
+        code: 'WXYZ1234',
+        formattedCode: 'WXYZ-1234',
+        phone: phone || '252634778899',
+      });
+
+      onbTransport.sentMessages = [];
+      onbTransport.sentMedia = [];
+      await sendWa('252634000001@s.whatsapp.net', '252634000001@s.whatsapp.net', `!approve ${personalApplicant!.id}`);
+
+      const approvedTenant = registry.getTenant(personalApplicant!.id)!;
+      assert.strictEqual(approvedTenant.status, 'active');
+
+      // Verify applicant received 8-character pairing code AND clickable Dashboard link + /portal link
+      const approvalMsg = onbTransport.sentMessages.find(
+        (m) => m.chatId === applicantLid && m.text.includes('WXYZ-1234')
+      );
+      assert(
+        approvalMsg && approvalMsg.text.includes(`/client/${personalApplicant!.id}`) && approvalMsg.text.includes('/portal'),
+        'Approved user must receive 8-char pairing code, Dashboard URL & /portal link'
+      );
+
+      // Verify Owner received confirmation including Pairing Code AND subscriber Dashboard URL
+      assert(
+        onbTransport.sentMessages.some(
+          (m) =>
+            m.chatId === '252634000001@s.whatsapp.net' &&
+            m.text.includes('WXYZ-1234') &&
+            m.text.includes(`/client/${personalApplicant!.id}`)
+        ),
+        'Owner must receive approval confirmation with generated pairing code and Dashboard link'
+      );
+
+      // Verify valid %PDF-1.4 document with commands & instructions was sent on WhatsApp!
+      const pdfDoc = onbTransport.sentMedia.find(
+        (d) => d.chatId === applicantLid && d.media.type === 'document' && d.media.mimeType === 'application/pdf'
+      );
+      assert(pdfDoc, 'Approved subscriber MUST receive a PDF guide document on WhatsApp');
+      const pdfAscii = pdfDoc!.media.dataBuffer.toString('latin1');
+      assert(pdfAscii.startsWith('%PDF-1.4') && pdfAscii.includes('%%EOF'), 'Document buffer must be valid PDF-1.4');
+      assert(pdfAscii.includes('WXYZ-1234') && pdfAscii.includes('!view on') && pdfAscii.includes('Cabdi Cali'), 'PDF must include pairing code, commands & subscriber name');
+
+      // Verify applicant can re-request fresh 8-char code (!pair) & guide (!pdf) on demand
+      onbTransport.sentMessages = [];
+      onbTransport.sentMedia = [];
+      await sendWa(applicantLid, applicantLid, '!pair', { senderPhone: '252634778899' });
+      assert(onbTransport.sentMessages.some((m) => m.chatId === applicantLid && m.text.includes('WXYZ-1234')));
+
+      await sendWa(applicantLid, applicantLid, '!pdf', { senderPhone: '252634778899' });
+      assert(onbTransport.sentMedia.some((d) => d.chatId === applicantLid && d.media.type === 'document'));
+
+      // Standalone PDF helper sanity check
+      const customPdf = generateSubscriberGuidePdfBuffer({
+        subscriberName: 'Test Academy',
+        phone: '252634111222',
+        category: 'education',
+        portalUrl: 'https://example.com/client/1',
+        pairingCode: '1234-5678',
+      });
+      assert(customPdf.length > 1500 && customPdf.toString('latin1').startsWith('%PDF-1.4'));
+
+      console.log('✅ Test 11 passed: WhatsApp !join form, Admin !approve, automatic 8-char Pairing Code & PDF Commands Guide delivery verified!');
+    } finally {
+      (manager as any).requestPairingCode = prevReqPair;
+      (manager as any).startSockets = prevStartSockets;
+      (ownerCtx as any).transport = prevOwnerTr2;
+    }
 
     console.log('\n🎉 ALL MULTI-TENANT SAAS TESTS PASSED CLEANLY!\n');
   } finally {
