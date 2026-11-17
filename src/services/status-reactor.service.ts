@@ -987,7 +987,50 @@ Respond with ONLY valid JSON:
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
 
-    // 7. Download status media & perform AI Vision inspection if media is present
+    // ─── 7. INSTANT Love Cagaaran (💚) Reaction ──────────────────────────────
+    // Dispatched within ~500ms so "Liked your status" appears immediately on WhatsApp!
+    // Contacts will see the green heart on their story right away, without waiting
+    // for AI media vision download or 10-30s typing delay.
+    const shouldReact =
+      this.config.autoReact &&
+      (this.config.mode === 'reaction' || this.config.mode === 'both');
+
+    if (shouldReact) {
+      let instantEmoji = '💚';
+      const lower = text.toLowerCase();
+      if (
+        lower.includes('geeriyooday') ||
+        lower.includes('innaa lillaahi') ||
+        lower.includes('tacsi') ||
+        lower.includes('xanuun') ||
+        lower.includes('isbitaal')
+      ) {
+        instantEmoji = '🤲';
+      } else if (lower.includes('jimco') || lower.includes('duco') || lower.includes('aamiin')) {
+        instantEmoji = '✨';
+      }
+
+      setTimeout(async () => {
+        try {
+          await this.sendStatusReaction(msg, socket, senderJid, instantEmoji);
+          this.recordInteraction({
+            id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            senderJid,
+            senderName,
+            type: 'reaction',
+            content: instantEmoji,
+            category: 'media_only',
+            statusText: text,
+            timestamp: Date.now(),
+          });
+          console.log(`💚 [StatusReactor] Instant Love Cagaaran (${instantEmoji}) applied for ${senderName || senderJid}`);
+        } catch (rErr: any) {
+          console.warn(`[StatusReactor] Instant reaction error: ${rErr?.message}`);
+        }
+      }, 500);
+    }
+
+    // 8. Download status media & perform AI Vision inspection if media is present
     let visualCategory: StatusCategory | null = null;
     let visualDescription: string | undefined = undefined;
     if (hasMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && this.aiOrchestrator) {
@@ -1039,6 +1082,103 @@ Respond with ONLY valid JSON:
     }
 
     return true;
+  }
+
+  /**
+   * Dispatches the official WhatsApp Status Like (Love Cagaaran 💚).
+   * Uses multiple fail-safe parallel delivery paths so it reliably shows up in the contact's status viewers list.
+   */
+  public async sendStatusReaction(
+    msg: proto.IWebMessageInfo,
+    socket: any,
+    senderJid: string,
+    emoji: string = '💚'
+  ): Promise<boolean> {
+    if (!socket || !msg?.key?.id) return false;
+
+    const rawParticipant = msg.key.participant || (msg as any).participant || senderJid;
+    const cleanSender      = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+    const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+
+    // The reaction key targeting the status update
+    const reactionKey: proto.IMessageKey = {
+      remoteJid: 'status@broadcast',
+      id: msg.key.id,
+      participant: cleanParticipant,
+      fromMe: Boolean(msg.key.fromMe),
+    };
+
+    const statusJidList: string[] = [cleanParticipant];
+    if (socket.user?.id) {
+      const myClean = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+      if (myClean !== cleanParticipant) statusJidList.push(myClean);
+    }
+
+    let delivered = false;
+
+    // Pathway 1: Direct peer sendMessage to cleanSender (Standard mechanism for WhatsApp mobile "liked your status")
+    try {
+      await socket.sendMessage(cleanSender, {
+        react: {
+          text: emoji,
+          key: reactionKey,
+        },
+      });
+      delivered = true;
+      console.log(`💚 [StatusReactor] Direct peer reaction "${emoji}" sent to ${cleanSender} (id: ${msg.key.id})`);
+    } catch (err: any) {
+      console.warn(`[StatusReactor] Peer reaction attempt 1 error: ${err?.message}`);
+    }
+
+    // Pathway 2: Send to status@broadcast with statusJidList (WhatsApp server-side status like registration)
+    try {
+      await socket.sendMessage(
+        'status@broadcast',
+        {
+          react: {
+            text: emoji,
+            key: reactionKey,
+          },
+        },
+        {
+          statusJidList,
+        }
+      );
+      delivered = true;
+      console.log(`💚 [StatusReactor] Broadcast reaction "${emoji}" delivered to status@broadcast`);
+    } catch (err: any) {
+      console.warn(`[StatusReactor] Broadcast reaction attempt 2 notice: ${err?.message}`);
+    }
+
+    // Pathway 3: Fallback using original msg.key to cleanSender if different
+    if (!delivered) {
+      try {
+        await socket.sendMessage(cleanSender, {
+          react: {
+            text: emoji,
+            key: msg.key,
+          },
+        });
+        delivered = true;
+        console.log(`💚 [StatusReactor] Fallback msg.key peer reaction delivered to ${cleanSender}`);
+      } catch (err: any) {
+        console.warn(`[StatusReactor] Fallback reaction attempt 3 error: ${err?.message}`);
+      }
+    }
+
+    // Pathway 4: If senderJid differs from cleanSender (e.g. LID variant), notify senderJid directly
+    if (senderJid && senderJid !== cleanSender) {
+      try {
+        await socket.sendMessage(senderJid, {
+          react: {
+            text: emoji,
+            key: reactionKey,
+          },
+        });
+      } catch {}
+    }
+
+    return delivered;
   }
 
   /**
@@ -1120,45 +1260,7 @@ Respond with ONLY valid JSON:
       }
 
       try {
-        // ── Clean JIDs ────────────────────────────────────────────────────────
-        const rawParticipant = msg.key.participant || (msg as any).participant || senderJid;
-        const cleanSender      = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-        const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-
-        // ── Use the ORIGINAL msg.key — do NOT reconstruct ────────────────────
-        // Reconstructed keys miss server-side fields (e.g. serverToken) that
-        // WhatsApp needs to match the status update and show "liked your status".
-        const originalKey = msg.key;
-
-        // ── statusJidList: only the sender + ourselves ────────────────────────
-        // Extra JIDs (duplicates, LID variants) cause USync errors and prevent
-        // the reaction from being delivered.
-        const statusJidList: string[] = [cleanParticipant];
-        if (socket.user?.id) {
-          const myClean = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-          if (myClean !== cleanParticipant) statusJidList.push(myClean);
-        }
-
-        console.log(`[StatusReactor] Sending reaction "${emoji}" | statusJidList=${JSON.stringify(statusJidList)} | msgId=${originalKey.id}`);
-
-        // A. Send status@broadcast reaction (SenderKey path — registers the like
-        //    so WhatsApp servers record it and show the green heart in viewers)
-        await socket.sendMessage(
-          'status@broadcast',
-          { react: { text: emoji, key: originalKey } },
-          { statusJidList }
-        );
-
-        // B. Send direct peer reaction (P2P path — makes "liked your status"
-        //    appear on the contact's screen immediately on Android / iOS)
-        await socket.sendMessage(
-          cleanSender,
-          { react: { text: emoji, key: originalKey } },
-          { statusJidList }
-        ).catch((err: any) => {
-          console.warn(`[StatusReactor] Direct peer reaction notice: ${err?.message}`);
-        });
-
+        await this.sendStatusReaction(msg, socket, senderJid, emoji);
         this.recordInteraction({
           id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           senderJid,
@@ -1169,7 +1271,6 @@ Respond with ONLY valid JSON:
           statusText: rawText,
           timestamp: Date.now(),
         });
-
         console.log(`💚 [StatusReactor] Reacted "${emoji}" (Love Cagaaran) to status of ${senderName || senderJid} (${gender})`);
       } catch (err: any) {
         console.warn(`[StatusReactor] Failed to react to status: ${err?.message}`);
