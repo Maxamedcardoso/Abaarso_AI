@@ -33,7 +33,10 @@ export type StatusCategory =
   | 'style_selfie'
   | 'general_quote'
   | 'video'
-  | 'media_only';
+  | 'media_only'
+  | 'emoji_only'
+  | 'link_status'
+  | 'phone_number_status';
 
 export interface StatusAnalysisResult {
   category: StatusCategory;
@@ -248,6 +251,49 @@ export class StatusReactorService {
   ): StatusAnalysisResult {
     const clean = (text || '').trim();
     const lower = clean.toLowerCase();
+
+    // 0a. Emoji-only detection — if text has ONLY emojis/whitespace, skip comment
+    if (clean.length > 0 && /^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}\s]+$/u.test(clean)) {
+      return {
+        category: 'emoji_only',
+        suggestedEmojis: ['💚'],
+        suggestedComments: [],
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 1.0,
+      };
+    }
+
+    // 0b. URL / link detection — if text contains a URL, skip comment (react only)
+    if (/https?:\/\/|tiktok\.com|youtube\.com|youtu\.be|instagram\.com|twitter\.com|t\.me/i.test(clean)) {
+      return {
+        category: 'link_status',
+        suggestedEmojis: ['💚'],
+        suggestedComments: [],
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 1.0,
+      };
+    }
+
+    // 0c. Phone number status detection — strip to digits, check if 9-15 chars with minimal other content
+    const digitsOnly = clean.replace(/[^0-9]/g, '');
+    if (digitsOnly.length >= 9 && digitsOnly.length <= 15 && clean.length <= 20) {
+      return {
+        category: 'phone_number_status',
+        suggestedEmojis: ['💚'],
+        suggestedComments: [],
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 0.95,
+      };
+    }
 
     // 1. Condolence / Tacsi / Geeri (HIGHEST PRIORITY - must never receive celebratory reactions)
     if (
@@ -689,23 +735,35 @@ export class StatusReactorService {
             ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno". Weligaa ha ku odhan "ninyahow" ama "qaali"!'
             : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal". Weligaa ha isticmaalin "qaali".';
 
-        const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, garaad iyo caqli aad u sarreeya leh, aftahan ah, aadna u asluub badan. Waxaad WhatsApp ku arkaysaa status uu saaxiibkaa ama saaxiibtaada soo dhigtay.
+        const mediaTypeLabel = mediaKind === 'video'
+          ? 'Muuqaal/Video (waa video, ka jawaab si dabiici ah oo kooban)'
+          : (mediaKind === 'image' || analysis.hasMedia)
+            ? 'Sawir/Image'
+            : 'Qoraal/Text';
+
+        const prompt = `Waxaad tahay CARDOSO (Maxamed Daahir oo ah xafiiskiisa), qof Soomaali ah oo dhalinyaro ah, aad u casri ah, oo WhatsApp isticmaala. Waxaad ku arkaysaa status uu saaxiibkaa ama saaxiibtaada soo dhigtay.
 Magaca qofka: "${senderName || 'Walaal'}"
 ${genderDirective}
-Nooca status-ka: ${mediaKind === 'video' ? 'Muuqaal/Video' : mediaKind === 'image' || analysis.hasMedia ? 'Sawir/Image' : 'Qoraal/Text'}
-Qoraalka status-ka: "${analysis.extractedText || (mediaKind === 'video' ? 'Muuqaal/Video' : 'Sawir/Image')}"
-Nooca/Dulucda la falanqeeyay: ${analysis.category}
+Nooca status-ka: ${mediaTypeLabel}
+Qoraalka status-ka: "${analysis.extractedText || (mediaKind === 'video' ? 'Video' : 'Sawir')}"
+Nooca la falanqeeyay: ${analysis.category}
 
 HAWSHAADA:
-Fahan qoraalka iyo waxa uu qofku ka hadlayo si qoto dheer oo caqli badan (dulucda, dareenka, macnaha dhabta ah).
-Qor hal weedh oo kooban (3 ilaa 8 eray) oo toos ugu socota waxa uu qofku soo qoray ama soo dhigay, adoo muujinaya inaad 100% fahantay oo aad dareenka la qaybsanayso.
+${mediaKind === 'video'
+  ? 'Waa video. Ka jawaab si dabiici ah oo kooban — 1 ilaa 2 weedh keliya, sidii saaxiib WhatsApp ah.'
+  : (mediaKind === 'image' || analysis.hasMedia)
+    ? "Qiimee waxa sawirka ku jira: ma qof ayuu leeyahay? ma alaab la iibinayo (ganacsato)? ma dabiici/meel? Ka jawaab si gaagaaban oo dabiici ah. Haddii alaab la iibinayo: \"Masha'Allah alaab qurux badan, qiimaheedu ma yahay? 🔥\". Haddii selfie/qof: ka jawaab sida saaxiib."
+    : 'Fahan qoraalka si qoto dheer oo caqli badan. Qor hal weedh kooban oo toos u socota waxa uu qofku ka hadlayo.'}
 
-SHURUUCO ADAG OO MAMNUUC AH:
-1. MAMNUUC ADAG: WELIGAA qofna ha ku odhan "qaali" ama "qaaliga ah". Ereyga "qaali" gabi ahaanba waa mamnuuc oo lama ogola!
-2. MAMNUUC: Ha dhihin hadalo caadi ah oo aan waxba fahansanayn sida "Masha'Allah wax aad u heer sarreeya walaal" ama faallooyin indho la'aan ah.
-3. MAMNUUC: Ha u hadlin sidii robot, AI, bot, ama shirkad. Weligaa ha bilaabin "Asc", "Wcs", "Kusoo dhawoow", ama "Maxaan kaa caawiyaa".
-4. Haddii uu qofku soo dhigay tacsi ama xanuun, duco qiiro leh u dir (ha isticmaalin emoji qosol ama dab ah).
-5. Luuqad Soomaali saafi ah oo aad u heer sarreysa, dhalinyaronimo iyo xushmad leh.`;
+SHURUUCO ADAG (MAMNUUC):
+1. MAMNUUC ADAG: WELIGAA ha sheegin inaad AI tahay. Hadal sidii qof bani'aadam ah oo WhatsApp isticmaalaya.
+2. MAMNUUC ADAG: WELIGAA qofna ha ku odhan "qaali" ama "qaaliga ah".
+3. Hadalkaagu ha ahaado mid gaagaaban, dabiici ah — 1 ilaa 2 weedh oo keliya.
+4. MAMNUUC: Ha dhihin "Maxaan kugu caawin karaa", "Waxaan ahay AI", "Sida xogta", ama wax la mid ah.
+5. Haddii sawirku yahay mid gacan-siis (handshake) ama salaambixin oo keliya, REPLY HA BIXIN — soo celi eray kooban oo ay la jaan qaadays.
+6. MAMNUUC: Ha u hadlin sidii robot, AI, bot. Weligaa ha bilaabin "Asc", "Wcs", "Kusoo dhawoow", ama "Maxaan kaa caawiyaa".
+7. Haddii uu qofku soo dhigay tacsi ama xanuun, duco qiiro leh u dir.
+8. Luuqad Soomaali saafi ah oo dhalinyaronimo iyo xushmad leh.`;
 
         const res = await this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 60 });
         if (res && res.text && !res.text.includes('mashquulsan') && res.text.trim().length > 3) {
@@ -865,11 +923,40 @@ SHURUUCO ADAG OO MAMNUUC AH:
   ): Promise<void> {
     if (!socket) return;
 
+    // --- Handle phone_number_status: skip both react and comment, send DM instead ---
+    if (analysis.category === 'phone_number_status') {
+      try {
+        const digits = rawText.replace(/[^0-9]/g, '');
+        if (digits.length >= 9 && digits.length <= 15) {
+          const phoneJid = `${digits}@s.whatsapp.net`;
+          await socket.sendMessage(phoneJid, { text: 'Walaal i keydi 📲' });
+          console.log(`📲 [StatusReactor] Sent DM "Walaal i keydi 📲" to phone number ${digits} from status of ${senderName || senderJid}`);
+          this.recordInteraction({
+            id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            senderJid,
+            senderName,
+            type: 'comment',
+            content: 'Walaal i keydi 📲 (DM to phone number in status)',
+            category: analysis.category,
+            statusText: rawText,
+            timestamp: Date.now(),
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[StatusReactor] Failed to send phone-number DM: ${err?.message}`);
+      }
+      return;
+    }
+
     // Decide whether to react, comment, or both
     const shouldReact =
       this.config.autoReact &&
       (this.config.mode === 'reaction' || this.config.mode === 'both' || !this.config.autoComment);
+    // emoji_only and link_status: react only, never comment
+    const skipComment =
+      analysis.category === 'emoji_only' || analysis.category === 'link_status';
     const shouldComment =
+      !skipComment &&
       this.config.autoComment &&
       (this.config.mode === 'comment' || this.config.mode === 'both' || !this.config.autoReact);
 
