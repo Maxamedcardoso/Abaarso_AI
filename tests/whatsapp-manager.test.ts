@@ -1444,15 +1444,21 @@ suite.test('Islamic Prayer Times Engine, Athan Speech Synthesis & Sunnah Du\'a',
   const fajrAthan = service.getAthanSpeechText(true);
   assertTrue(fajrAthan.includes('الصَّلَاةُ خَيْرٌ مِنَ النَّوْمِ'), 'Fajr Athan must include Al-Salatu Khairun Minan Nawm');
 
-  // 4b. Real Melodious Human Athan & Dua Audio Loading (from assets/audio)
+  // 4b. Real Melodious Human Athan & Dua Audio Loading (WhatsApp Native Voice Note Ogg Opus PTT)
   const athanAudio = await service.getAthanAudio(false);
   assertTrue(athanAudio !== null && athanAudio.buffer.length > 10000, 'Should load real melodious human Athan audio');
+  assertEqual(athanAudio!.mimeType, 'audio/ogg; codecs=opus', 'Athan must be native WhatsApp Voice Note (audio/ogg; codecs=opus)');
+  assertEqual(athanAudio!.buffer.slice(0, 4).toString(), 'OggS', 'Athan buffer must be native OggS container for PTT waveform');
 
   const fajrAudio = await service.getAthanAudio(true);
   assertTrue(fajrAudio !== null && fajrAudio.buffer.length > 10000, 'Should load real melodious human Fajr Athan audio');
+  assertEqual(fajrAudio!.mimeType, 'audio/ogg; codecs=opus', 'Fajr Athan must be native WhatsApp Voice Note (audio/ogg; codecs=opus)');
+  assertEqual(fajrAudio!.buffer.slice(0, 4).toString(), 'OggS', 'Fajr Athan buffer must be native OggS container');
 
   const duaAudio = await service.getDuaAudio();
   assertTrue(duaAudio !== null && duaAudio.buffer.length > 10000, 'Should load real melodious human Du\'a audio');
+  assertEqual(duaAudio!.mimeType, 'audio/ogg; codecs=opus', 'Dua audio must be native WhatsApp Voice Note (audio/ogg; codecs=opus)');
+  assertEqual(duaAudio!.buffer.slice(0, 4).toString(), 'OggS', 'Dua buffer must be native OggS container');
 
   // 5. Sunnah Du'a after Athan text
   const duaText = service.getDuaAfterAthanText();

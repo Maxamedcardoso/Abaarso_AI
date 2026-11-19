@@ -262,9 +262,9 @@ export class PrayerTimesService {
   }
 
   /**
-   * Generates or fetches authentic human Athan audio buffer (Voice Note / Ogg Opus).
+   * Generates or fetches authentic human Athan audio buffer (WhatsApp Voice Note / Ogg Opus PTT).
    * Uses real human Mu'adhin recordings (Sheikh Nasser Al-Qatami & Sheikh Mishary Alafasy).
-   * Fallback to high-definition Arabic Neural TTS if offline/missing.
+   * Delivered in native Ogg Opus format so WhatsApp renders it strictly as a playable Voice Note!
    */
   public async getAthanAudio(isFajr: boolean = false): Promise<{ buffer: Buffer; mimeType: string } | null> {
     const cacheKey = isFajr ? 'athan_fajr' : 'athan_standard';
@@ -274,13 +274,32 @@ export class PrayerTimesService {
       return { buffer: cached.buffer, mimeType: cached.mimeType };
     }
 
-    // 1. Try real human audio from assets
-    const audioFileName = isFajr ? 'athan-fajr.mp3' : 'athan-standard.mp3';
-    const filePath = path.join(this.audioDir, audioFileName);
-
-    if (fs.existsSync(filePath)) {
+    // 1. Try real human Ogg Opus Voice Note (.ogg) first for authentic WhatsApp PTT playback
+    const oggFileName = isFajr ? 'athan-fajr.ogg' : 'athan-standard.ogg';
+    const oggPath = path.join(this.audioDir, oggFileName);
+    if (fs.existsSync(oggPath)) {
       try {
-        const fileBuf = fs.readFileSync(filePath);
+        const fileBuf = fs.readFileSync(oggPath);
+        if (fileBuf && fileBuf.length > 5000) {
+          const result = {
+            buffer: fileBuf,
+            mimeType: 'audio/ogg; codecs=opus',
+          };
+          this.athanAudioCache.set(cacheKey, { ...result, timestamp: Date.now() });
+          return result;
+        }
+      } catch (fErr: any) {
+        console.warn(`[PrayerTimesService] Could not read human OGG audio file: ${fErr?.message}`);
+      }
+    }
+
+    // 2. Try real human MP3 audio from assets and convert to Ogg Opus on-the-fly
+    const mp3FileName = isFajr ? 'athan-fajr.mp3' : 'athan-standard.mp3';
+    const mp3Path = path.join(this.audioDir, mp3FileName);
+
+    if (fs.existsSync(mp3Path)) {
+      try {
+        const fileBuf = fs.readFileSync(mp3Path);
         if (fileBuf && fileBuf.length > 10000) {
           const opusBuf = await VoiceReplyService.convertMp3ToOggOpus(fileBuf);
           const isOggOpus = opusBuf.slice(0, 4).toString() === 'OggS';
@@ -292,11 +311,11 @@ export class PrayerTimesService {
           return result;
         }
       } catch (fErr: any) {
-        console.warn(`[PrayerTimesService] Could not read human audio file: ${fErr?.message}`);
+        console.warn(`[PrayerTimesService] Could not read human MP3 audio file: ${fErr?.message}`);
       }
     }
 
-    // 2. Fallback: Edge Neural Voice in Arabic
+    // 3. Fallback: Edge Neural Voice in Arabic converted to Ogg Opus
     try {
       const speechText = this.getAthanSpeechText(isFajr);
       const voiceResult = await VoiceReplyService.synthesizeVoice(speechText, 'ar');
@@ -315,8 +334,8 @@ export class PrayerTimesService {
   }
 
   /**
-   * Generates or fetches authentic human Du'a after Athan audio buffer (Voice Note / Ogg Opus).
-   * Uses real human recording from assets when available.
+   * Generates or fetches authentic human Du'a after Athan audio buffer (WhatsApp Voice Note / Ogg Opus PTT).
+   * Uses real human recording from assets, rendered strictly as a playable Voice Note!
    */
   public async getDuaAudio(): Promise<{ buffer: Buffer; mimeType: string } | null> {
     const oneDay = 24 * 60 * 60 * 1000;
@@ -324,11 +343,29 @@ export class PrayerTimesService {
       return { buffer: this.duaAudioCache.buffer, mimeType: this.duaAudioCache.mimeType };
     }
 
-    // 1. Try real human audio from assets
-    const filePath = path.join(this.audioDir, 'dua-after-athan.mp3');
-    if (fs.existsSync(filePath)) {
+    // 1. Try real human Ogg Opus Voice Note (.ogg) first
+    const oggPath = path.join(this.audioDir, 'dua-after-athan.ogg');
+    if (fs.existsSync(oggPath)) {
       try {
-        const fileBuf = fs.readFileSync(filePath);
+        const fileBuf = fs.readFileSync(oggPath);
+        if (fileBuf && fileBuf.length > 5000) {
+          const result = {
+            buffer: fileBuf,
+            mimeType: 'audio/ogg; codecs=opus',
+          };
+          this.duaAudioCache = { ...result, timestamp: Date.now() };
+          return result;
+        }
+      } catch (fErr: any) {
+        console.warn(`[PrayerTimesService] Could not read human OGG dua: ${fErr?.message}`);
+      }
+    }
+
+    // 2. Try real human MP3 audio and convert to Ogg Opus on-the-fly
+    const mp3Path = path.join(this.audioDir, 'dua-after-athan.mp3');
+    if (fs.existsSync(mp3Path)) {
+      try {
+        const fileBuf = fs.readFileSync(mp3Path);
         if (fileBuf && fileBuf.length > 10000) {
           const opusBuf = await VoiceReplyService.convertMp3ToOggOpus(fileBuf);
           const isOggOpus = opusBuf.slice(0, 4).toString() === 'OggS';
@@ -340,11 +377,11 @@ export class PrayerTimesService {
           return result;
         }
       } catch (fErr: any) {
-        console.warn(`[PrayerTimesService] Could not read human dua audio: ${fErr?.message}`);
+        console.warn(`[PrayerTimesService] Could not read human MP3 dua: ${fErr?.message}`);
       }
     }
 
-    // 2. Fallback: Edge Neural Voice in Arabic
+    // 3. Fallback: Edge Neural Voice in Arabic converted to Ogg Opus
     try {
       const duaSpeech =
         `اللَّهُمَّ رَبَّ هَذِهِ الدَّعْوَةِ التَّامَّةِ، وَالصَّلَاةِ الْقَائِمَةِ، آتِ مُحَمَّدًا الْوَسِيلَةَ وَالْفَضِيلَةَ، وَابْعَثْهُ مَقَامًا مَحْمُودًا الَّذِي وَعَدْتَهُ. ` +
