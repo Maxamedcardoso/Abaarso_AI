@@ -744,6 +744,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         if (call.status === 'offer') {
           console.log(`\n📞 [Incoming Call] Wicitaan laga helay: ${call.from} (ID: ${call.id})`);
           const callerPhone = call.from.split('@')[0].split(':')[0].replace(/\D/g, '');
+          if (this.whatsappManager?.isAIDisabledForNumber(callerPhone)) {
+            console.log(`📞 [Incoming Call Allowed] Wicitaanka ${callerPhone} lama jarin sababtoo ah AI-ga ayaa laga xidhay (!off).`);
+            continue;
+          }
           const shouldReject = this.whatsappManager ? this.whatsappManager.shouldRejectCall(callerPhone) : false;
           if (!shouldReject) {
             console.log(`📞 [Incoming Call Allowed] Wicitaanka ${callerPhone} waa loo ogolaaday sababtoo ah Call Reject kuma saarna.`);
@@ -1152,6 +1156,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       if (this.socket) {
         if (this.whatsappManager?.isLinkCampaignMode()) {
           console.log(`ℹ️ [WhatsAppBaileys] Link Campaign Mode is ON: Status reaction/reply suppressed.`);
+        } else if (statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
+          console.log(`ℹ️ [WhatsAppBaileys] Status from ${statusSender} ignored: AI disabled for this number (!off).`);
         } else {
           this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
             console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);

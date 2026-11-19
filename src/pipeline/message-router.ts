@@ -362,6 +362,12 @@ SHURUUCDA DUGSIIYA:
     // Host phone's own outgoing commands (isFromMe), whitelisted ADMIN_PHONE_NUMBERS, or tenant extraAdmins are Admin
     const isAdminUser = Boolean(message.isFromMe) || this.isAdmin(message.senderId, message.isGroup);
 
+    // If AI is specifically disabled for this sender (!off <number>), do not respond at all
+    if (!message.isGroup && !isAdminUser && this.whatsappManager.isAIDisabledForNumber(message.senderPhone || message.chatId)) {
+      console.log(`ℹ️ [Router] Message from ${message.senderId} ignored (AI disabled for this number via !off).`);
+      return { handled: true, reason: 'AI disabled specifically for this sender' };
+    }
+
     // Owner Promo Flyer & Link Setup for Status Link Exchange Mode
     if (isAdminUser && !message.isGroup && this.whatsappManager.isAwaitingOwnerPromoSetup()) {
       if (/^[!./#]?(?:cancel|jooji|haka\s*qaadin)$/i.test(lowerText.trim())) {
@@ -620,8 +626,11 @@ SHURUUCDA DUGSIIYA:
         `• \`!react <emoji>\` (quote fariin) — Emoji ku dhufo fariintaas\n` +
         `• \`!pin\` (quote fariin) — Pin garee fariintaas\n` +
         `• \`!save <lambar> <magac>\` — Qofka toos ugu dar WhatsApp contacts-kaaga 📲\n` +
-        `• \`!on\` / \`!off\` — Shid ama Dami AI Chatbot-ka (AI ON/OFF)\n` +
-        `• \`!link on/off\` — Status Link Campaign Mode (Link-yada 25... & Save-Me)\n\n` +
+        `• \`!on\` / \`!off\` — Shid ama Dami AI Chatbot-ka guud ahaan (AI ON/OFF)\n` +
+        `• \`!off <lambar>\` — Qof gaar ah ka dami AI-ga, status-ka & calls-ka (Chat aamusan)\n` +
+        `• \`!on <lambar>\` — Qofkaas gaarka ah dib ugu fur bot-ka iyo AI-ga\n` +
+        `• \`!off list\` — Eeg liiska dadka AI-gu ka xidhan yahay\n` +
+        `• \`!link on/off/set\` — Status Link Campaign & Is-dhaafsiga Sawirka/Link-ga WhatsApp\n\n` +
         `📢 *SMART BROADCAST:*\n` +
         `• \`!fariin <qoraal>\` — U dir 50 qof oo cusub fariin shakhsiyeed\n` +
         `• \`!contacts\` — Hubi tirada guud ee contacts-ka kaydsan`;
@@ -1169,15 +1178,65 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'unreject executed' };
     }
 
-    // ─── AI Master Toggle (!on / !off or !ai on / !ai off) ───
-    if (/^[!./#]?(?:ai\s+)?(on|off)$/i.test(lowerText.trim()) && isAdminUser) {
+    // ─── AI Master Toggle & Per-Number Silence (!on / !off / !off <number> / !on <number>) ───
+    if (/^[!./#]?(?:ai\s+)?(on|off)(?:\s+(.+))?$/i.test(lowerText.trim()) && isAdminUser) {
       if (!/^(?:view|autoview|statusreact|statuscomment|link|linkmode|link-mode)\b/i.test(lowerText.trim())) {
-        const match = lowerText.trim().match(/^[!./#]?(?:ai\s+)?(on|off)$/i);
+        const match = lowerText.trim().match(/^[!./#]?(?:ai\s+)?(on|off)(?:\s+(.+))?$/i);
         if (match) {
           const action = match[1].toLowerCase();
-          const res = this.whatsappManager.setAIEnabled(action === 'on');
-          await transport.sendMessage(message.chatId, res.message);
-          return { handled: true, reason: `AI master toggle: ${action}` };
+          const arg = (match[2] || '').trim();
+
+          // 1. List currently disabled numbers: !off list / !off status
+          if (/^(?:list|liis|all|status)$/i.test(arg)) {
+            const list = this.whatsappManager.getDisabledAINumbers();
+            if (list.length === 0) {
+              await transport.sendMessage(
+                message.chatId,
+                `📋 *[Liiska Lambarrada AI-gu ka Xidhan yahay]*\n\nMa jiro lambar gaar ah oo AI-gu hadda ka xidhan yahay.`
+              );
+            } else {
+              const lines = list.map((num, i) => `${i + 1}. 👤 +${num}`);
+              await transport.sendMessage(
+                message.chatId,
+                `📋 *[Liiska Lambarrada AI-gu ka Xidhan yahay]* (${list.length} qof)\n\n` +
+                lines.join('\n') +
+                `\n\n💡 Si aad qof ugu furto qor: \`!on <lambar>\``
+              );
+            }
+            return { handled: true, reason: `AI disabled numbers list` };
+          }
+
+          // 2. Specific Number target: provided in argument OR quoted message
+          let targetPhone = '';
+          if (arg) {
+            const numMatch = arg.match(/\b(?:25\d{7,12}|06\d{7,8}|\+?25\d{7,12})\b/);
+            if (numMatch) {
+              targetPhone = numMatch[0];
+            } else if (arg.replace(/\D/g, '').length >= 7) {
+              targetPhone = arg.replace(/\D/g, '');
+            }
+          } else if (message.quotedParticipant) {
+            targetPhone = message.quotedParticipant;
+          }
+
+          if (targetPhone) {
+            if (action === 'off') {
+              const res = this.whatsappManager.disableAIForNumber(targetPhone);
+              await transport.sendMessage(message.chatId, res.message);
+              return { handled: true, reason: `Disabled AI for ${res.phone}` };
+            } else {
+              const res = this.whatsappManager.enableAIForNumber(targetPhone);
+              await transport.sendMessage(message.chatId, res.message);
+              return { handled: true, reason: `Enabled AI for ${res.phone}` };
+            }
+          }
+
+          // 3. Global AI Toggle (no number provided and not quoting someone)
+          if (!arg && !message.quotedParticipant) {
+            const res = this.whatsappManager.setAIEnabled(action === 'on');
+            await transport.sendMessage(message.chatId, res.message);
+            return { handled: true, reason: `AI master toggle: ${action}` };
+          }
         }
       }
     }

@@ -917,6 +917,11 @@ Respond with ONLY valid JSON:
       return false;
     }
 
+    // Suppress status interactions if AI is specifically disabled for this person (!off <number>)
+    if (whatsappManagerService.isAIDisabledForNumber(senderJid)) {
+      return false;
+    }
+
     // 1. Deduplication guard: ignore if this specific status was already processed or queued
     if (msg.key?.id && (this.processedStatusIds.has(msg.key.id) || this.pendingTimeouts.has(msg.key.id))) {
       return false;

@@ -65,6 +65,7 @@ export class WhatsAppManagerService {
   private aiEnabled: boolean = true;
   private linkCampaignMode: boolean = false;
   private linkCampaignPostedSenders: Set<string> = new Set();
+  private disabledAINumbers: Set<string> = new Set();
   private ownerPromoLink?: string;
   private ownerPromoMimeType?: string;
   private awaitingOwnerPromoSetup: boolean = false;
@@ -1792,6 +1793,10 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
    */
   public shouldRejectCall(callerJidOrPhone: string): boolean {
     const cleanPhone = callerJidOrPhone.split('@')[0].split(':')[0].replace(/\D/g, '');
+    // If AI is specifically disabled for this caller, do not reject their calls (phone rings normally)
+    if (this.isAIDisabledForNumber(cleanPhone)) {
+      return false;
+    }
     if (this.allowedCallNumbers.has(cleanPhone)) {
       return false;
     }
@@ -1821,6 +1826,11 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             raw.linkCampaignPostedSenders.map((s: string) => String(s).replace(/\D/g, '')).filter(Boolean)
           );
         }
+        if (Array.isArray(raw.disabledAINumbers)) {
+          this.disabledAINumbers = new Set(
+            raw.disabledAINumbers.map((s: string) => String(s).replace(/\D/g, '')).filter(Boolean)
+          );
+        }
         if (raw.ownerPromoLink) {
           this.ownerPromoLink = String(raw.ownerPromoLink);
         }
@@ -1842,6 +1852,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         aiEnabled: this.aiEnabled,
         linkCampaignMode: this.linkCampaignMode,
         linkCampaignPostedSenders: Array.from(this.linkCampaignPostedSenders),
+        disabledAINumbers: Array.from(this.disabledAINumbers),
         ownerPromoLink: this.ownerPromoLink,
         ownerPromoMimeType: this.ownerPromoMimeType,
         awaitingOwnerPromoSetup: this.awaitingOwnerPromoSetup,
@@ -1851,14 +1862,14 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   }
 
   /**
-   * Returns whether AI is currently enabled to chat.
+   * Returns whether AI is currently enabled globally to chat.
    */
   public isAIEnabled(): boolean {
     return this.aiEnabled;
   }
 
   /**
-   * Turns AI Chatbot ON or OFF.
+   * Turns AI Chatbot ON or OFF globally.
    */
   public setAIEnabled(enabled: boolean): { success: boolean; message: string } {
     this.aiEnabled = enabled;
@@ -1869,6 +1880,66 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         ? '🟢 *[AI Chatbot — SHIDID]*: AI-ga waa la SHIDAY (ON)! Hadda bot-ku wuu la hadlayaa dadka sidii caadiga ahayd. 🤖💬'
         : '🔴 *[AI Chatbot — DAMIN]*: AI-ga waa la DAMIYAY (OFF)! Hadda bot-ku iskii uguma jawaabi doono dadka (aamusnaan). 🤫🛑',
     };
+  }
+
+  /**
+   * Disables AI, status responses, and call rejection for a specific phone number.
+   * User requirement: "!off iyo number hadii qor qofkaas iyaan ai fariin u qorin status,call ku jarin dhaamaan ai qofkaas ka xidh"
+   */
+  public disableAIForNumber(phoneOrJid: string): { success: boolean; message: string; phone: string } {
+    const cleanPhone = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) {
+      return { success: false, message: 'Fadlan geli lambar sax ah (tusaale: `!off 252634123456`).', phone: '' };
+    }
+    this.disabledAINumbers.add(cleanPhone);
+    this.saveBotControlConfig();
+    return {
+      success: true,
+      phone: cleanPhone,
+      message:
+        `🛑 *[AI Ka Xidhan — +${cleanPhone}]* 🛑\n\n` +
+        `Qofka (+${cleanPhone}) dhammaan nidaamka bot-ka iyo AI-ga waa laga xidhay:\n` +
+        `• 💬 Fariin toos ah bot-ku ugu jawaabi maayo (Chat aamusan)\n` +
+        `• 👁️ Status-kiisa wax falcelin ama faallo ah bot-ku kuma samaynayo\n` +
+        `• 📞 Wicitaankiisa bot-ku jari maayo (Wuu soo dhacayaa sidii caadiga ahayd)\n\n` +
+        `💡 Si aad dib ugu furto qofkan, qor: \`!on ${cleanPhone}\``,
+    };
+  }
+
+  /**
+   * Enables AI, status responses, and restores bot features for a specific phone number.
+   * User requirement: "!on iyo markaan dhaho haloo furo qofkaas"
+   */
+  public enableAIForNumber(phoneOrJid: string): { success: boolean; message: string; phone: string } {
+    const cleanPhone = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) {
+      return { success: false, message: 'Fadlan geli lambar sax ah (tusaale: `!on 252634123456`).', phone: '' };
+    }
+    const existed = this.disabledAINumbers.delete(cleanPhone);
+    this.saveBotControlConfig();
+    return {
+      success: true,
+      phone: cleanPhone,
+      message: existed
+        ? `🟢 *[AI Loo Furay — +${cleanPhone}]* 🟢\n\nQofka (+${cleanPhone}) bot-kii iyo AI-gii dib ayaa loogu furay! Hadda bot-ku wuxuu ugu jawaabayaa si caadi ah.`
+        : `ℹ️ Lambarka +${cleanPhone} horayba uma ahayn mid AI-gu ka xidhan yahay. Bot-ku si caadi ah ayuu ugu furan yahay.`,
+    };
+  }
+
+  /**
+   * Returns whether AI is specifically disabled for this phone number.
+   */
+  public isAIDisabledForNumber(phoneOrJid: string): boolean {
+    if (!phoneOrJid) return false;
+    const cleanPhone = phoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    return this.disabledAINumbers.has(cleanPhone);
+  }
+
+  /**
+   * Returns list of all phone numbers for whom AI is specifically disabled.
+   */
+  public getDisabledAINumbers(): string[] {
+    return Array.from(this.disabledAINumbers);
   }
 
   /**

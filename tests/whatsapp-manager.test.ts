@@ -14,6 +14,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { generateSubscriberGuidePdfBuffer } from '../src/services/user-guide-pdf.service.js';
 
 const suite = new TestSuite('WhatsApp 100% Management & Status Intelligence');
 const testDb = './data/test_whatsapp_manager.db';
@@ -444,6 +445,61 @@ suite.test('MessageRouter processes status commands, replies, and group actions'
   assertTrue(linkOffRes.handled, '!link off should be handled');
   assertFalse(whatsappManagerService.isLinkCampaignMode(), 'Link campaign should now be disabled');
 
+  // 16. Admin disables AI for specific number via !off <number>
+  const disableOneRes = await router.handleIncomingMessage({
+    id: 'msg_off_single',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: '!off 252634777888',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(disableOneRes.handled, '!off <number> should be handled');
+  assertTrue(whatsappManagerService.isAIDisabledForNumber('252634777888'), 'Number should be marked as AI disabled');
+
+  // 17. The disabled number sends a message -> silently ignored
+  const disabledUserMsgRes = await router.handleIncomingMessage({
+    id: 'msg_from_disabled_user',
+    senderId: '252634777888',
+    chatId: '252634777888@s.whatsapp.net',
+    isGroup: false,
+    content: 'Asc sidee tahay walaal?',
+    rawTimestamp: Date.now(),
+    isMentioned: false,
+    isFromMe: false,
+  }, mockTransport);
+  assertTrue(disabledUserMsgRes.handled, 'Disabled user message should be handled');
+  assertEqual(disabledUserMsgRes.reason, 'AI disabled specifically for this sender');
+
+  // 18. Admin lists disabled numbers via !off list
+  const listDisabledRes = await router.handleIncomingMessage({
+    id: 'msg_off_list',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: '!off list',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(listDisabledRes.handled, '!off list should be handled');
+
+  // 19. Admin re-enables AI for that number via !on <number>
+  const enableOneRes = await router.handleIncomingMessage({
+    id: 'msg_on_single',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: '!on 252634777888',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(enableOneRes.handled, '!on <number> should be handled');
+  assertFalse(whatsappManagerService.isAIDisabledForNumber('252634777888'), 'Number should no longer be AI disabled');
+
   await mockTransport.stop();
   await memory.close();
   try {
@@ -850,6 +906,19 @@ suite.test('StatusReactor suppresses interactions when Link Campaign Mode is ON'
   whatsappManagerService.setLinkCampaignMode(false);
 });
 
+suite.test('StatusReactor suppresses interactions when AI is disabled for specific number', async () => {
+  const sr = new StatusReactorService();
+  whatsappManagerService.disableAIForNumber('252634333222');
+  const mockMsg: any = {
+    key: { remoteJid: 'status@broadcast', id: 'stat_suppress_disabled_num', participant: '252634333222@s.whatsapp.net', fromMe: false },
+    message: { conversation: 'MashaAllah aroos wacan!' },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+  };
+  const handled = await sr.handleIncomingStatus(mockMsg, { user: { id: '252610000000@s.whatsapp.net' } });
+  assertFalse(handled, 'StatusReactor must return false when AI is disabled for number');
+  whatsappManagerService.enableAIForNumber('252634333222');
+});
+
 suite.test('WhatsAppManager saveContact syncs via addOrEditContact and records broadcast contact', async () => {
   const manager = new WhatsAppManagerService();
   let contactActionCaptured: any = null;
@@ -931,6 +1000,38 @@ suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link o
   assertEqual(savedPromo.link, 'https://wa.me/252615998877');
   assertTrue(Boolean(savedPromo.imageBuffer), 'Saved flyer buffer should exist');
   assertEqual(savedPromo.imageBuffer?.toString(), 'FAKE_PROMO_FLYER_IMAGE_DATA');
+
+  // 6. Disable AI for Specific Number (!off <number> / !on <number>)
+  assertFalse(manager.isAIDisabledForNumber('252634888999'), 'Number should not have AI disabled initially');
+  const disRes = manager.disableAIForNumber('252634888999');
+  assertTrue(disRes.success, 'Disabling AI for number should succeed');
+  assertTrue(manager.isAIDisabledForNumber('252634888999'), 'Number should now be recognized as AI disabled');
+  assertTrue(manager.isAIDisabledForNumber('252634888999@s.whatsapp.net'), 'JID lookup should also match');
+  assertTrue(manager.getDisabledAINumbers().includes('252634888999'), 'List should include disabled number');
+
+  // Verify call reject bypass: Even if rejectAll is true, disabled AI number must NOT be rejected!
+  manager.setRejectAllCalls(true);
+  assertFalse(manager.shouldRejectCall('252634888999'), 'Disabled AI user calls must NOT be rejected (phone rings normally)');
+  assertTrue(manager.shouldRejectCall('252634111222'), 'Other callers must still be rejected');
+  manager.setRejectAllCalls(false);
+
+  // Re-enable AI for that number
+  const enRes = manager.enableAIForNumber('252634888999');
+  assertTrue(enRes.success, 'Enabling AI for number should succeed');
+  assertFalse(manager.isAIDisabledForNumber('252634888999'), 'Number should no longer be AI disabled');
+
+  // 7. Verify Subscriber Guide PDF Generator Buffer
+  const pdfBuffer = generateSubscriberGuidePdfBuffer({
+    subscriberName: 'Maxamed Cabdi',
+    phone: '252634123456',
+    category: 'business',
+    portalUrl: 'https://cardoso-ai.onrender.com/portal?token=test1234',
+    pairingCode: 'CARD-1234',
+  });
+  assertTrue(Buffer.isBuffer(pdfBuffer), 'PDF result must be a Buffer');
+  assertTrue(pdfBuffer.length > 2000, 'PDF buffer must be substantial (>= 2KB)');
+  const pdfHeader = pdfBuffer.slice(0, 8).toString('latin1');
+  assertTrue(pdfHeader.startsWith('%PDF-1.'), 'PDF buffer must start with %PDF-1.');
 
   // Clean up
   try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}

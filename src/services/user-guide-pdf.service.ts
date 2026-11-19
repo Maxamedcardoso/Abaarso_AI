@@ -377,6 +377,24 @@ export function generateSubscriberGuidePdfBuffer(input: SubscriberGuidePdfInput)
   doc.addCommandCard('@sawir <faahfaahin>', '[QOF KASTA]', 'U sheeg bot-ka sawirka aad rabto, AI ayaa isla markiiba kuu sawiraya.', '@sawir dukaanka casriga ah ee Berbera');
   doc.addCommandCard('jooji / !tirtir', '[QOF KASTA]', 'Ka bax fariin-wadareedka (jooji) ama masax taariikhda sheekadaada (!tirtir).', 'jooji   ama   !tirtir');
 
+  // Page 4: Advanced AI Controls, Status Link Campaign & Call Reject
+  doc.startNewPage();
+  doc.addSectionHeader(
+    '5. KANTAROOLKA CUSUB: AI, STATUS LINK & WICITAANNADA (CALLS)',
+    'Amarro cusub oo kuu oggolaanaya inaad qof gaar ah ka damiso AI-ga, maamusho status-ka & calls-ka.'
+  );
+
+  doc.addCommandCard('!off <lambar>', '[ADMIN ONLY]', 'Qof gaar ah AI-ga ka xidh: Fariin uma qorayo, status kama jawaabayo, wicitaankiisana jari maayo.', '!off 252634xxxxxx   (ama quote + !off)');
+  doc.addCommandCard('!on <lambar>', '[ADMIN ONLY]', 'Qofkaas gaarka ah dib ugu fur bot-ka iyo AI-ga si uu caadi ugu shaqeeyo.', '!on 252634xxxxxx   (ama quote + !on)');
+  doc.addCommandCard('!off list', '[ADMIN ONLY]', 'Soo saar liiska dadka aad AI-ga, status-ka iyo calls-ka ka damisay.', '!off list');
+  doc.addCommandCard('!on / !off', '[ADMIN ONLY]', 'Shid ama Dami AI Chatbot-ka guud ahaan (Master AI Toggle).', '!off (dami AI)   ama   !on (shid AI)');
+  doc.addCommandCard('!link on / !link off', '[ADMIN ONLY]', 'Status Link Campaign: Is-dhaafsiga sawirka/flyer-ka iyo link-ga WhatsApp.', '!link on   ama   !link off');
+  doc.addCommandCard('!link set', '[ADMIN ONLY]', 'Deji ama beddel sawirkaaga (flyer) iyo link-gaaga WhatsApp ee dadka lagula wadaagayo.', '!link set https://wa.me/252615xxxxxx');
+  doc.addCommandCard('!reject all / !unreject all', '[ADMIN ONLY]', 'Xidh dhammaan wicitaannada (Auto-Reject ON + Voice Note) ama dib u fur dhammaan.', '!reject all   ama   !unreject all');
+  doc.addCommandCard('!reject / !unreject <lambar>', '[ADMIN ONLY]', 'Wicitaannada ka xidh ama u fur lambar gaar ah.', '!reject 252634xxxxxx   /   !unreject 252634xxxxxx');
+  doc.addCommandCard('!save <lambar> <magac>', '[ADMIN ONLY]', 'Qofka toos ugu dar WhatsApp contacts-kaaga taleefankaaga.', '!save 252634xxxxxx Nimco Cali');
+  doc.addCommandCard('!delete / !react / !pin', '[ADMIN ONLY]', 'Fariin quote ku qabo oo tirtir (delete), emoji ku dhufo (!react), ama pin garee.', '!delete   ama   !react   ama   !pin');
+
   return doc.buildBuffer();
 }
 
