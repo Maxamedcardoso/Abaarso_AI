@@ -766,6 +766,43 @@ suite.test('WhatsAppManager saveContact syncs via addOrEditContact and records b
   assertTrue(contactActionCaptured?.saveOnPrimaryAddressbook === true, 'saveOnPrimaryAddressbook should be true');
 });
 
+suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link on / !link off)', async () => {
+  const manager = new WhatsAppManagerService();
+
+  // 1. AI Master Toggle state
+  assertTrue(manager.isAIEnabled(), 'AI should be enabled by default');
+  const offRes = manager.setAIEnabled(false);
+  assertTrue(offRes.success, 'Disabling AI should succeed');
+  assertFalse(manager.isAIEnabled(), 'AI should now be disabled');
+  assertTrue(offRes.message.includes('DAMIYAY') || offRes.message.includes('OFF'), 'Should state AI is OFF');
+
+  const onRes = manager.setAIEnabled(true);
+  assertTrue(onRes.success, 'Enabling AI should succeed');
+  assertTrue(manager.isAIEnabled(), 'AI should now be enabled');
+  assertTrue(onRes.message.includes('SHIDAY') || onRes.message.includes('ON'), 'Should state AI is ON');
+
+  // 2. Link Campaign Mode state
+  assertFalse(manager.isLinkCampaignMode(), 'Link campaign should be disabled by default');
+  const linkOnRes = manager.setLinkCampaignMode(true);
+  assertTrue(linkOnRes.success, 'Enabling link campaign should succeed');
+  assertTrue(manager.isLinkCampaignMode(), 'Link campaign should now be enabled');
+
+  // 3. Status Link deduplication
+  assertFalse(manager.hasPostedLinkForSender('252634112233'), 'Sender should not have posted initially');
+  manager.recordLinkCampaignPoster('252634112233');
+  assertTrue(manager.hasPostedLinkForSender('252634112233'), 'Sender should be marked as posted');
+  assertTrue(manager.hasPostedLinkForSender('252634112233@s.whatsapp.net'), 'JID lookup should also match');
+
+  // 4. Contact saved check
+  assertFalse(manager.isContactSaved('252639999000'), 'Unknown number should not be saved');
+  await manager.saveContact('252639999000', 'Nimco Sahal');
+  assertTrue(manager.isContactSaved('252639999000'), 'Saved contact should be recognized as saved');
+
+  // Reset states
+  manager.setLinkCampaignMode(false);
+  manager.setAIEnabled(true);
+});
+
 suite.run().then(summary => {
   if (summary.failed > 0) {
     process.exit(1);

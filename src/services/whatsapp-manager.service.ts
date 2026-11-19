@@ -62,17 +62,24 @@ export class WhatsAppManagerService {
   private allowedCallNumbers: Set<string> = new Set();
   private readonly callRejectStoragePath: string;
 
+  private aiEnabled: boolean = true;
+  private linkCampaignMode: boolean = false;
+  private linkCampaignPostedSenders: Set<string> = new Set();
+  private readonly botControlStoragePath: string;
+
   constructor(options?: WhatsAppManagerOptions) {
     this.authDir = options?.authDir || path.join(process.cwd(), 'baileys_auth_info');
     this.statusStoragePath = options?.statusStoragePath || path.join(process.cwd(), 'data', 'posted-statuses.json');
     // Store call-reject config alongside auth files so it survives Render restarts
     this.callRejectStoragePath = path.join(this.authDir, 'call-reject-config.json');
+    this.botControlStoragePath = path.join(this.authDir, 'bot-control-config.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
     }
     this.loadPersistedStatuses();
     this.loadCallRejectConfig();
+    this.loadBotControlConfig();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -1792,6 +1799,114 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       return true;
     }
     return false;
+  }
+
+  // ─── BOT CONTROL (AI MASTER TOGGLE & STATUS LINK CAMPAIGN MODE) ───────────
+
+  private loadBotControlConfig(): void {
+    try {
+      if (fs.existsSync(this.botControlStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.botControlStoragePath, 'utf8'));
+        if (raw.aiEnabled !== undefined) {
+          this.aiEnabled = Boolean(raw.aiEnabled);
+        }
+        if (raw.linkCampaignMode !== undefined) {
+          this.linkCampaignMode = Boolean(raw.linkCampaignMode);
+        }
+        if (Array.isArray(raw.linkCampaignPostedSenders)) {
+          this.linkCampaignPostedSenders = new Set(
+            raw.linkCampaignPostedSenders.map((s: string) => String(s).replace(/\D/g, '')).filter(Boolean)
+          );
+        }
+      }
+    } catch {}
+  }
+
+  private saveBotControlConfig(): void {
+    try {
+      const dir = path.dirname(this.botControlStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data = {
+        aiEnabled: this.aiEnabled,
+        linkCampaignMode: this.linkCampaignMode,
+        linkCampaignPostedSenders: Array.from(this.linkCampaignPostedSenders),
+      };
+      fs.writeFileSync(this.botControlStoragePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch {}
+  }
+
+  /**
+   * Returns whether AI is currently enabled to chat.
+   */
+  public isAIEnabled(): boolean {
+    return this.aiEnabled;
+  }
+
+  /**
+   * Turns AI Chatbot ON or OFF.
+   */
+  public setAIEnabled(enabled: boolean): { success: boolean; message: string } {
+    this.aiEnabled = enabled;
+    this.saveBotControlConfig();
+    return {
+      success: true,
+      message: enabled
+        ? '🟢 *[AI Chatbot — SHIDID]*: AI-ga waa la SHIDAY (ON)! Hadda bot-ku wuu la hadlayaa dadka sidii caadiga ahayd. 🤖💬'
+        : '🔴 *[AI Chatbot — DAMIN]*: AI-ga waa la DAMIYAY (OFF)! Hadda bot-ku iskii uguma jawaabi doono dadka (aamusnaan). 🤫🛑',
+    };
+  }
+
+  /**
+   * Returns whether Link Campaign Mode is active.
+   */
+  public isLinkCampaignMode(): boolean {
+    return this.linkCampaignMode;
+  }
+
+  /**
+   * Turns Status Link Campaign Mode ON or OFF.
+   */
+  public setLinkCampaignMode(enabled: boolean): { success: boolean; message: string } {
+    this.linkCampaignMode = enabled;
+    this.saveBotControlConfig();
+    return {
+      success: true,
+      message: enabled
+        ? '🔗 *[Status Link Campaign Mode]*: Waa la SHIDAY (ON)! ✅\n' +
+          '• Kaliya link-yada WhatsApp (wa.me) ee lambarka 25... ku bilowda ayaa la qabanayaa oo status toos loogu dhigayaa.\n' +
+          '• Haddii sawir iyo link wada socdaan, qofka waxaa lagu leeyahay *link-ga kaliya isoo dir*.\n' +
+          '• Qof hore link loogu dhigay mar labaad looma dhigayo.\n' +
+          '• AI lama hadlayo qofka ilaa la save-gareeyo mooyee (Save-me kaliya ayaa lala hadlayaa).'
+        : '🔗 *[Status Link Campaign Mode]*: Waa la DAMIYAY (OFF)! Nidaamkii caadiga ahaa ayaa dib loogu noqday.',
+    };
+  }
+
+  /**
+   * Checks if this sender already had a status link posted in this campaign.
+   */
+  public hasPostedLinkForSender(senderPhoneOrJid: string): boolean {
+    const cleanPhone = senderPhoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    return this.linkCampaignPostedSenders.has(cleanPhone);
+  }
+
+  /**
+   * Records that this sender has had a status link posted.
+   */
+  public recordLinkCampaignPoster(senderPhoneOrJid: string): void {
+    const cleanPhone = senderPhoneOrJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (cleanPhone) {
+      this.linkCampaignPostedSenders.add(cleanPhone);
+      this.saveBotControlConfig();
+    }
+  }
+
+  /**
+   * Checks if a contact is saved in our address book / broadcast registry.
+   */
+  public isContactSaved(jidOrPhone: string): boolean {
+    const cleanPhone = jidOrPhone.split('@')[0].split(':')[0].replace(/\D/g, '');
+    const contact = this.broadcast.getContact(jidOrPhone) || this.broadcast.getContact(`${cleanPhone}@s.whatsapp.net`);
+    return Boolean(contact && (contact.name || contact.firstName));
   }
 
   // ─── 5. MESSAGE MANAGEMENT (DELETE, REACT, PIN) ───────────────────────────

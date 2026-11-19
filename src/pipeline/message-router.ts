@@ -195,6 +195,9 @@ export class MessageRouter {
 
     // ── CASE 2: Story Reply to WhatsApp Status ──
     if (isStoryReply) {
+      if (!this.whatsappManager.isAIEnabled()) {
+        return false;
+      }
       const ai = this.engine.getAIOrchestrator();
       if (ai) {
         try {
@@ -232,6 +235,9 @@ SHURUUCO ADAG:
 
     // ── CASE 3: Explicit Quoted Status Comment Follow-Up (User quoted the comment to ask/chat) ──
     if (quotedComment) {
+      if (!this.whatsappManager.isAIEnabled()) {
+        return false;
+      }
       const ai = this.engine.getAIOrchestrator();
       if (ai) {
         try {
@@ -370,14 +376,58 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Recipient opted out of broadcasts' };
     }
 
-    // 1c-saveme. Auto-save contact on "save me" DM response (e.g. "haye", "save", "ok", "waa yahay", "saved")
+    // 1c-saveme. Auto-save contact on "save me" DM response and Link Campaign Mode handling
     if (!message.isGroup && !message.isFromMe) {
-      const isPendingSaveMe = this.statusReactor?.isPendingSaveMe(message.chatId);
-      const isAffirmative = /^(?:haye|ok|haa|ha|waa\s*yahay|waayahay|done|saved?|save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)(?:\s+(?:sxb|wll|walaal|walaalo|bro))?[.!👍📲✅\s]*$/i.test(lowerText);
-      const isExplicitSavePhrase = /^(?:save|i\s*save\s*garee|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)[.!👍📲✅\s]*$/i.test(lowerText);
-      const isStickerReply = Boolean(message.media?.mimeType === 'image/webp' || message.content.includes('[WhatsApp Sticker'));
+      // 1c.1. Link Campaign Mode: If user sends image AND link together
+      if (
+        this.whatsappManager.isLinkCampaignMode() &&
+        !isAdminUser &&
+        (message.media?.type === 'image' || message.content.includes('[WhatsApp Image')) &&
+        /(?:https?:\/\/|wa\.me|chat\.whatsapp\.com|\b25\d{7,12}\b)/i.test(text)
+      ) {
+        await transport.sendMessage(
+          message.chatId,
+          'Walaal fadlan sawirka ha soo raacinin. Link-ga kaliya ee lambarkaaga WhatsApp ku xidhan (wa.me link lambarkaaga 25... ku bilowda) qoraal ahaan iigu soo dir si aan status kuugu dhigo. 📲'
+        );
+        return { handled: true, reason: 'Link campaign: image+link guidance sent' };
+      }
 
-      if ((isPendingSaveMe && (isAffirmative || isStickerReply)) || isExplicitSavePhrase) {
+      // 1c.2. Link Campaign Mode: If user sends WhatsApp link (wa.me or 25... link)
+      const isWaLink =
+        /(?:https?:\/\/)?(?:wa\.me\/(?:\+?25\d{7,12}|message\/\S+)|api\.whatsapp\.com\/send\?phone=(?:\+?25\d{7,12})|chat\.whatsapp\.com\/\S+|https?:\/\/\S*25\d{7,12}\S*)/i.test(text) ||
+        /(?:https?:\/\/)?wa\.me\/\S+/i.test(text);
+
+      if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser && isWaLink) {
+        const senderPhone = message.senderPhone || message.chatId.replace(/\D/g, '');
+        if (this.whatsappManager.hasPostedLinkForSender(senderPhone)) {
+          await transport.sendMessage(
+            message.chatId,
+            'Walaal horay ayaa status link laguugu dhigay, qof kale link-giisa ama mar labaad status lama dhigi karo. Mahadsanid! 🙏'
+          );
+          return { handled: true, reason: 'Link campaign: link already posted previously' };
+        }
+
+        const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
+        const linkToPost = linkMatch ? linkMatch[0] : text.trim();
+
+        await this.whatsappManager.postTextStatus(linkToPost);
+        this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+
+        await transport.sendMessage(
+          message.chatId,
+          `✅ *[Status Posted]*: Link-gaaga si guul leh ayaa loogu daabacay WhatsApp Status! 📲✨\nFadlan adiguna nambarkayga save gareyso si aad status-ka u aragto.`
+        );
+        return { handled: true, reason: 'Link campaign: posted status link' };
+      }
+
+      // 1c.3. Save-Me Keywords & Contact Saving
+      const isPendingSaveMe = this.statusReactor?.isPendingSaveMe(message.chatId);
+      const isAffirmative = /^(?:haye|ok|haa|ha|waa\s*yahay|waayahay|done|saved?|save|save\s*me|save\s*ma\s*i\s*tidhi|save\s*ma\s*tidhi|ma\s*i\s*save\s*gareysay|i\s*save\s*garee|i\s*kaydi|kaydi|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)(?:\s+(?:sxb|wll|walaal|walaalo|bro))?[.!👍📲✅\s]*$/i.test(lowerText);
+      const isExplicitSavePhrase = /^(?:save|save\s*me|save\s*ma\s*i\s*tidhi|save\s*ma\s*tidhi|ma\s*i\s*save\s*gareysay|i\s*save\s*garee|i\s*kaydi|kaydi|waan\s*ku\s*save\s*gareeyay|waanku\s*save\s*gareeyay|waan\s*ku\s*kaydiyay)[.!👍📲✅\s]*$/i.test(lowerText);
+      const isStickerReply = Boolean(message.media?.mimeType === 'image/webp' || message.content.includes('[WhatsApp Sticker'));
+      const isNameIntro = /(?:magac(?:aygu|eygu)?\s*(?:waa|ayaa\s*la\s*yidhaahdaa|weeye)?|i\s*dhaha|waxaan\s*ahay)\s+([A-Za-zÀ-ÿ]+)/i.test(text);
+
+      if ((isPendingSaveMe && (isAffirmative || isStickerReply)) || isExplicitSavePhrase || (this.whatsappManager.isLinkCampaignMode() && isNameIntro)) {
         this.statusReactor?.resolvePendingSaveMe(message.chatId);
 
         // Try extracting user's declared name from the text (e.g. "Haye magacaygu waa Ahmed")
@@ -467,7 +517,9 @@ SHURUUCDA DUGSIIYA:
         `• \`!delete\` (quote fariin) — Delete for everyone fariintaas\n` +
         `• \`!react <emoji>\` (quote fariin) — Emoji ku dhufo fariintaas\n` +
         `• \`!pin\` (quote fariin) — Pin garee fariintaas\n` +
-        `• \`!save <lambar> <magac>\` — Qofka toos ugu dar WhatsApp contacts-kaaga 📲\n\n` +
+        `• \`!save <lambar> <magac>\` — Qofka toos ugu dar WhatsApp contacts-kaaga 📲\n` +
+        `• \`!on\` / \`!off\` — Shid ama Dami AI Chatbot-ka (AI ON/OFF)\n` +
+        `• \`!link on/off\` — Status Link Campaign Mode (Link-yada 25... & Save-Me)\n\n` +
         `📢 *SMART BROADCAST:*\n` +
         `• \`!fariin <qoraal>\` — U dir 50 qof oo cusub fariin shakhsiyeed\n` +
         `• \`!contacts\` — Hubi tirada guud ee contacts-ka kaydsan`;
@@ -1015,6 +1067,28 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'unreject executed' };
     }
 
+    // ─── AI Master Toggle (!on / !off or !ai on / !ai off) ───
+    if (/^[!./#]?(?:ai\s+)?(on|off)$/i.test(lowerText.trim()) && isAdminUser) {
+      if (!/^(?:view|autoview|statusreact|statuscomment|link|linkmode|link-mode)\b/i.test(lowerText.trim())) {
+        const match = lowerText.trim().match(/^[!./#]?(?:ai\s+)?(on|off)$/i);
+        if (match) {
+          const action = match[1].toLowerCase();
+          const res = this.whatsappManager.setAIEnabled(action === 'on');
+          await transport.sendMessage(message.chatId, res.message);
+          return { handled: true, reason: `AI master toggle: ${action}` };
+        }
+      }
+    }
+
+    // ─── Status Link Campaign Mode (!link on / !link off) ───
+    if (/^[!./#]?(?:link|linkmode|link-mode)\s+(on|off)$/i.test(lowerText.trim()) && isAdminUser) {
+      const match = lowerText.trim().match(/^[!./#]?(?:link|linkmode|link-mode)\s+(on|off)$/i);
+      const action = match![1].toLowerCase();
+      const res = this.whatsappManager.setLinkCampaignMode(action === 'on');
+      await transport.sendMessage(message.chatId, res.message);
+      return { handled: true, reason: `Link campaign toggle: ${action}` };
+    }
+
     // ─── Manual Contact Save Command (!save <number> <name> or !save <name> when quoting) ───
     if (/^[!./#]?(?:save|kaydi|addcontact)\b/i.test(lowerText) && isAdminUser) {
       const parts = text.replace(/^[!./#]?(?:save|kaydi|addcontact)\s*/i, '').trim();
@@ -1090,7 +1164,7 @@ SHURUUCDA DUGSIIYA:
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──
     if (
-      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletet?status|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|reject|unreject|inreject|autoreply|delete|tirtir|reply|send|cod|maamul)\b/i.test(lowerText) &&
+      /^[!./#]?(?:view|status|post-status|sheeko|status-ai|deletet?status|tirtirstatus|statusdelete|autoview|statusreact|statuscomment|statusmode|statuscooldown|statusinfo|statusviews|statusviewers|daawadeyaasha|daawadayaasha|tagall|dhammaan|kick|ka-saar|promote|dalacsii|demote|hoos-u-dhig|mute|xidh|unmute|fur|grouplink|link|linkmode|link-mode|groupinfo|setname|setbio|setstatus|setpp|setpfp|block|unblock|reject|unreject|inreject|autoreply|delete|tirtir|reply|send|cod|maamul|on|off)\b/i.test(lowerText) &&
       !isAdminUser
     ) {
       console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);
@@ -1399,6 +1473,25 @@ SHURUUCDA DUGSIIYA:
       } else {
         queryText = '!help';
       }
+    }
+
+    // In Link Campaign Mode: Only saved contacts are permitted to chat with AI
+    if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser && !message.isGroup) {
+      const isSaved = this.whatsappManager.isContactSaved(message.chatId);
+      if (!isSaved) {
+        console.log(`ℹ️ [Router] Link Campaign Mode: Ignored unsaved contact ${message.chatId}`);
+        await transport.sendMessage(
+          message.chatId,
+          'Walaal si aan u wada hadalno, fadlan iigu soo dir *Save me* iyo *Magacaaga*, ama *wa.me link-gaaga* si aan status kuugu dhigo oo aan kuu save-gareeyo! 📲'
+        );
+        return { handled: true, reason: 'Link campaign: unsaved contact blocked from AI' };
+      }
+    }
+
+    // AI Master Toggle: If AI is disabled via !off, do not generate AI responses
+    if (!this.whatsappManager.isAIEnabled()) {
+      console.log(`ℹ️ [Router] AI is currently disabled (!off). Message from ${message.senderId} will not receive AI response.`);
+      return { handled: true, reason: 'AI disabled via !off' };
     }
 
     console.log(`\n🤖 [Router] Fariin loo dirayaa Gemini AI: "${queryText}" (Qofka: ${message.senderId}, VoiceCommand: ${hasVoiceCommand})...`);
