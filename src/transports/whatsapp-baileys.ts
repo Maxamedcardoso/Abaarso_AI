@@ -1148,10 +1148,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
 
       // 3. Status Reactor: Intelligently react and comment like a real human
+      // USER RULE: "status kale yaanu ka jaawib marka !link on yahay" (Suppress when Link Campaign Mode is ON)
       if (this.socket) {
-        this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
-          console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
-        });
+        if (this.whatsappManager?.isLinkCampaignMode()) {
+          console.log(`ℹ️ [WhatsAppBaileys] Link Campaign Mode is ON: Status reaction/reply suppressed.`);
+        } else {
+          this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
+            console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
+          });
+        }
       }
 
       // WhatsApp status updates are stories, do not route them as incoming private chat messages

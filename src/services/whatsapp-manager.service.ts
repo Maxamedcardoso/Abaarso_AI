@@ -65,6 +65,9 @@ export class WhatsAppManagerService {
   private aiEnabled: boolean = true;
   private linkCampaignMode: boolean = false;
   private linkCampaignPostedSenders: Set<string> = new Set();
+  private ownerPromoLink?: string;
+  private ownerPromoMimeType?: string;
+  private awaitingOwnerPromoSetup: boolean = false;
   private readonly botControlStoragePath: string;
 
   constructor(options?: WhatsAppManagerOptions) {
@@ -1818,6 +1821,15 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             raw.linkCampaignPostedSenders.map((s: string) => String(s).replace(/\D/g, '')).filter(Boolean)
           );
         }
+        if (raw.ownerPromoLink) {
+          this.ownerPromoLink = String(raw.ownerPromoLink);
+        }
+        if (raw.ownerPromoMimeType) {
+          this.ownerPromoMimeType = String(raw.ownerPromoMimeType);
+        }
+        if (raw.awaitingOwnerPromoSetup !== undefined) {
+          this.awaitingOwnerPromoSetup = Boolean(raw.awaitingOwnerPromoSetup);
+        }
       }
     } catch {}
   }
@@ -1830,6 +1842,9 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         aiEnabled: this.aiEnabled,
         linkCampaignMode: this.linkCampaignMode,
         linkCampaignPostedSenders: Array.from(this.linkCampaignPostedSenders),
+        ownerPromoLink: this.ownerPromoLink,
+        ownerPromoMimeType: this.ownerPromoMimeType,
+        awaitingOwnerPromoSetup: this.awaitingOwnerPromoSetup,
       };
       fs.writeFileSync(this.botControlStoragePath, JSON.stringify(data, null, 2), 'utf8');
     } catch {}
@@ -1907,6 +1922,68 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     const cleanPhone = jidOrPhone.split('@')[0].split(':')[0].replace(/\D/g, '');
     const contact = this.broadcast.getContact(jidOrPhone) || this.broadcast.getContact(`${cleanPhone}@s.whatsapp.net`);
     return Boolean(contact && (contact.name || contact.firstName));
+  }
+
+  public getBotNumber(): string {
+    return this.botJid || '';
+  }
+
+  public getOwnerPromoImagePath(): string {
+    return path.join(this.authDir, 'owner_promo_flyer.bin');
+  }
+
+  /**
+   * Saves the WhatsApp owner's promotional flyer (image buffer + link)
+   */
+  public setOwnerPromo(promo: { link: string; imageBuffer?: Buffer; mimeType?: string }): { success: boolean; message: string } {
+    this.ownerPromoLink = promo.link.trim();
+    if (promo.mimeType) {
+      this.ownerPromoMimeType = promo.mimeType;
+    }
+    if (promo.imageBuffer && promo.imageBuffer.length > 0) {
+      try {
+        fs.writeFileSync(this.getOwnerPromoImagePath(), promo.imageBuffer);
+      } catch (e: any) {
+        console.warn('Failed to save owner promo flyer image:', e);
+      }
+    }
+    this.awaitingOwnerPromoSetup = false;
+    this.saveBotControlConfig();
+    return {
+      success: true,
+      message: '✅ *[Setup Completed]*: Sawirkaaga iyo Link-gaaga xayeysiinta si guul leh ayaa loo kaydiyay! Hadda qof kasta oo link soo dira ama dhaha "link isoo dhig", bot-ku status-ka ayuu u dhigi doonaa, wuxuuna ku celin doonaa sawirkaaga iyo link-gaaga isagoo ku leh: *Adiguna status-ka iigu dhig!* 📲✨',
+    };
+  }
+
+  /**
+   * Retrieves the WhatsApp owner's promotional flyer and link
+   */
+  public getOwnerPromo(): { link?: string; imageBuffer?: Buffer; mimeType?: string } {
+    let imageBuffer: Buffer | undefined;
+    const imgPath = this.getOwnerPromoImagePath();
+    if (fs.existsSync(imgPath)) {
+      try {
+        imageBuffer = fs.readFileSync(imgPath);
+      } catch {}
+    }
+    return {
+      link: this.ownerPromoLink,
+      imageBuffer,
+      mimeType: this.ownerPromoMimeType || 'image/jpeg',
+    };
+  }
+
+  public hasOwnerPromo(): boolean {
+    return Boolean(this.ownerPromoLink);
+  }
+
+  public isAwaitingOwnerPromoSetup(): boolean {
+    return this.awaitingOwnerPromoSetup;
+  }
+
+  public setAwaitingOwnerPromoSetup(val: boolean): void {
+    this.awaitingOwnerPromoSetup = val;
+    this.saveBotControlConfig();
   }
 
   // ─── 5. MESSAGE MANAGEMENT (DELETE, REACT, PIN) ───────────────────────────

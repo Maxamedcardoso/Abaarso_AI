@@ -352,6 +352,98 @@ suite.test('MessageRouter processes status commands, replies, and group actions'
   }, mockTransport);
   assertTrue(addGroupRes.handled, 'Group add member should be handled with welcoming message');
 
+  // 10. Link Campaign Mode: Admin activates !link on (prompts for promo when not set)
+  const linkOnRes = await router.handleIncomingMessage({
+    id: 'msg_link_on_cmd',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: '!link on',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(linkOnRes.handled, '!link on should be handled');
+  assertTrue(whatsappManagerService.isLinkCampaignMode(), 'Link campaign should be enabled');
+
+  // 11. Admin sends flyer image + link to complete setup
+  const promoSetupRes = await router.handleIncomingMessage({
+    id: 'msg_promo_setup_1',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: 'https://wa.me/252615998877 Waa kan flyer-kayga WhatsApp',
+    media: {
+      type: 'image',
+      mimeType: 'image/jpeg',
+      dataBase64: Buffer.from('ADMIN_PROMO_FLYER').toString('base64'),
+    },
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(promoSetupRes.handled, 'Owner promo flyer and link should be saved');
+  assertTrue(whatsappManagerService.hasOwnerPromo(), 'Owner promo should now exist');
+
+  // 12. Incoming user sends link -> posted to status and exchanged with owner promo flyer
+  const testSenderPhone = '25261' + Date.now().toString().slice(-7);
+  const userExchangeRes = await router.handleIncomingMessage({
+    id: 'msg_user_link_exchange',
+    senderId: testSenderPhone,
+    chatId: `${testSenderPhone}@s.whatsapp.net`,
+    isGroup: false,
+    content: `https://wa.me/${testSenderPhone} status iigu dhig sxb`,
+    rawTimestamp: Date.now(),
+    isMentioned: false,
+    isFromMe: false,
+  }, mockTransport);
+  assertTrue(userExchangeRes.handled, 'User status link submission should be handled');
+  assertEqual(userExchangeRes.reason, 'Link campaign: posted status and exchanged owner promo flyer');
+  assertTrue(whatsappManagerService.hasPostedLinkForSender(testSenderPhone), 'Sender should be recorded as posted');
+
+  // 13. Same user tries to submit second link -> rejected politely
+  const userDuplicateRes = await router.handleIncomingMessage({
+    id: 'msg_user_link_duplicate',
+    senderId: testSenderPhone,
+    chatId: `${testSenderPhone}@s.whatsapp.net`,
+    isGroup: false,
+    content: `https://wa.me/${testSenderPhone} mar kale status ii dhig`,
+    rawTimestamp: Date.now(),
+    isMentioned: false,
+    isFromMe: false,
+  }, mockTransport);
+  assertTrue(userDuplicateRes.handled, 'Duplicate link submission should be handled');
+  assertEqual(userDuplicateRes.reason, 'Link campaign: link already posted previously');
+
+  // 14. User asks "link isoo dhig" without sending link -> prompted with owner promo flyer
+  const testAskPhone = '25262' + Date.now().toString().slice(-7);
+  const userAskPromoRes = await router.handleIncomingMessage({
+    id: 'msg_user_ask_promo',
+    senderId: testAskPhone,
+    chatId: `${testAskPhone}@s.whatsapp.net`,
+    isGroup: false,
+    content: 'walaal link isoo dhig',
+    rawTimestamp: Date.now(),
+    isMentioned: false,
+    isFromMe: false,
+  }, mockTransport);
+  assertTrue(userAskPromoRes.handled, 'User asking for link should be handled');
+  assertEqual(userAskPromoRes.reason, 'Link campaign: prompted with owner promo');
+
+  // 15. Turn off link campaign
+  const linkOffRes = await router.handleIncomingMessage({
+    id: 'msg_link_off_cmd',
+    senderId: '252634949642',
+    chatId: 'direct_chat',
+    isGroup: false,
+    content: '!link off',
+    rawTimestamp: Date.now(),
+    isMentioned: true,
+    isFromMe: true,
+  }, mockTransport);
+  assertTrue(linkOffRes.handled, '!link off should be handled');
+  assertFalse(whatsappManagerService.isLinkCampaignMode(), 'Link campaign should now be disabled');
+
   await mockTransport.stop();
   await memory.close();
   try {
@@ -745,6 +837,19 @@ suite.test('Status Reactor save-me tracking and owner name customization', () =>
   assertFalse(sr.isPendingSaveMe('252634555666'), 'Should no longer be pending after resolution');
 });
 
+suite.test('StatusReactor suppresses interactions when Link Campaign Mode is ON', async () => {
+  const sr = new StatusReactorService();
+  whatsappManagerService.setLinkCampaignMode(true);
+  const mockMsg: any = {
+    key: { remoteJid: 'status@broadcast', id: 'stat_suppress_test_1', participant: '252634777888@s.whatsapp.net', fromMe: false },
+    message: { conversation: 'MashaAllah aroos wacan!' },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+  };
+  const handled = await sr.handleIncomingStatus(mockMsg, { user: { id: '252610000000@s.whatsapp.net' } });
+  assertFalse(handled, 'StatusReactor must return false when link campaign mode is ON');
+  whatsappManagerService.setLinkCampaignMode(false);
+});
+
 suite.test('WhatsAppManager saveContact syncs via addOrEditContact and records broadcast contact', async () => {
   const manager = new WhatsAppManagerService();
   let contactActionCaptured: any = null;
@@ -804,6 +909,28 @@ suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link o
   assertFalse(manager.isContactSaved('252639999000'), 'Unknown number should not be saved');
   await manager.saveContact('252639999000', 'Nimco Sahal');
   assertTrue(manager.isContactSaved('252639999000'), 'Saved contact should be recognized as saved');
+
+  // 5. Owner Promo Flyer & wa.me Link Setup
+  assertFalse(manager.hasOwnerPromo(), 'Owner promo should not be set initially');
+  assertFalse(manager.isAwaitingOwnerPromoSetup(), 'Should not be awaiting promo setup initially');
+
+  manager.setAwaitingOwnerPromoSetup(true);
+  assertTrue(manager.isAwaitingOwnerPromoSetup(), 'Should be awaiting promo setup after setting true');
+
+  const flyerBuffer = Buffer.from('FAKE_PROMO_FLYER_IMAGE_DATA');
+  const promoRes = manager.setOwnerPromo({
+    link: 'https://wa.me/252615998877',
+    imageBuffer: flyerBuffer,
+    mimeType: 'image/jpeg',
+  });
+  assertTrue(promoRes.success, 'Setting owner promo should succeed');
+  assertFalse(manager.isAwaitingOwnerPromoSetup(), 'Should no longer await setup after saving promo');
+  assertTrue(manager.hasOwnerPromo(), 'Should now have owner promo set');
+
+  const savedPromo = manager.getOwnerPromo();
+  assertEqual(savedPromo.link, 'https://wa.me/252615998877');
+  assertTrue(Boolean(savedPromo.imageBuffer), 'Saved flyer buffer should exist');
+  assertEqual(savedPromo.imageBuffer?.toString(), 'FAKE_PROMO_FLYER_IMAGE_DATA');
 
   // Clean up
   try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}

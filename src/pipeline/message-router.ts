@@ -362,6 +362,53 @@ SHURUUCDA DUGSIIYA:
     // Host phone's own outgoing commands (isFromMe), whitelisted ADMIN_PHONE_NUMBERS, or tenant extraAdmins are Admin
     const isAdminUser = Boolean(message.isFromMe) || this.isAdmin(message.senderId, message.isGroup);
 
+    // Owner Promo Flyer & Link Setup for Status Link Exchange Mode
+    if (isAdminUser && !message.isGroup && this.whatsappManager.isAwaitingOwnerPromoSetup()) {
+      if (/^[!./#]?(?:cancel|jooji|haka\s*qaadin)$/i.test(lowerText.trim())) {
+        this.whatsappManager.setAwaitingOwnerPromoSetup(false);
+        await transport.sendMessage(message.chatId, 'Setup-kii sawirka iyo link-ga xayeysiinta waa la joojiyay.');
+        return { handled: true, reason: 'Cancelled owner promo setup' };
+      }
+
+      const isMediaAttached = Boolean(
+        (message.media?.type === 'image' || (message as any).media?.type === 'document') &&
+        (message.media?.dataBase64 || (message.media as any)?.dataBuffer)
+      );
+
+      const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
+      let detectedLink = linkMatch ? linkMatch[0] : '';
+      if (!detectedLink) {
+        const rawNumberMatch = text.match(/\b(?:25\d{7,12}|06\d{7,8})\b/);
+        if (rawNumberMatch) {
+          const cleanNum = rawNumberMatch[0].startsWith('0') ? '252' + rawNumberMatch[0].substring(1) : rawNumberMatch[0];
+          detectedLink = `https://wa.me/${cleanNum}`;
+        }
+      }
+
+      let imageBuffer: Buffer | undefined;
+      let mimeType: string | undefined;
+      if (message.media?.dataBase64) {
+        imageBuffer = Buffer.from(message.media.dataBase64, 'base64');
+        mimeType = message.media.mimeType;
+      } else if ((message.media as any)?.dataBuffer) {
+        imageBuffer = (message.media as any).dataBuffer;
+        mimeType = message.media?.mimeType;
+      }
+
+      if (isMediaAttached || detectedLink) {
+        const botPhone = (this.whatsappManager.getBotNumber() || message.chatId).replace(/\D/g, '');
+        const finalLink = detectedLink || (botPhone ? `https://wa.me/${botPhone}` : '');
+
+        const res = this.whatsappManager.setOwnerPromo({
+          link: finalLink,
+          imageBuffer,
+          mimeType,
+        });
+        await transport.sendMessage(message.chatId, res.message);
+        return { handled: true, reason: 'Owner promo flyer and link saved from prompt' };
+      }
+    }
+
     // 1c-optout. Recipient opt-out guard (stops annoyed users from tapping WhatsApp "Report Spam")
     if (
       !message.isGroup &&
@@ -378,7 +425,7 @@ SHURUUCDA DUGSIIYA:
 
     // 1c-saveme. Auto-save contact on "save me" DM response and Link Campaign Mode handling
     if (!message.isGroup && !message.isFromMe) {
-      // 1c.1. Link Campaign Mode: If user sends Link (or Image/Media + Link together)
+      // 1c.1. Link Campaign Mode: If user sends Link (or Image/Media + Link together) or asks "link isoo dhig"
       const isMediaAttached = Boolean(
         (message.media?.type === 'image' || message.media?.type === 'video' || (message as any).media?.type === 'document') &&
         (message.media?.dataBase64 || (message.media as any)?.dataBuffer)
@@ -389,48 +436,89 @@ SHURUUCDA DUGSIIYA:
         /(?:https?:\/\/)?wa\.me\/\S+/i.test(text) ||
         /(?:https?:\/\/|\b25\d{7,12}\b)/i.test(text);
 
-      if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser && isWaLink) {
+      const isLinkExchangeAsk = /(?:link|status|istatus|istatuska)?\s*(?:isoo\s*dhig|iigu\s*dhig|ii\s*dhig|dhig\s*status|dhig\s*link)/i.test(lowerText);
+
+      if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser) {
         const senderPhone = message.senderPhone || message.chatId.replace(/\D/g, '');
-        if (this.whatsappManager.hasPostedLinkForSender(senderPhone)) {
-          await transport.sendMessage(
-            message.chatId,
-            'Walaal horay ayaa status link laguugu dhigay, qof kale link-giisa ama mar labaad status lama dhigi karo. Mahadsanid! 🙏'
-          );
-          return { handled: true, reason: 'Link campaign: link already posted previously' };
+        const promo = this.whatsappManager.getOwnerPromo();
+        const botPhone = (this.whatsappManager.getBotNumber() || message.chatId).replace(/\D/g, '');
+        const effectiveOwnerLink = promo.link || (botPhone ? `https://wa.me/${botPhone}` : '');
+
+        const sendOwnerPromoReply = async (introStatusMsg: string) => {
+          const promoCaption =
+            `${introStatusMsg}\n\n` +
+            `Waa kan anigana ${promo.imageBuffer ? 'sawirkayga iyo link-gayga' : 'link-gayga'} WhatsApp, fadlan adiguna status-kaaga iigu dhig!\n` +
+            `🔗 ${effectiveOwnerLink}`;
+
+          if (promo.imageBuffer && promo.imageBuffer.length > 0 && typeof transport.sendMedia === 'function') {
+            await transport.sendMedia(message.chatId, {
+              type: 'image',
+              dataBuffer: promo.imageBuffer,
+              mimeType: promo.mimeType || 'image/jpeg',
+              caption: promoCaption,
+            });
+          } else {
+            await transport.sendMessage(message.chatId, promoCaption);
+          }
+        };
+
+        if (isWaLink) {
+          if (this.whatsappManager.hasPostedLinkForSender(senderPhone)) {
+            await transport.sendMessage(
+              message.chatId,
+              'Walaal horay ayaa status link laguugu dhigay, qof kale link-giisa ama mar labaad status lama dhigi karo. Mahadsanid! 🙏'
+            );
+            return { handled: true, reason: 'Link campaign: link already posted previously' };
+          }
+
+          if (isMediaAttached) {
+            // Post BOTH image and link directly to WhatsApp Status without separating!
+            const buffer = message.media?.dataBase64
+              ? Buffer.from(message.media.dataBase64, 'base64')
+              : ((message.media as any)?.dataBuffer || Buffer.alloc(0));
+
+            await this.whatsappManager.postMediaStatus({
+              buffer,
+              mimeType: message.media!.mimeType,
+              caption: text.trim(),
+              type: message.media!.type === 'video' ? 'video' : 'image',
+            });
+            this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+
+            await sendOwnerPromoReply('✅ *Status-ka waan kuugu dhigay walaal!* 📲✨');
+            return { handled: true, reason: 'Link campaign: image and link posted together to status' };
+          } else {
+            // Text link only
+            const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
+            const linkToPost = linkMatch ? linkMatch[0] : text.trim();
+
+            await this.whatsappManager.postTextStatus(linkToPost);
+            this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+
+            await sendOwnerPromoReply('✅ *Status-ka waan kuugu dhigay walaal!* 📲✨');
+            return { handled: true, reason: 'Link campaign: posted status and exchanged owner promo flyer' };
+          }
         }
 
-        if (isMediaAttached) {
-          // Post BOTH image and link directly to WhatsApp Status without separating!
-          const buffer = message.media?.dataBase64
-            ? Buffer.from(message.media.dataBase64, 'base64')
-            : ((message.media as any)?.dataBuffer || Buffer.alloc(0));
+        if (isLinkExchangeAsk) {
+          if (this.whatsappManager.hasPostedLinkForSender(senderPhone)) {
+            await transport.sendMessage(
+              message.chatId,
+              'Walaal horay ayaa status link laguugu dhigay, qof kale link-giisa ama mar labaad status lama dhigi karo. Mahadsanid! 🙏'
+            );
+            return { handled: true, reason: 'Link campaign: link already posted previously' };
+          }
 
-          await this.whatsappManager.postMediaStatus({
-            buffer,
-            mimeType: message.media!.mimeType,
-            caption: text.trim(),
-            type: message.media!.type === 'video' ? 'video' : 'image',
-          });
-          this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+          await sendOwnerPromoReply('Walaal iigu soo dir *Link-gaaga* (ama *Sawirkaaga iyo Link-gaaga* wada socda) si aan toos status-ka kuugu dhigo! 📲✨');
+          return { handled: true, reason: 'Link campaign: prompted with owner promo' };
+        }
 
+        if (isMediaAttached && !isWaLink) {
           await transport.sendMessage(
             message.chatId,
-            '✅ *[Status Posted]*: Sawirkaaga iyo Link-gaaga si toos ah ayaa labadaba WhatsApp Status loogu wada daabacay! 📲✨\nFadlan adiguna nambarkayga save gareyso.'
+            'Walaal fadlan sawirka soo raaci *Link-gaaga WhatsApp (wa.me)* si aan labadaba status-ka kuugu wada dhigo! 📲✨'
           );
-          return { handled: true, reason: 'Link campaign: image and link posted together to status' };
-        } else {
-          // Text link only
-          const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
-          const linkToPost = linkMatch ? linkMatch[0] : text.trim();
-
-          await this.whatsappManager.postTextStatus(linkToPost);
-          this.whatsappManager.recordLinkCampaignPoster(senderPhone);
-
-          await transport.sendMessage(
-            message.chatId,
-            '✅ *[Status Posted]*: Link-gaaga si guul leh ayaa loogu daabacay WhatsApp Status! 📲✨\nFadlan adiguna nambarkayga save gareyso.'
-          );
-          return { handled: true, reason: 'Link campaign: posted status link' };
+          return { handled: true, reason: 'Link campaign: photo sent without link' };
         }
       }
 
@@ -1094,13 +1182,102 @@ SHURUUCDA DUGSIIYA:
       }
     }
 
-    // ─── Status Link Campaign Mode (!link on / !link off) ───
-    if (/^[!./#]?(?:link|linkmode|link-mode)\s+(on|off)$/i.test(lowerText.trim()) && isAdminUser) {
-      const match = lowerText.trim().match(/^[!./#]?(?:link|linkmode|link-mode)\s+(on|off)$/i);
-      const action = match![1].toLowerCase();
-      const res = this.whatsappManager.setLinkCampaignMode(action === 'on');
-      await transport.sendMessage(message.chatId, res.message);
-      return { handled: true, reason: `Link campaign toggle: ${action}` };
+    // ─── Status Link Campaign Mode (!link on / !link off / !link set / !link info) ───
+    if (/^[!./#]?(?:link|linkmode|link-mode)(?:\s+(on|off|set|setup|flyer|info))?(?:\s+([\s\S]+))?$/i.test(lowerText.trim()) && isAdminUser && !message.isGroup) {
+      const match = lowerText.trim().match(/^[!./#]?(?:link|linkmode|link-mode)(?:\s+(on|off|set|setup|flyer|info))?(?:\s+([\s\S]+))?$/i);
+      const action = (match?.[1] || '').toLowerCase();
+      const extraArgs = match?.[2]?.trim() || '';
+
+      if (action === 'off') {
+        const res = this.whatsappManager.setLinkCampaignMode(false);
+        this.whatsappManager.setAwaitingOwnerPromoSetup(false);
+        await transport.sendMessage(message.chatId, res.message);
+        return { handled: true, reason: 'Link campaign toggle: off' };
+      }
+
+      if (action === 'set' || action === 'setup' || action === 'flyer') {
+        const isMediaAttached = Boolean(
+          (message.media?.type === 'image' || (message as any).media?.type === 'document') &&
+          (message.media?.dataBase64 || (message.media as any)?.dataBuffer)
+        );
+        const linkMatch = (extraArgs + ' ' + text).match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
+        let detectedLink = linkMatch ? linkMatch[0] : '';
+        if (!detectedLink) {
+          const rawNumMatch = (extraArgs + ' ' + text).match(/\b(?:25\d{7,12}|06\d{7,8})\b/);
+          if (rawNumMatch) {
+            const cleanNum = rawNumMatch[0].startsWith('0') ? '252' + rawNumMatch[0].substring(1) : rawNumMatch[0];
+            detectedLink = `https://wa.me/${cleanNum}`;
+          }
+        }
+
+        if (isMediaAttached || detectedLink) {
+          let imageBuffer: Buffer | undefined;
+          let mimeType: string | undefined;
+          if (message.media?.dataBase64) {
+            imageBuffer = Buffer.from(message.media.dataBase64, 'base64');
+            mimeType = message.media.mimeType;
+          } else if ((message.media as any)?.dataBuffer) {
+            imageBuffer = (message.media as any).dataBuffer;
+            mimeType = message.media?.mimeType;
+          }
+          const botPhone = (this.whatsappManager.getBotNumber() || message.chatId).replace(/\D/g, '');
+          const finalLink = detectedLink || (botPhone ? `https://wa.me/${botPhone}` : '');
+
+          const res = this.whatsappManager.setOwnerPromo({
+            link: finalLink,
+            imageBuffer,
+            mimeType,
+          });
+          await transport.sendMessage(message.chatId, res.message);
+          return { handled: true, reason: 'Owner promo flyer and link saved' };
+        } else {
+          this.whatsappManager.setAwaitingOwnerPromoSetup(true);
+          await transport.sendMessage(
+            message.chatId,
+            '📸 *[Setup-ka Sawirka iyo Link-ga]*:\n\nFadlan iisoo dir *Sawirkaaga (Flyer)* iyo *Link-gaaga WhatsApp (wa.me)* ee aad rabto in dadka lagula wadaago, si aan u kaydiyo! 📲✨\n_(Haddii aad rabto inaad joojiso qor: !cancel)_'
+          );
+          return { handled: true, reason: 'Awaiting owner promo setup' };
+        }
+      }
+
+      if (action === 'on') {
+        this.whatsappManager.setLinkCampaignMode(true);
+        if (!this.whatsappManager.hasOwnerPromo()) {
+          this.whatsappManager.setAwaitingOwnerPromoSetup(true);
+          const promptMsg =
+            `✅ *[Status Link Campaign Mode: ON]* 🔗✨\n\n` +
+            `⚠️ *Ogeysiis:* Ma jiro sawir ama link xayeysiin ah oo kuu kaydsan.\n` +
+            `Fadlan hadda iisoo dir *Sawirkaaga (Flyer)* iyo *Link-gaaga WhatsApp (wa.me)* si aan u kaydiyo oo aan ugu celiyo qof kasta oo link status laguu dhigo dhaha! 📲✨\n\n` +
+            `_(Haddii aad rabto inaad hadhow dejiso, qor: \`!link set\`)_`;
+          await transport.sendMessage(message.chatId, promptMsg);
+          return { handled: true, reason: 'Link campaign enabled, prompting for owner promo' };
+        } else {
+          const promo = this.whatsappManager.getOwnerPromo();
+          const confirmMsg =
+            `✅ *[Status Link Campaign Mode: ON]* 🔗✨\n\n` +
+            `📌 *Link-gaaga Diyaar ah:* ${promo.link}\n` +
+            `🖼️ *Sawirka Flyer:* ${promo.imageBuffer ? 'Waa kaydsan yahay ✅' : 'Kuma lifaaqsana (Qoraal kaliya) 📝'}\n\n` +
+            `Dadka soo dira link (ama dhaha "link isoo dhig") status ayaa loo dhigi doonaa waxaana loo diri doonaa flyer-kaaga iyo link-gaaga si ay iyaguna status-kooda kuugu dhigaan.\n\n` +
+            `💡 Haddii aad rabto inaad cusboonaysiiso, qor \`!link set\`.`;
+          await transport.sendMessage(message.chatId, confirmMsg);
+          return { handled: true, reason: 'Link campaign enabled with existing promo' };
+        }
+      }
+
+      // If just '!link' or '!link info' in private chat:
+      const isEnabled = this.whatsappManager.isLinkCampaignMode();
+      const promo = this.whatsappManager.getOwnerPromo();
+      const infoMsg =
+        `📊 *[XOGTA STATUS LINK CAMPAIGN]* 🔗\n\n` +
+        `• Xaaladda: ${isEnabled ? '*DAARNAN (ON)* ✅' : '*DAMSAN (OFF)* ❌'}\n` +
+        `• Link-ga Milkiilaha: ${promo.link ? promo.link : '_Lama gelin_'}\n` +
+        `• Sawirka Flyer-ka: ${promo.imageBuffer ? 'Kaydsan yahay ✅' : 'Ma jiro ❌'}\n\n` +
+        `💡 Amarada:\n` +
+        `• \`!link on\` — Daaro Campaign Mode (Is-dhaafsi status)\n` +
+        `• \`!link off\` — Dami Campaign Mode\n` +
+        `• \`!link set\` — Deji sawirka iyo link-gaaga xayeysiinta`;
+      await transport.sendMessage(message.chatId, infoMsg);
+      return { handled: true, reason: 'Link campaign info' };
     }
 
     // ─── Manual Contact Save Command (!save <number> <name> or !save <name> when quoting) ───

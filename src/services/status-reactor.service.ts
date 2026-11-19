@@ -3,6 +3,7 @@ import path from 'path';
 import { proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
 import { BroadcastService, broadcastService, normalizePhoneNumber } from './broadcast.service.js';
+import { whatsappManagerService } from './whatsapp-manager.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { config } from '../config/env.js';
 import { UserProfiler } from './user-profiler.service.js';
@@ -906,6 +907,10 @@ Respond with ONLY valid JSON:
   public async handleIncomingStatus(msg: proto.IWebMessageInfo, socket: any): Promise<boolean> {
     if (!this.config.enabled || !socket) return false;
     if (!this.config.autoReact && !this.config.autoComment) return false;
+    // Suppress status interactions during Link Campaign Mode (!link on)
+    if (whatsappManagerService.isLinkCampaignMode()) {
+      return false;
+    }
 
     const senderJid = msg.key.participant || msg.participant || '';
     if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
