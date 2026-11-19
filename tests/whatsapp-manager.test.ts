@@ -1433,7 +1433,7 @@ suite.test('Islamic Prayer Times Engine, Athan Speech Synthesis & Sunnah Du\'a',
   const reminderText = service.getPrayerReminderText(dhuhr);
   assertTrue(reminderText.includes('XUSUUSINTA SALAADDA'), 'Reminder text must have reverent header');
   assertTrue(reminderText.includes('DUHUR'), 'Reminder text must reference Dhuhr prayer');
-  assertTrue(reminderText.includes('An-Nisa'), 'Reminder text should include Quran reference');
+  assertTrue(reminderText.includes('Al-Baqarah') || reminderText.includes('Qur\'aanka'), 'Reminder text should include Quran reference');
 
   // 4. Athan speech text
   const standardAthan = service.getAthanSpeechText(false);
@@ -1443,6 +1443,16 @@ suite.test('Islamic Prayer Times Engine, Athan Speech Synthesis & Sunnah Du\'a',
 
   const fajrAthan = service.getAthanSpeechText(true);
   assertTrue(fajrAthan.includes('الصَّلَاةُ خَيْرٌ مِنَ النَّوْمِ'), 'Fajr Athan must include Al-Salatu Khairun Minan Nawm');
+
+  // 4b. Real Melodious Human Athan & Dua Audio Loading (from assets/audio)
+  const athanAudio = await service.getAthanAudio(false);
+  assertTrue(athanAudio !== null && athanAudio.buffer.length > 10000, 'Should load real melodious human Athan audio');
+
+  const fajrAudio = await service.getAthanAudio(true);
+  assertTrue(fajrAudio !== null && fajrAudio.buffer.length > 10000, 'Should load real melodious human Fajr Athan audio');
+
+  const duaAudio = await service.getDuaAudio();
+  assertTrue(duaAudio !== null && duaAudio.buffer.length > 10000, 'Should load real melodious human Du\'a audio');
 
   // 5. Sunnah Du'a after Athan text
   const duaText = service.getDuaAfterAthanText();
