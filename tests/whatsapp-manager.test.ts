@@ -1,5 +1,6 @@
 import { TestSuite, assertEqual, assertTrue, assertFalse } from './runner.js';
 import { whatsappManagerService, WhatsAppManagerService } from '../src/services/whatsapp-manager.service.js';
+import { GroupGovernorService } from '../src/services/group-governor.service.js';
 import { broadcastService } from '../src/services/broadcast.service.js';
 import { detectInstantGreetingReply } from '../src/advisor/somali-dictionary.js';
 import { StatusReactorService } from '../src/services/status-reactor.service.js';
@@ -15,6 +16,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { generateSubscriberGuidePdfBuffer } from '../src/services/user-guide-pdf.service.js';
+import { codeRunnerService } from '../src/services/code-runner.service.js';
 
 const suite = new TestSuite('WhatsApp 100% Management & Status Intelligence');
 const testDb = './data/test_whatsapp_manager.db';
@@ -1037,8 +1039,376 @@ suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link o
   try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
 });
 
-suite.run().then(summary => {
-  if (summary.failed > 0) {
-    process.exit(1);
+suite.test('Autonomous Group Takeover & Anti-Link Protection', async () => {
+  const testAuthDir = path.join(os.tmpdir(), `auto_group_test_${Date.now()}`);
+  fs.mkdirSync(testAuthDir, { recursive: true });
+
+  const manager = new WhatsAppManagerService({ authDir: testAuthDir });
+
+  // 1. Link detection regex
+  assertTrue(manager.containsForbiddenLink('https://chat.whatsapp.com/ABCD1234efgh'), 'WhatsApp group link must be detected');
+  assertTrue(manager.containsForbiddenLink('Ku soo biir t.me/somali_group'), 'Telegram link must be detected');
+  assertTrue(manager.containsForbiddenLink('Booqo www.somaliwebsite.com maanta'), 'Web link must be detected');
+  assertTrue(manager.containsForbiddenLink('wa.me/252615000000'), 'wa.me link must be detected');
+  assertFalse(manager.containsForbiddenLink('Asc walaalayaal sidee tihiin maanta?'), 'Normal Somali greeting must NOT be detected as link');
+  assertFalse(manager.containsForbiddenLink('Semistarka lacagtiisu waa $350'), 'Normal text with dollar must NOT be detected as link');
+
+  // 2. Enable Auto-Group
+  assertFalse(manager.isAutoGroupManaged('120363001@g.us'));
+  const enableRes = await manager.enableAutoGroup('120363001@g.us', 'Kooxda Waxbarashada');
+  assertTrue(enableRes.success, 'Enable auto group should succeed');
+  assertEqual(enableRes.groupName, 'Kooxda Waxbarashada');
+  assertTrue(manager.isAutoGroupManaged('120363001@g.us'), 'Group should now be auto-managed');
+
+  // 3. Persistence across instances
+  const manager2 = new WhatsAppManagerService({ authDir: testAuthDir });
+  assertTrue(manager2.isAutoGroupManaged('120363001@g.us'), 'Auto-managed group should persist in storage');
+  const list = manager2.getAutoManagedGroups();
+  assertEqual(list.length, 1);
+  assertEqual(list[0].name, 'Kooxda Waxbarashada');
+
+  // 4. Find group by name
+  const found = await manager2.findGroupByNameOrJid('waxbarashada');
+  assertTrue(Boolean(found), 'Group should be found by name');
+  assertEqual(found?.jid, '120363001@g.us');
+
+  // 5. Disable Auto-Group
+  const disableRes = await manager2.disableAutoGroup('120363001@g.us');
+  assertTrue(disableRes.success, 'Disable auto group should succeed');
+  assertFalse(manager2.isAutoGroupManaged('120363001@g.us'), 'Group should no longer be auto-managed');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+suite.test('GroupGovernorService — Profanity Detection, 3-Strike Escalation & AI Group Intelligence', async () => {
+  const testAuthDir = path.join(os.tmpdir(), `governor_test_${Date.now()}`);
+  fs.mkdirSync(testAuthDir, { recursive: true });
+
+  const governor = new GroupGovernorService({ authDir: testAuthDir });
+
+  // 1. Profanity Detection
+  const profaneCheck1 = governor.detectProfanity('War naga aamus doqon yahow');
+  assertTrue(profaneCheck1.isViolating, 'Should detect Somali insult (doqon)');
+
+  const profaneCheck2 = governor.detectProfanity('Waxaad tahay nacas weyn');
+  assertTrue(profaneCheck2.isViolating, 'Should detect Somali insult (nacas)');
+
+  const politeCheck = governor.detectProfanity('Asc walaal, sideed tahay? Maanta cashir miyaa jira?');
+  assertFalse(politeCheck.isViolating, 'Polite message should NOT be flagged');
+
+  // 2. 3-Strike Escalation System
+  const groupJid = '120363999@g.us';
+  const badUser = '252615555555@s.whatsapp.net';
+
+  // Strike 1
+  const strike1 = governor.addStrike(groupJid, badUser, 'Hadallo anshax xumo', 'doqon');
+  assertEqual(strike1.strikes, 1, 'First strike should be count 1');
+  assertEqual(strike1.action, 'warn_1', 'First strike action should be warn_1');
+
+  // Strike 2
+  const strike2 = governor.addStrike(groupJid, badUser, 'Aflagaado mar labaad ah', 'nacas');
+  assertEqual(strike2.strikes, 2, 'Second strike should be count 2');
+  assertEqual(strike2.action, 'warn_2', 'Second strike action should be warn_2');
+
+  // Strike 3
+  const strike3 = governor.addStrike(groupJid, badUser, 'Cay aan la joojin');
+  assertEqual(strike3.strikes, 3, 'Third strike should be count 3');
+  assertEqual(strike3.action, 'kick', 'Third strike action must be kick');
+
+  // Retrieve strikes
+  const userStrikes = governor.getStrikes(groupJid, badUser);
+  assertEqual(userStrikes['252615555555'].count, 3);
+  assertEqual(userStrikes['252615555555'].history.length, 3);
+
+  // Clear strikes
+  const cleared = governor.clearStrikes(groupJid, badUser);
+  assertTrue(cleared, 'Clearing strikes should succeed');
+  assertEqual(Object.keys(governor.getStrikes(groupJid, badUser)).length, 0);
+
+  // 3. AI Group Profiling & Niche Intelligence
+  const itGroup = governor.analyzeGroup('Barashada Python & Web Development');
+  assertEqual(itGroup.category, 'tech');
+  assertTrue(itGroup.customRules.length >= 5, 'Tech group rules must have at least 5 rules');
+  assertTrue(itGroup.enhancedDescription.includes('Hadafka'), 'Description should have structured goal');
+  assertTrue(itGroup.logoPrompt.includes('code'), 'Logo prompt should be relevant to coding');
+
+  const eduGroup = governor.analyzeGroup('Ardayda Jaamacadda Jamhuriya Semester 4');
+  assertEqual(eduGroup.category, 'education');
+  assertTrue(eduGroup.categoryLabel.includes('Waxbarashada'));
+
+  const bizGroup = governor.analyzeGroup('Ganacsiga Online-ka & Suuqgeynta');
+  assertEqual(bizGroup.category, 'business');
+
+  // 4. Multi-lingual Profanity Check (Arabic & English)
+  const arabicCheck = governor.detectProfanity('هذا كلام شرموطة');
+  assertTrue(arabicCheck.isViolating, 'Should detect Arabic profanity');
+
+  const englishCheck = governor.detectProfanity('You are a fucking idiot');
+  assertTrue(englishCheck.isViolating, 'Should detect English vulgarity');
+
+  // 5. Anti-Flood Detection
+  for (let i = 0; i < 4; i++) {
+    const f = governor.checkFlood(groupJid, '252618888888');
+    assertFalse(f.isFlooding, 'First 4 messages should not trigger flood');
   }
+  const f5 = governor.checkFlood(groupJid, '252618888888');
+  assertTrue(f5.isFlooding, 'Fifth burst message within 5s MUST trigger flood');
+
+  // 6. Full Autonomous Takeover execution
+  const mockSock: any = {
+    groupMetadata: async (j: string) => ({ id: j, subject: 'Ardayda Software Engineering 2026', desc: 'Kooxda ardayda' }),
+    groupUpdateDescription: async () => {},
+    updateProfilePicture: async () => {},
+    groupSettingUpdate: async () => {},
+  };
+  const takeover = await governor.executeFullAutonomousTakeover(mockSock, '120363888@g.us');
+  assertTrue(takeover.success, 'Full autonomous takeover must succeed');
+  assertEqual(takeover.profile.category, 'tech');
+  assertTrue(takeover.announcement.includes('AUTONOMOUS TAKEOVER'), 'Announcement must contain takeover decree');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+suite.test('Interactive WhatsApp Polls, Smart Night Curfew, Ghost Message Vault & Sandboxed Code Runner', async () => {
+  const testAuthDir = path.join(os.tmpdir(), `test_superpowers_${Date.now()}`);
+  const governor = new GroupGovernorService({ authDir: testAuthDir });
+
+  // 1. Sandboxed Code Runner
+  const jsExec = codeRunnerService.executeJavaScript('[10, 20, 30].map(n => n * 2)');
+  assertTrue(jsExec.success, 'JavaScript code execution must succeed');
+  assertTrue(jsExec.output.includes('20') && jsExec.output.includes('60'), 'Execution output must contain mapped values');
+  assertTrue(jsExec.executionTimeMs >= 0, 'Execution time must be recorded');
+
+  // Timeout protection
+  const timeoutExec = codeRunnerService.executeJavaScript('while(true){}', 100);
+  assertFalse(timeoutExec.success, 'Infinite loops must be killed by sandbox timeout');
+  assertTrue(timeoutExec.output.toLowerCase().includes('timed out') || timeoutExec.output.toLowerCase().includes('timeout'), 'Output should note timeout');
+
+  // 2. Interactive Poll Validation & Dispatch
+  let dispatchedPayload: any = null;
+  const mockSock: any = {
+    sendMessage: async (jid: string, payload: any) => {
+      dispatchedPayload = payload;
+      return { key: { id: 'poll_123' } };
+    },
+    groupSettingUpdate: async () => {},
+  };
+  whatsappManagerService.setSocket(mockSock);
+
+  const pollRes = await whatsappManagerService.createPoll(
+    '120363888@g.us',
+    'Luuqadee ugu fiican Backend 2026?',
+    ['Node.js / TS', 'Python', 'Go', 'Rust']
+  );
+  assertTrue(pollRes.success, 'Poll creation must succeed');
+  assertTrue(Boolean(dispatchedPayload?.poll), 'Dispatched message must contain native poll payload');
+  assertEqual(dispatchedPayload.poll.name, 'Luuqadee ugu fiican Backend 2026?');
+  assertEqual(dispatchedPayload.poll.values.length, 4);
+
+  // 3. Smart Night Curfew Engine
+  const curfewGroup = '120363999@g.us';
+  const curfewConfig = governor.setCurfew(curfewGroup, true, 23, 6);
+  assertTrue(curfewConfig.enabled, 'Curfew must be enabled');
+  assertEqual(curfewConfig.startHour, 23);
+  assertEqual(curfewConfig.endHour, 6);
+
+  // Night condition: 23:00 (11 PM) -> should lock
+  const nightCheck = governor.checkCurfew(curfewGroup, 23);
+  assertTrue(nightCheck.shouldAct, 'Night hour must trigger curfew action');
+  assertEqual(nightCheck.targetState, 'locked');
+
+  const nightApply = await governor.applyCurfew(mockSock, curfewGroup, 23);
+  assertTrue(nightApply.changed, 'Curfew transition to night must succeed');
+  assertEqual(nightApply.state, 'locked');
+  assertTrue(nightApply.notice?.includes('SAACADDA NASASHADA') || false);
+
+  // Second check at night (01:00 AM) -> already locked, should not act again
+  const nightAgain = governor.checkCurfew(curfewGroup, 1);
+  assertFalse(nightAgain.shouldAct, 'Curfew should not re-trigger if already locked');
+
+  // Morning condition: 07:00 AM -> should unlock
+  const morningCheck = governor.checkCurfew(curfewGroup, 7);
+  assertTrue(morningCheck.shouldAct, 'Morning hour must trigger curfew unlock');
+  assertEqual(morningCheck.targetState, 'unlocked');
+
+  const morningApply = await governor.applyCurfew(mockSock, curfewGroup, 7);
+  assertTrue(morningApply.changed, 'Curfew transition to morning must succeed');
+  assertEqual(morningApply.state, 'unlocked');
+  assertTrue(morningApply.notice?.includes('SUBAX WANAAGSAN') || false);
+
+  // 4. Ghost Message Vault (Anti-Delete)
+  const ghostGroup = '120363777@g.us';
+  whatsappManagerService.recordIncomingGroupMessage(ghostGroup, 'msg_secret_1', '252615555555@s.whatsapp.net', 'Sir culus oo hadhow la tirtirayo!');
+  
+  // Member deletes for everyone -> revoke arrives
+  const revoked = whatsappManagerService.recordRevocation(ghostGroup, 'msg_secret_1');
+  assertTrue(Boolean(revoked), 'Revocation must be captured in ghost vault');
+  assertEqual(revoked?.text, 'Sir culus oo hadhow la tirtirayo!');
+  assertEqual(revoked?.sender, '252615555555@s.whatsapp.net');
+
+  const vault = whatsappManagerService.getRevokedMessages(ghostGroup);
+  assertTrue(vault.length >= 1, 'Ghost vault must store the revoked message');
+  assertEqual(vault[vault.length - 1].id, 'msg_secret_1');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+suite.test('Autonomous Polyglot Code Intelligence, Media Safety Shield, Evening Summarizer & Member Activity Auditing', async () => {
+  const testAuthDir = path.join(os.tmpdir(), `test_polyglot_${Date.now()}`);
+  const governor = new GroupGovernorService({ authDir: testAuthDir });
+
+  // 1. Polyglot Code Snippet Detection across multiple languages
+  const pyCode = 'def calculate_fibonacci(n):\n    if n <= 1: return n\n    return calculate_fibonacci(n-1) + calculate_fibonacci(n-2)\nprint(calculate_fibonacci(10))';
+  const pyDetect = governor.detectCodeSnippet(pyCode);
+  assertTrue(pyDetect.isCode, 'Python snippet must be detected as code');
+  assertEqual(pyDetect.language, 'python');
+
+  const cppCode = '#include <iostream>\nint main() {\n    std::cout << "Hello World" << std::endl;\n    return 0;\n}';
+  const cppDetect = governor.detectCodeSnippet(cppCode);
+  assertTrue(cppDetect.isCode, 'C++ snippet must be detected as code');
+  assertEqual(cppDetect.language, 'cpp');
+
+  const sqlCode = 'SELECT id, username, email FROM members WHERE status = "active" GROUP BY role;';
+  const sqlDetect = governor.detectCodeSnippet(sqlCode);
+  assertTrue(sqlDetect.isCode, 'SQL query must be detected as code');
+  assertEqual(sqlDetect.language, 'sql');
+
+  const rustCode = 'fn main() {\n    let mut counter = 0;\n    println!("Value: {}", counter);\n}';
+  const rustDetect = governor.detectCodeSnippet(rustCode);
+  assertTrue(rustDetect.isCode, 'Rust snippet must be detected as code');
+  assertEqual(rustDetect.language, 'rust');
+
+  // Plain conversation should not be detected as code
+  const plainText = 'Asc walaalayaal sideed tihiin maanta? Xaaladda ka warrama';
+  const plainDetect = governor.detectCodeSnippet(plainText);
+  assertFalse(plainDetect.isCode, 'Regular conversational Somali text must not be detected as code');
+
+  // 2. Code Review Generation
+  const review = await governor.reviewCodeSnippet(pyCode, 'python');
+  assertTrue(review.includes('CODE GUARDIAN'), 'Code review should contain guardian header');
+  assertTrue(review.includes('PYTHON'), 'Code review should reference the language');
+
+  // 3. Media Safety Screening (Mock AI Orchestrator)
+  const mockViolatingAI: any = {
+    generateResponse: async () => ({ text: 'VIOLATION: Nudity detected' }),
+  };
+  const mediaViolation = await governor.screenMediaSafety(
+    { mimeType: 'image/jpeg', dataBase64: 'fake_base64_data' },
+    mockViolatingAI
+  );
+  assertTrue(mediaViolation.isViolating, 'Should detect violation from AI review');
+  assertTrue(mediaViolation.reason?.includes('Nudity') || false);
+
+  const mockSafeAI: any = {
+    generateResponse: async () => ({ text: 'SAFE' }),
+  };
+  const mediaSafe = await governor.screenMediaSafety(
+    { mimeType: 'image/jpeg', dataBase64: 'fake_safe_data' },
+    mockSafeAI
+  );
+  assertFalse(mediaSafe.isViolating, 'Safe image must pass review');
+
+  // 4. Autonomous Evening Discussion Summary
+  const groupJid = '120363555@g.us';
+  const sampleMessages = [
+    { sender: '252611111111', text: 'Sidee loo bartaa Python iyo Backend?', timestamp: Date.now() - 3600000 },
+    { sender: '252612222222', text: 'FastAPI iyo Django ayaa ugu fiican dalkeena', timestamp: Date.now() - 1800000 },
+    { sender: '252613333333', text: 'Mahadsanid walaal aad baan uga faa\'iiday', timestamp: Date.now() - 900000 },
+  ];
+  const summary = await governor.generateEveningSummary('Ardayda IT-ga Jamhuriya', sampleMessages);
+  assertTrue(summary.includes('DULMARKA & FAALADA'), 'Summary must contain executive header');
+  assertTrue(summary.includes('Ardayda IT-ga Jamhuriya'), 'Summary should reference group subject');
+
+  // 5. Member Activity Auditing
+  governor.recordMemberActivity(groupJid, '252619999999@s.whatsapp.net');
+  const inactivesImmediate = governor.getInactiveMembers(groupJid, 30);
+  assertEqual(inactivesImmediate.length, 0, 'Recently active member should not be inactive');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+// ─── TEST SUITE 23: Daily Quiz, Leaderboard & Scheduled Announcements ────────
+suite.test('Daily Quiz Engine, Group Leaderboard & Scheduled Announcements', async () => {
+  const testAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-quiz-test-'));
+  const governor = new GroupGovernorService({ authDir: testAuthDir });
+  const groupJid = '120363999@g.us';
+
+  // 1. Daily Quiz Generation (using local bank, no AI)
+  const quiz = await governor.generateDailyQuiz(groupJid, 'Tech Dev Somalia', '', undefined);
+  assertTrue(quiz.pollTitle.length > 5, 'Quiz poll title should not be empty');
+  assertTrue(Array.isArray(quiz.options) && quiz.options.length >= 2, 'Quiz should have at least 2 options');
+  assertTrue(typeof quiz.correctIndex === 'number', 'Quiz should have a numeric correctIndex');
+  assertTrue(quiz.correctIndex >= 0 && quiz.correctIndex < quiz.options.length, 'Correct index must be valid');
+
+  // 2. Set Active Quiz and Record Answers
+  governor.setActiveQuiz(groupJid, quiz.pollTitle, quiz.options, quiz.correctIndex, 60000);
+  const activeQuiz = governor.getActiveQuiz(groupJid);
+  assertTrue(activeQuiz !== null, 'Active quiz should be retrievable');
+  assertEqual(activeQuiz!.correctIndex, quiz.correctIndex, 'Active quiz correct index should match');
+
+  // 3. Answer recording — correct answer
+  const correctResult = governor.recordQuizAnswer(groupJid, '252611111111@s.whatsapp.net', quiz.correctIndex);
+  assertTrue(correctResult !== null, 'Should return result when quiz is active');
+  assertTrue(correctResult!.correct, 'Correct answer should return correct=true');
+
+  // 4. Answer recording — wrong answer
+  const wrongIndex = quiz.correctIndex === 0 ? 1 : 0;
+  const wrongResult = governor.recordQuizAnswer(groupJid, '252612222222@s.whatsapp.net', wrongIndex);
+  assertTrue(wrongResult !== null, 'Should return result for wrong answer too');
+  assertFalse(wrongResult!.correct, 'Wrong answer should return correct=false');
+
+  // 5. Leaderboard
+  const board = governor.getLeaderboard(groupJid, 10);
+  assertTrue(board.length >= 1, 'Leaderboard should have at least one player');
+  const winner = board[0];
+  assertEqual(winner.user, '252611111111', 'Correct answerer should be top of leaderboard');
+  assertTrue(winner.score >= 10, 'Correct answer should give 10 points');
+
+  // 6. Quiz should not fire again too soon
+  governor.recordDailyQuizPosted(groupJid);
+  assertFalse(governor.shouldPostDailyQuiz(groupJid), 'Should not post quiz again too soon');
+
+  // 7. Scheduled Announcements
+  const id1 = governor.scheduleAnnouncement(groupJid, 14, 30, 'Kulanka Casariyeedka!');
+  const id2 = governor.scheduleAnnouncement(groupJid, 20, 0, 'Habeenkii wanaagsan!');
+  assertTrue(id1.startsWith('ann_'), 'Announcement ID should have ann_ prefix');
+  assertEqual(governor.listScheduledAnnouncements(groupJid).length, 2, 'Should have 2 scheduled announcements');
+
+  // 8. Check announcements at the right time
+  const dueAt1430 = governor.checkScheduledAnnouncements(groupJid, 14, 30);
+  assertEqual(dueAt1430.length, 1, 'Should trigger announcement at 14:30');
+  assertTrue(dueAt1430[0].message.includes('Kulanka'), 'Triggered announcement should contain the message');
+
+  // 9. Announcement should be consumed (one-shot)
+  const dueAgain = governor.checkScheduledAnnouncements(groupJid, 14, 30);
+  assertEqual(dueAgain.length, 0, 'Already-triggered announcement should not fire again');
+
+  // 10. Cancel remaining announcement
+  const cancelled = governor.cancelScheduledAnnouncement(groupJid, id2);
+  assertTrue(cancelled, 'Cancellation of valid ID should succeed');
+  assertEqual(governor.listScheduledAnnouncements(groupJid).length, 0, 'No announcements should remain');
+
+  // 11. WhatsAppManagerService leaderboard display
+  const manager = new WhatsAppManagerService({ authDir: testAuthDir });
+  const boardText = manager.getQuizLeaderboard(groupJid, 10);
+  assertTrue(boardText.includes('LEADERBOARD'), 'Manager leaderboard text should include LEADERBOARD header');
+
+  // 12. Manager schedule announcement delegation
+  const annId = manager.scheduleGroupAnnouncement(groupJid, 9, 0, 'Subax Wanaagsan!');
+  assertTrue(annId.length > 0, 'scheduleGroupAnnouncement should return a valid ID');
+  const listFromManager = manager.listScheduledAnnouncements(groupJid);
+  assertEqual(listFromManager.length, 1, 'Manager should list scheduled announcements');
+  const cancelledFromManager = manager.cancelScheduledAnnouncement(groupJid, annId);
+  assertTrue(cancelledFromManager, 'Manager cancel should succeed');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+suite.run().then(summary => {
+  process.exit(summary.failed > 0 ? 1 : 0);
 });

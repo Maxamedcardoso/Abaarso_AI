@@ -68,10 +68,30 @@ Bot-kan waxaa lagu dhisay nidaam ammaan oo heer sare ah (**Strict Role-Based Acc
 
 ---
 
-### C. Maamulka Groups-ka (Group Management)
+### C. Maamulka Groups-ka (Group Management & Autonomous AI Governor)
 
 | Amarka | Sida Loo Isticmaalo | Waxa Uu Qabanayo | Cidda Isticmaalaysa |
 | :--- | :--- | :--- | :--- |
+| `!maamul on [magaca]` | `!maamul on Jaamacadda` ama `!maamul on` | ⭐ **AUTONOMOUS TAKEOVER**: Bot-ku si buuxda oo madax-bannaan ayuu ula wareegayaa maamulka group-ka (Anti-Link + Anti-Profanity 3-Strikes + Auto-Welcome + 24/7 Guard). | **Admin Only** |
+| `!maamul enhance [mag]`| `!maamul enhance` | 🎨 **AUTONOMOUS BRANDING**: AI ayaa group-ka falanqaynaya, u qoraya sharaxaad heer sare ah, u dhisaya AI Logo profile picture, kuna xidhaya settings-ka (Lock). | **Admin Only** |
+| `!maamul topic [mag]`  | `!maamul topic` | 💡 **AI TOPIC DROP**: Soo dhigista dood, fikrad ama xikmad caqli badan oo ku habboon ujeeddada kooxda (Tech, Waxbarasho, Ganacsi, Diin). | **Admin Only** |
+| `!maamul rules [mag]`  | `!maamul rules` | 📜 **CONSTITUTION / RULES**: Soo saarista iyo soo dhigista xeerarka rasmiga ah ee kooxda loo habeeyay. | **Admin Only** |
+| `!maamul lock/unlock`  | `!maamul lock` | 🔒 Xidhista ama furista in xubnuhu wax ka beddeli karaan magaca, sawirka iyo sharaxaadda kooxda. | **Admin Only** |
+| `!maamul strikes`      | `!maamul strikes` | 🚨 Eegista xubnaha qaba digniinaha anshaxa (Strikes 1/3, 2/3) iyo sababaha loo ciqaabay. | **Admin Only** |
+| `!maamul clearstrikes` | `!maamul clearstrikes @user` | 🔄 Ka cafinta iyo ka tirtiridda digniinaha anshaxa xubin hore loo ciqaabay. | **Admin Only** |
+| `!maamul off [magaca]`| `!maamul off Jaamacadda` ama `!maamul off` | Daminta maamulka tooska ah ee kooxdaas. | **Admin Only** |
+| `!maamul status` | `!maamul status` | Liiska dhammaan groups-ka uu bot-ku si toos ah u maamulo hadda. | **Admin Only** |
+| `!poll <su'aal> \| <doorashooyin>` | `!poll Tech? \| Python \| JS` | 📊 **INTERACTIVE POLL**: Codbixin rasmi ah oo WhatsApp ah | **Admin Only** |
+| `!curfew on/off` | `!curfew on 23 6` | 🌙 **SMART CURFEW**: Saacadda hurdada & xidhitaanka habeenkii | **Admin Only** |
+| `!ghost / !deleted` | `!ghost` | 👻 **GHOST VAULT**: Fariimihii la tirtiray ee WhatsApp (Delete for everyone) | **Admin Only** |
+| `!leaderboard` | `!leaderboard` | 🏆 **QUIZ LEADERBOARD**: Liiska dadka ugu sarreeya dhibcaha quiz-ka | **Qof Kasta** |
+| `!inactive [days]` | `!inactive 30` | 😴 **INACTIVE AUDIT**: Eeg xubnaha aan firfircoonayn maalmo cayiman | **Admin Only** |
+| `!schedule HH:MM <fariin>` | `!schedule 14:30 Kulan` | 📅 **SCHEDULED ANNOUNCEMENT**: Xayeysiis toos ah waqti gaar ah | **Admin Only** |
+| `!schedule list` | `!schedule list` | 📅 Liiska dhammaan xayeysiisyada la jadwaleeyay | **Admin Only** |
+| `!schedule cancel <id>` | `!schedule cancel ann_123` | 📅 Baabi'i xayeysiis jadwal ah | **Admin Only** |
+| `!code js <koodh>` | `!code js 2 + 2` | 💻 **LIVE CODE RUNNER**: Ku fuli JavaScript toos ah WhatsApp | **Qof Kasta** |
+| `!transcribe` | Reply codka + `!transcribe` | 🎙️ **VOICE TRANSCRIBER**: Codka WhatsApp-ka u rog qoraal cad | **Qof Kasta** |
+| `!rules` (ama `!xeerar`)| `!rules` ama `!xeerar` | Soo bandhigista xeerarka kooxda ee bot-ku dejiyay (Qof kasta ayaa weydiin kara). | **Qof Kasta** |
 | `!tagall <fariin>` | `!tagall Ogeysiis shir degdeg ah` | Wuxuu wada tag-gareeyaa (mention) dhammaan xubnaha group-ka ku jira fariintaada. | **Admin Only** |
 | `!kick @qofka / <lambar>` | `!kick @252634949642` ama `!kick 252634949642` ama reply | Qofka group-ka laga saarayo (Kick member) — Waxaa lagu qori karaa @mention, lambar toos ah, ama quote. | **Admin Only** |
 | `!add <taleefan> / @qofka` | `!add 252634949642` ama `!add @252634949642` | Ku darista qof cusub group-ka, wuxuuna isla markiiba group-ka dhexdiisa ugu soo dhawaynayaa fariin qurux badan oo lagu tag-gareeyay. | **Admin Only** |
@@ -135,6 +155,19 @@ Amarradan waxaa loogu talagalay ardayda, macallimiinta, iyo cid kasta oo la hadl
 | !autoview on/off  | Admin Only      | Si toos ah u daawashada stories-ka       | !autoview on                        |
 | !reply <jid> <f>  | Admin Only      | Fariin toos ah u dir qof gaar ah         | !reply 252634949642@s.wa... Salaan  |
 | !autoreply add/del| Admin Only      | Fariin toos ah (Auto-responder)          | !autoreply add lacagta -> $350      |
+| !maamul on [magac]| Admin Only      | Bot-ku si toos ah ha ula wareego kooxda   | !maamul on Jaamacadda / !maamul on  |
+| !maamul off [mag] | Admin Only      | Dami maamulka tooska ah ee kooxda         | !maamul off Jaamacadda              |
+| !maamul status    | Admin Only      | Eeg liiska groups-ka uu bot-ku maamulo    | !maamul status                      |
+| !poll <su'aal> \| <doorasho> | Admin/Group | Codbixin rasmi ah oo WhatsApp ah (Interactive) | !poll Tech? \| Python \| JS     |
+| !curfew on/off    | Admin Only      | Saacadda hurdada & xidhitaanka habeenkii  | !curfew on 23 6                     |
+| !ghost / !deleted | Admin Only      | Eeg fariimaha la tirtiray (Delete for everyone) | !ghost                          |
+| !leaderboard      | Qof Kasta       | Eeg xididdada quiz-ka kooxda (Top 10)     | !leaderboard                         |
+| !inactive [days]  | Admin Only      | Soo saar xubnaha aan wax qorin N maalmood | !inactive 30                         |
+| !schedule HH:MM <f> | Admin Only    | Jadwal xayeysiis waqti cayiman            | !schedule 14:30 Kulan casar          |
+| !schedule list    | Admin Only      | Eeg liiska xayeysiisyada la jadwaleeyay   | !schedule list                       |
+| !schedule cancel <id> | Admin Only  | Baabi'i xayeysiis jadwal ah               | !schedule cancel ann_123             |
+| !code js <koodh>  | Qof Kasta       | Ku fuli JavaScript toos ah WhatsApp-ka    | !code js [1, 2, 3].map(x => x*2)    |
+| !transcribe       | Qof Kasta       | Codka WhatsApp-ka u rog qoraal cad        | Reply to audio + !transcribe        |
 | !tagall <fariin>  | Admin Only      | Tag-garee dhammaan xubnaha group-ka      | !tagall Shir degdeg ah 8:00pm       |
 | !kick @qofka      | Admin Only      | Ka saaridda qofka group-ka               | !kick @252634949642                 |
 | !add <taleefan>   | Admin Only      | Ku darista xubin cusub group-ka          | !add 252634949642                   |

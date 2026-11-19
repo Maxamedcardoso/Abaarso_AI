@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { BroadcastService, broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
+import { groupGovernorService, GroupGovernorService } from './group-governor.service.js';
 
 export interface WhatsAppManagerOptions {
   authDir?: string;
@@ -33,6 +34,14 @@ export interface PostedStatusRecord {
   backgroundColor?: string;
   recipientsCount: number;
   viewers: StatusViewerRecord[];
+}
+
+export interface RevokedGroupMessage {
+  id: string;
+  sender: string;
+  text: string;
+  deletedAt: number;
+  originalTime: number;
 }
 
 export interface GroupInfo {
@@ -70,6 +79,12 @@ export class WhatsAppManagerService {
   private ownerPromoMimeType?: string;
   private awaitingOwnerPromoSetup: boolean = false;
   private readonly botControlStoragePath: string;
+  private readonly autoGroupStoragePath: string;
+  private autoManagedGroups: Map<string, { jid: string; name: string; enabledAt: number }> = new Map();
+  private readonly governor: GroupGovernorService = groupGovernorService;
+  private autonomousLoopTimer?: NodeJS.Timeout;
+  private recentGroupMessages: Map<string, { id: string; sender: string; text: string; timestamp: number }[]> = new Map();
+  private revokedGroupMessages: Map<string, RevokedGroupMessage[]> = new Map();
 
   constructor(options?: WhatsAppManagerOptions) {
     this.authDir = options?.authDir || path.join(process.cwd(), 'baileys_auth_info');
@@ -77,6 +92,7 @@ export class WhatsAppManagerService {
     // Store call-reject config alongside auth files so it survives Render restarts
     this.callRejectStoragePath = path.join(this.authDir, 'call-reject-config.json');
     this.botControlStoragePath = path.join(this.authDir, 'bot-control-config.json');
+    this.autoGroupStoragePath = path.join(this.authDir, 'auto-managed-groups.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
@@ -84,6 +100,7 @@ export class WhatsAppManagerService {
     this.loadPersistedStatuses();
     this.loadCallRejectConfig();
     this.loadBotControlConfig();
+    this.loadAutoGroupConfig();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -460,6 +477,11 @@ export class WhatsAppManagerService {
     this.socket = socket;
     if (socket?.user?.id) {
       this.botJid = socket.user.id.split(':')[0].split('@')[0];
+    }
+    if (socket) {
+      this.startAutonomousGovernorLoop();
+    } else {
+      this.stopAutonomousGovernorLoop();
     }
   }
 
@@ -1605,6 +1627,601 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     }
   }
 
+  // ─── 3.1. AUTONOMOUS GROUP TAKEOVER & AUTO-GUARD ────────────────────────────
+
+  private loadAutoGroupConfig(): void {
+    try {
+      if (fs.existsSync(this.autoGroupStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.autoGroupStoragePath, 'utf8'));
+        if (Array.isArray(raw)) {
+          for (const item of raw) {
+            if (item?.jid) {
+              this.autoManagedGroups.set(item.jid, {
+                jid: item.jid,
+                name: item.name || '',
+                enabledAt: item.enabledAt || Date.now(),
+              });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to load auto-managed groups config: ${e?.message}`);
+    }
+  }
+
+  private saveAutoGroupConfig(): void {
+    try {
+      const dir = path.dirname(this.autoGroupStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const list = Array.from(this.autoManagedGroups.values());
+      fs.writeFileSync(this.autoGroupStoragePath, JSON.stringify(list, null, 2), 'utf8');
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to save auto-managed groups config: ${e?.message}`);
+    }
+  }
+
+  /**
+   * Enables autonomous group takeover for a given group.
+   * Cardoso AI will enforce Anti-Link, Auto-Welcome, and autonomous protection.
+   */
+  public async enableAutoGroup(
+    groupJid: string,
+    groupName?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    groupName: string;
+    jid: string;
+    announcement?: string;
+    profile?: any;
+  }> {
+    let name = groupName?.trim() || '';
+    if (!name && this.socket) {
+      try {
+        const meta = await this.socket.groupMetadata(groupJid);
+        name = meta?.subject || groupJid;
+      } catch {
+        name = groupJid;
+      }
+    }
+    if (!name) name = groupJid;
+
+    this.autoManagedGroups.set(groupJid, {
+      jid: groupJid,
+      name,
+      enabledAt: Date.now(),
+    });
+    this.saveAutoGroupConfig();
+
+    let announcement: string | undefined;
+    let profile: any = null;
+
+    if (this.socket) {
+      try {
+        const takeoverRes = await this.governor.executeFullAutonomousTakeover(this.socket, groupJid, name);
+        announcement = takeoverRes.announcement;
+        profile = takeoverRes.profile;
+        if (takeoverRes.subject) name = takeoverRes.subject;
+      } catch (err: any) {
+        console.warn(`[WhatsAppManager] Error executing full autonomous takeover on enable: ${err?.message}`);
+      }
+    }
+
+    return {
+      success: true,
+      message: `✅ Maamulka tooska ah ee kooxda "${name}" si buuxda oo 100% autonomous ah ayaa loo furay!`,
+      groupName: name,
+      jid: groupJid,
+      announcement,
+      profile,
+    };
+  }
+
+  public startAutonomousGovernorLoop(transport?: any): void {
+    if (this.autonomousLoopTimer) return;
+    // Check every hour: 1. Curfew transitions (night mute/morning unmute) & 2. Daily topic drops
+    this.autonomousLoopTimer = setInterval(async () => {
+      try {
+        for (const [groupJid] of this.autoManagedGroups.entries()) {
+          // 1. Smart Night Curfew Check
+          try {
+            const curfewRes = await this.governor.applyCurfew(this.socket, groupJid);
+            if (curfewRes.changed && curfewRes.notice) {
+              if (transport?.sendMessage) {
+                await transport.sendMessage(groupJid, curfewRes.notice);
+              } else if (this.socket) {
+                await this.socket.sendMessage(groupJid, { text: curfewRes.notice });
+              }
+            }
+          } catch (curfewErr: any) {
+            console.warn(`[Autonomous Governor] Curfew error for ${groupJid}: ${curfewErr?.message}`);
+          }
+
+          // 2. Daily Value & Wisdom Topic Drop
+          if (this.governor.shouldPostDailyTopic(groupJid)) {
+            console.log(`💡 [Autonomous Governor] Scheduled daily topic drop running for ${groupJid}...`);
+            await this.postGovernorTopic(groupJid, transport);
+            this.governor.recordDailyTopicPosted(groupJid);
+          }
+
+          // 3. Autonomous Evening Discussion Summary (21:00 Somali Time)
+          if (this.governor.shouldPostEveningSummary(groupJid)) {
+            try {
+              const recentMsgs = this.getRecentGroupMessages(groupJid);
+              const summary = await this.governor.generateEveningSummary(
+                this.autoManagedGroups.get(groupJid)?.name || 'Kooxda',
+                recentMsgs,
+                this.aiOrchestrator
+              );
+              if (transport?.sendMessage) {
+                await transport.sendMessage(groupJid, summary);
+              } else if (this.socket) {
+                await this.socket.sendMessage(groupJid, { text: summary });
+              }
+              this.governor.recordEveningSummaryPosted(groupJid);
+            } catch (sumErr: any) {
+              console.warn(`[Autonomous Governor] Evening summary error for ${groupJid}: ${sumErr?.message}`);
+            }
+          }
+
+          // 4. Autonomous Daily Quiz (14:00 Somali Time)
+          if (this.governor.shouldPostDailyQuiz(groupJid)) {
+            try {
+              const groupInfo = this.autoManagedGroups.get(groupJid);
+              const groupSubject = groupInfo?.name || 'Kooxda';
+              let desc = '';
+              if (this.socket) {
+                try { const meta = await this.socket.groupMetadata(groupJid); desc = meta?.desc || ''; } catch {}
+              }
+              const quiz = await this.governor.generateDailyQuiz(groupJid, groupSubject, desc, this.aiOrchestrator);
+              // Post as WhatsApp native poll so members can tap to answer
+              const pollRes = await this.createPoll(groupJid, quiz.pollTitle, quiz.options, 1);
+              if (pollRes.success) {
+                this.governor.setActiveQuiz(groupJid, quiz.pollTitle, quiz.options, quiz.correctIndex, 15 * 60 * 1000);
+                this.governor.recordDailyQuizPosted(groupJid);
+                const notice =
+                  `🧠 *[CARDOSO AI — QUIZ MAALINTA]* 🏆\n\n` +
+                  `📊 Codbixinta kore ka dooro jawaabta saxda ah!\n` +
+                  `✅ Jawaabtii saxda ahayd waxaa ku jirto calaamadda ✅\n` +
+                  `🏅 Jawaabaha saxda ah waa lagu darsanayaa Leaderboard-ka!\n\n` +
+                  `_Waqtigu waa 15 daqiiqo — Degsoon oo jawaab!_ ⏰`;
+                if (transport?.sendMessage) {
+                  await transport.sendMessage(groupJid, notice);
+                } else if (this.socket) {
+                  await this.socket.sendMessage(groupJid, { text: notice });
+                }
+              }
+            } catch (quizErr: any) {
+              console.warn(`[Autonomous Governor] Quiz error for ${groupJid}: ${quizErr?.message}`);
+            }
+          }
+
+          // 5. Scheduled Announcements Check (every hour, checks exact minute)
+          const nowForAnn = new Date();
+          const nowH = nowForAnn.getHours();
+          const nowM = nowForAnn.getMinutes();
+          const dueAnns = this.governor.checkScheduledAnnouncements(groupJid, nowH, nowM);
+          for (const ann of dueAnns) {
+            try {
+              const announcementText =
+                `📢 *[CARDOSO AI — XAYEYSIINTA JADWALKA]* ⏰\n\n` +
+                `${ann.message}\n\n` +
+                `_Waxaa diraya Cardoso AI Autonomous Governor_`;
+              if (transport?.sendMessage) {
+                await transport.sendMessage(groupJid, announcementText);
+              } else if (this.socket) {
+                await this.socket.sendMessage(groupJid, { text: announcementText });
+              }
+            } catch (annErr: any) {
+              console.warn(`[Autonomous Governor] Scheduled announcement error: ${annErr?.message}`);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppManager] Error in autonomous governor loop: ${err?.message}`);
+      }
+    }, 60 * 60 * 1000); // Runs hourly; for minute-precision scheduling, inner checks handle it
+  }
+
+  public stopAutonomousGovernorLoop(): void {
+    if (this.autonomousLoopTimer) {
+      clearInterval(this.autonomousLoopTimer);
+      this.autonomousLoopTimer = undefined;
+    }
+  }
+
+  /**
+   * Disables autonomous group takeover for a given group.
+   */
+  public async disableAutoGroup(
+    groupJid: string
+  ): Promise<{ success: boolean; message: string; groupName: string }> {
+    const existing = this.autoManagedGroups.get(groupJid);
+    const name = existing?.name || groupJid;
+    this.autoManagedGroups.delete(groupJid);
+    this.saveAutoGroupConfig();
+
+    return {
+      success: true,
+      message: `🛑 Maamulkii tooska ahaa ee kooxda "${name}" waa la damiyay.`,
+      groupName: name,
+    };
+  }
+
+  /**
+   * Returns whether a group is currently autonomously managed.
+   */
+  public isAutoGroupManaged(groupJid: string): boolean {
+    if (!groupJid) return false;
+    return this.autoManagedGroups.has(groupJid);
+  }
+
+  /**
+   * Returns list of all currently auto-managed groups.
+   */
+  public getAutoManagedGroups(): Array<{ jid: string; name: string; enabledAt: number }> {
+    return Array.from(this.autoManagedGroups.values());
+  }
+
+  /**
+   * Finds a group by subject (name) or JID across socket participating groups or saved cache.
+   */
+  public async findGroupByNameOrJid(query: string): Promise<{ jid: string; name: string } | null> {
+    const clean = (query || '').trim();
+    if (!clean) return null;
+
+    // 1. Direct JID check
+    if (clean.endsWith('@g.us')) {
+      if (this.socket) {
+        try {
+          const meta = await this.socket.groupMetadata(clean);
+          return { jid: clean, name: meta?.subject || clean };
+        } catch {}
+      }
+      const existing = this.autoManagedGroups.get(clean);
+      return { jid: clean, name: existing?.name || clean };
+    }
+
+    const lowerQuery = clean.toLowerCase();
+
+    // 2. Search socket participating groups
+    if (this.socket && typeof (this.socket as any).groupFetchAllParticipating === 'function') {
+      try {
+        const groups = await (this.socket as any).groupFetchAllParticipating();
+        const list = Object.values(groups) as any[];
+
+        // Exact match
+        const exact = list.find(g => (g?.subject || '').trim().toLowerCase() === lowerQuery);
+        if (exact) return { jid: exact.id, name: exact.subject };
+
+        // Starts with match
+        const prefix = list.find(g => (g?.subject || '').trim().toLowerCase().startsWith(lowerQuery));
+        if (prefix) return { jid: prefix.id, name: prefix.subject };
+
+        // Substring match
+        const sub = list.find(g => (g?.subject || '').toLowerCase().includes(lowerQuery));
+        if (sub) return { jid: sub.id, name: sub.subject };
+      } catch (err: any) {
+        console.warn(`[WhatsAppManager] Error fetching participating groups: ${err?.message}`);
+      }
+    }
+
+    // 3. Fallback: check already auto-managed groups
+    for (const [jid, info] of this.autoManagedGroups.entries()) {
+      if (info.name.toLowerCase().includes(lowerQuery) || jid.includes(lowerQuery)) {
+        return { jid, name: info.name };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Checks whether a specific participant is an admin in a group.
+   */
+  public async isParticipantGroupAdmin(groupJid: string, participantJid: string): Promise<boolean> {
+    if (!this.socket) return false;
+    try {
+      const meta = await this.socket.groupMetadata(groupJid);
+      const cleanTarget = this.normalizeToJid(participantJid);
+      const cleanNum = cleanTarget.split('@')[0];
+      const match = meta.participants.find(p => {
+        const pNum = p.id.split('@')[0].split(':')[0];
+        return pNum === cleanNum || p.id === cleanTarget;
+      });
+      return Boolean(match && (match.admin === 'admin' || match.admin === 'superadmin'));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Detects whether text contains forbidden links (URLs, whatsapp/telegram invites, domains).
+   */
+  public containsForbiddenLink(text: string): boolean {
+    if (!text || typeof text !== 'string') return false;
+    const pattern = /(?:https?:\/\/|chat\.whatsapp\.com\/|t\.me\/|telegram\.me\/|wa\.me\/|bit\.ly\/|tinyurl\.com\/|(?:www\.)?[a-zA-Z0-9-]+\.(?:com|org|net|me|io|edu|info|tv|xyz|app|online|site|store|tech)\b)/i;
+    return pattern.test(text);
+  }
+
+  /**
+   * Sends an automatic welcome message to new participants joining an auto-managed group.
+   */
+  public async handleAutoWelcome(
+    groupJid: string,
+    participants: string[],
+    transport?: any
+  ): Promise<void> {
+    if (!this.isAutoGroupManaged(groupJid)) return;
+    if (!this.socket && !transport) return;
+
+    try {
+      let groupSubject = this.autoManagedGroups.get(groupJid)?.name || 'Kooxda';
+      let desc = '';
+      if (this.socket) {
+        try {
+          const meta = await this.socket.groupMetadata(groupJid);
+          if (meta?.subject) groupSubject = meta.subject;
+          if (meta?.desc) desc = meta.desc;
+        } catch {}
+      }
+
+      const profile = this.governor.analyzeGroup(groupSubject, desc);
+
+      for (const p of participants) {
+        const num = p.split('@')[0].split(':')[0];
+        const welcomeText =
+          `🎉✨ *SOO DHAWOOW WALAAL @${num}!* ✨🎉\n\n` +
+          `Ku soo dhawow kooxda *${groupSubject}* (${profile.categoryLabel}) gacmo furan! 🤝\n\n` +
+          `📌 *XEERARKA KOOXDA (ILAALADA TOOSKA AH EE 24/7):*\n` +
+          `${profile.customRules.join('\n')}\n\n` +
+          `🤖 _Kooxdan waxaa si buuxda 24/7 u maamula Cardoso AI Autonomous Governor._`;
+
+        if (transport?.sendMessage) {
+          await transport.sendMessage(groupJid, welcomeText, { mentions: [p] });
+        } else if (this.socket) {
+          await this.socket.sendMessage(groupJid, { text: welcomeText, mentions: [p] });
+        }
+
+        // AI Welcome Card Image (auto-generated per group niche)
+        if (this.aiOrchestrator) {
+          try {
+            const { ImageGeneratorService } = await import('./image-generator.service.js');
+            const imagePrompt =
+              `Create a beautiful WhatsApp group welcome card for "${groupSubject}" (${profile.categoryLabel}). ` +
+              `Style: modern, professional, vibrant gradient background matching the ${profile.categoryLabel} theme. ` +
+              `Include: decorative welcome banner, relevant emoji/icons for ${profile.category} niche, ` +
+              `member name "@${num}", group name "${groupSubject}", and "CARDOSO AI" branding watermark. ` +
+              `Clean, eye-catching design suitable for WhatsApp. No text errors.`;
+            const imgResult = await ImageGeneratorService.generateImage(imagePrompt);
+            if (imgResult?.buffer) {
+              const welcomeCaption = `🌟 *Soo Dhawoow ${groupSubject}!* 🌟\n_Cardoso AI ayaa kuu sameeyay kaarka soo dhaweynaanta._`;
+              if (transport?.sendMedia) {
+                await transport.sendMedia(groupJid, {
+                  type: 'image',
+                  buffer: imgResult.buffer,
+                  mimeType: imgResult.mimeType || 'image/jpeg',
+                  caption: welcomeCaption,
+                }, { mentions: [p] });
+              } else if (this.socket) {
+                await this.socket.sendMessage(groupJid, {
+                  image: imgResult.buffer,
+                  caption: welcomeCaption,
+                  mentions: [p],
+                });
+              }
+            }
+          } catch (imgErr: any) {
+            console.warn(`[WhatsAppManager] Welcome image generation failed: ${imgErr?.message}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error('[WhatsAppManager] handleAutoWelcome error:', err);
+    }
+  }
+
+  /**
+   * Returns the leaderboard for the daily quiz in a group.
+   */
+  public getQuizLeaderboard(groupJid: string, topN: number = 10): string {
+    const board = this.governor.getLeaderboard(groupJid, topN);
+    if (board.length === 0) {
+      return (
+        `🏆 *[CARDOSO AI — QUIZ LEADERBOARD]* 📊\n\n` +
+        `Wali qof isma diwaan-gelinin quiz-ka!\n` +
+        `🧠 Marka quiz-ka xiga soo galo, jawaab si aad xaasidkaaga u hormarso! 💪`
+      );
+    }
+    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    let out = `🏆 *[CARDOSO AI — QUIZ LEADERBOARD TOP ${board.length}]* 📊\n\n`;
+    board.forEach((entry, i) => {
+      const medal = medals[i] || `${i + 1}.`;
+      out += `${medal} *@${entry.user}* — ${entry.score} pts ✅${entry.correct} ❌${entry.wrong}\n`;
+    });
+    out += `\n_🤖 Scoreboard-ka waxaa maamula Cardoso AI Quiz Engine._`;
+    return out;
+  }
+
+  /**
+   * Schedules an announcement for a group at a specific time.
+   */
+  public scheduleGroupAnnouncement(groupJid: string, hour: number, minute: number, message: string): string {
+    return this.governor.scheduleAnnouncement(groupJid, hour, minute, message);
+  }
+
+  /**
+   * Lists all scheduled announcements for a group.
+   */
+  public listScheduledAnnouncements(groupJid: string): Array<{ hour: number; minute: number; message: string; id: string }> {
+    return this.governor.listScheduledAnnouncements(groupJid);
+  }
+
+  /**
+   * Cancels a scheduled announcement by its ID.
+   */
+  public cancelScheduledAnnouncement(groupJid: string, id: string): boolean {
+    return this.governor.cancelScheduledAnnouncement(groupJid, id);
+  }
+
+  public getGovernor(): GroupGovernorService {
+    return this.governor;
+  }
+
+  /**
+   * Automatically analyzes, brands, and optimizes the group:
+   * updates description, creates AI logo, sets picture, and locks info settings.
+   */
+  public async autoBrandGroup(
+    groupJid: string,
+    customSubject?: string
+  ): Promise<{
+    success: boolean;
+    subject: string;
+    descriptionUpdated: boolean;
+    pictureUpdated: boolean;
+    infoLocked: boolean;
+    message: string;
+    profile: any;
+  }> {
+    if (!this.socket) {
+      return {
+        success: false,
+        subject: '',
+        descriptionUpdated: false,
+        pictureUpdated: false,
+        infoLocked: false,
+        message: 'WhatsApp ma xirna hadda.',
+        profile: null,
+      };
+    }
+
+    try {
+      const res = await this.governor.autoBrandGroup(this.socket, groupJid, customSubject);
+      const msg =
+        `✨🎨 *[CARDOSO AI — DIIWAANKA & MUUQAALKA CUSUB EE KOOXDA]* 🎨✨\n\n` +
+        `✅ *Kooxda:* *${res.subject}*\n` +
+        `📂 *Nooca:* ${res.profile.categoryLabel}\n` +
+        `📝 *Description:* ${res.descriptionUpdated ? '✅ Waa la habeeyay oo la cusboonaysiiyay!' : '⚠️ Lama beddelin'}\n` +
+        `🖼️ *AI Logo:* ${res.pictureUpdated ? '✅ Sawir cusub oo AI ah ayaa loo sameeyay laguna xidhay!' : '⚠️ Lama cusboonaysiin'}\n` +
+        `🔒 *Amniga Info-ga:* ${res.infoLocked ? '✅ Admins oo kaliya ayaa beddeli kara (Locked)' : '⚠️ Furan'}\n\n` +
+        `🤖 _Kooxdan waxaa si buuxda 24/7 u maamula Cardoso AI Autonomous Governor._`;
+
+      return {
+        ...res,
+        message: msg,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        subject: '',
+        descriptionUpdated: false,
+        pictureUpdated: false,
+        infoLocked: false,
+        message: `Cilad casriyeynta kooxda: ${err.message}`,
+        profile: null,
+      };
+    }
+  }
+
+  /**
+   * Posts an autonomous engaging topic or wisdom drop tailored to the group's niche.
+   */
+  public async postGovernorTopic(
+    groupJid: string,
+    transport?: any
+  ): Promise<{ success: boolean; message: string; topic?: string }> {
+    if (!this.socket && !transport) {
+      return { success: false, message: 'WhatsApp ma xirna hadda.' };
+    }
+
+    try {
+      let subject = this.autoManagedGroups.get(groupJid)?.name || '';
+      let desc = '';
+      if (this.socket) {
+        try {
+          const meta = await this.socket.groupMetadata(groupJid);
+          if (!subject && meta?.subject) subject = meta.subject;
+          if (meta?.desc) desc = meta.desc;
+        } catch {}
+      }
+      if (!subject) subject = 'Kooxda';
+
+      const profile = this.governor.analyzeGroup(subject, desc);
+      const topicText = profile.engagingTopic;
+
+      if (transport?.sendMessage) {
+        await transport.sendMessage(groupJid, topicText);
+      } else if (this.socket) {
+        await this.socket.sendMessage(groupJid, { text: topicText });
+      }
+
+      // Also trigger autonomous native WhatsApp Poll if niche profile defines one
+      if (this.socket && profile.pollQuestion && profile.pollOptions && profile.pollOptions.length >= 2) {
+        try {
+          await this.createPoll(groupJid, profile.pollQuestion, profile.pollOptions, 1);
+        } catch (pollErr: any) {
+          console.warn(`[Autonomous Governor] Poll post failed: ${pollErr?.message}`);
+        }
+      }
+
+      return {
+        success: true,
+        message: `✅ Mawduucii caqliga badnaa ee maanta si guul leh ayaa loogu soo dhigay kooxda!`,
+        topic: topicText,
+      };
+    } catch (err: any) {
+      return { success: false, message: `Cilad soo dhigista mawduuca: ${err.message}` };
+    }
+  }
+
+  /**
+   * Retrieves or formats the dynamic rules for this group.
+   */
+  public async getGroupRules(groupJid: string): Promise<string> {
+    let subject = this.autoManagedGroups.get(groupJid)?.name || '';
+    let desc = '';
+    if (this.socket) {
+      try {
+        const meta = await this.socket.groupMetadata(groupJid);
+        if (!subject && meta?.subject) subject = meta.subject;
+        if (meta?.desc) desc = meta.desc;
+      } catch {}
+    }
+    if (!subject) subject = 'Kooxda';
+
+    const profile = this.governor.analyzeGroup(subject, desc);
+    return (
+      `📜 *[XEERARKA RASMIGA AH EE KOOXDA — ${subject.toUpperCase()}]* 📜\n` +
+      `📂 *Qaybta:* ${profile.categoryLabel}\n\n` +
+      `${profile.customRules.join('\n')}\n\n` +
+      `⚠️ *Ciqaabta:* Qofkii jabiya xeerarkan, bot-ku wuxuu siinayaa digniino, kadibna toos ayaa looga saarayaa (*Auto-Kick*).\n` +
+      `🤖 _Cardoso AI 24/7 Super-Admin Governor._`
+    );
+  }
+
+  /**
+   * Locks or unlocks group settings so only admins can modify group icon/description.
+   */
+  public async setGroupInfoLock(
+    groupJid: string,
+    lock: boolean
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
+    try {
+      await this.socket.groupSettingUpdate(groupJid, lock ? 'locked' : 'unlocked');
+      return {
+        success: true,
+        message: lock
+          ? '🔒 Info-ga kooxda waa la xidhay: Maamulka (Admins) oo kaliya ayaa beddeli kara magaca, sawirka iyo sharaxaadda.'
+          : '🔓 Info-ga kooxda waa la furay: Dhammaan xubnuhu way beddeli karaan xogta kooxda.',
+      };
+    } catch (err: any) {
+      return { success: false, message: `Cilad beddelidda setting-ka info-ga: ${err.message}` };
+    }
+  }
+
   // ─── 4. PROFILE & ACCOUNT MANAGEMENT ──────────────────────────────────────
 
   /**
@@ -2133,6 +2750,107 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     } catch (err: any) {
       return { success: false, message: `Cilad pin-garaynta: ${err.message}` };
     }
+  }
+
+  /**
+   * Creates an interactive, native WhatsApp Poll in any chat or group.
+   */
+  public async createPoll(
+    chatId: string,
+    title: string,
+    options: string[],
+    selectableCount: number = 1
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.socket) return { success: false, message: 'WhatsApp ma xirna hadda.' };
+    const cleanTitle = title.trim();
+    const cleanOpts = options.map(o => o.trim()).filter(Boolean);
+    if (!cleanTitle || cleanOpts.length < 2) {
+      return {
+        success: false,
+        message: 'Fadlan bixi su\'aasha codbixinta iyo ugu yaraan 2 doorasho (tusaale: `!poll Mawduuca | Haa | Maya`).',
+      };
+    }
+
+    try {
+      await this.socket.sendMessage(chatId, {
+        poll: {
+          name: cleanTitle.slice(0, 255),
+          values: cleanOpts.slice(0, 12),
+          selectableCount: Math.min(Math.max(selectableCount, 1), cleanOpts.length),
+        },
+      });
+      return { success: true, message: `📊 Codbixintii (${cleanTitle}) si guul leh ayaa loo diray!` };
+    } catch (err: any) {
+      return { success: false, message: `Cilad dirista codbixinta: ${err.message}` };
+    }
+  }
+
+  /**
+   * Sets curfew parameters for a group.
+   */
+  public setCurfew(groupJid: string, enabled: boolean, startHour?: number, endHour?: number): any {
+    return this.governor.setCurfew(groupJid, enabled, startHour, endHour);
+  }
+
+  /**
+   * Gets curfew parameters for a group.
+   */
+  public getCurfew(groupJid: string): any {
+    return this.governor.getCurfew(groupJid);
+  }
+
+  /**
+   * Caches an incoming message in a group to detect future revocations (Anti-Delete/Ghost hunter).
+   */
+  public recordIncomingGroupMessage(groupJid: string, messageId: string, sender: string, text: string): void {
+    let list = this.recentGroupMessages.get(groupJid);
+    if (!list) {
+      list = [];
+      this.recentGroupMessages.set(groupJid, list);
+    }
+    list.push({ id: messageId, sender, text, timestamp: Date.now() });
+    if (list.length > 200) list.shift();
+  }
+
+  /**
+   * Catches a revoked message (Delete for Everyone) and archives it in the ghost vault.
+   */
+  public recordRevocation(groupJid: string, revokedMessageId: string): RevokedGroupMessage | null {
+    const list = this.recentGroupMessages.get(groupJid);
+    if (!list) return null;
+    const foundIdx = list.findIndex(m => m.id === revokedMessageId);
+    if (foundIdx === -1) return null;
+    const msg = list[foundIdx];
+
+    let revokedList = this.revokedGroupMessages.get(groupJid);
+    if (!revokedList) {
+      revokedList = [];
+      this.revokedGroupMessages.set(groupJid, revokedList);
+    }
+    const revokedItem: RevokedGroupMessage = {
+      id: msg.id,
+      sender: msg.sender,
+      text: msg.text,
+      deletedAt: Date.now(),
+      originalTime: msg.timestamp,
+    };
+    revokedList.push(revokedItem);
+    if (revokedList.length > 50) revokedList.shift();
+    return revokedItem;
+  }
+
+  /**
+   * Returns recent messages that were deleted in a group.
+   */
+  public getRevokedMessages(groupJid: string): RevokedGroupMessage[] {
+    return this.revokedGroupMessages.get(groupJid) || [];
+  }
+
+  /**
+   * Returns recent messages cached in a group for autonomous intelligence & summaries.
+   */
+  public getRecentGroupMessages(groupJid: string): { id: string; sender: string; text: string; timestamp: number }[] {
+    return this.recentGroupMessages.get(groupJid) || [];
   }
 }
 

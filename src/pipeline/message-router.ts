@@ -10,6 +10,7 @@ import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { IStudentMemory } from '../memory/memory.interface.js';
 import { UserProfiler } from '../services/user-profiler.service.js';
 import { PlanGuard } from '../tenants/plan-catalog.js';
+import { codeRunnerService } from '../services/code-runner.service.js';
 
 export interface MessageRouterOptions {
   broadcast?: BroadcastService;
@@ -64,6 +65,9 @@ export class MessageRouter {
     this.getExtraAdmins = options?.getExtraAdmins;
     this.onboardingHandler = options?.onboardingHandler;
     this.sendGuidePdfHandler = options?.sendGuidePdfHandler;
+    if (this.engine?.getAIOrchestrator) {
+      this.whatsappManager.setAIOrchestrator(this.engine.getAIOrchestrator());
+    }
   }
 
   public isAdmin(senderNumber: string, isGroup: boolean = false): boolean {
@@ -362,6 +366,174 @@ SHURUUCDA DUGSIIYA:
     // Host phone's own outgoing commands (isFromMe), whitelisted ADMIN_PHONE_NUMBERS, or tenant extraAdmins are Admin
     const isAdminUser = Boolean(message.isFromMe) || this.isAdmin(message.senderId, message.isGroup);
 
+    // 1c.1. Autonomous Group Takeover & Anti-Link Protection (24/7 Auto-Guard)
+    if (message.isGroup && this.whatsappManager.isAutoGroupManaged(message.chatId)) {
+      const isSenderAdmin = isAdminUser || (await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId));
+      if (!isSenderAdmin && this.whatsappManager.containsForbiddenLink(text)) {
+        console.log(`🚨 [Auto-Group Anti-Link] Link laga dhex helay ${message.senderId} ee group-ka ${message.chatId}. Tirtirid + Kick bilowday...`);
+        // 1. Delete message immediately
+        if (message.id) {
+          await this.whatsappManager.deleteMessage(message.chatId, {
+            remoteJid: message.chatId,
+            id: message.id,
+            fromMe: false,
+            participant: message.senderId,
+          });
+        }
+        // 2. Kick member from group
+        await this.whatsappManager.kickMember(message.chatId, message.senderId);
+        // 3. Send warning alert in group
+        const cleanNum = message.senderId.split('@')[0].split(':')[0];
+        const alertMsg =
+          `🚨 *[CARDOSO AI — ILAALADA TOOSKA AH EE KOOXDA (ANTI-LINK)]* 🚨\n\n` +
+          `⚠️ Xubinta @${cleanNum} si toos ah ayaa looga saaray kooxda!\n` +
+          `🚫 *Sababta:* Waxaa la mamnuucay soo dirista link-yada kooxaha kale ama xayaysiiska.\n\n` +
+          `🤖 _Kooxdan waxaa si toos ah 24/7 u ilaaliya Cardoso AI Auto-Guard._`;
+        await transport.sendMessage(message.chatId, alertMsg, {
+          mentions: [message.senderId],
+        });
+        return { handled: true, reason: 'Anti-link executed and member kicked' };
+      }
+
+      // 2. Anti-Profanity & Toxicity Zero-Tolerance Check (3-Strike System)
+      if (!isSenderAdmin) {
+        const governor = this.whatsappManager.getGovernor();
+        const violation = governor.detectProfanity(text);
+        if (violation.isViolating) {
+          console.log(`🚨 [Auto-Group Anti-Profanity] Ereyo xun laga helay ${message.senderId} ee group-ka ${message.chatId}. Word: ${violation.word}`);
+          // 1. Delete message immediately
+          if (message.id) {
+            await this.whatsappManager.deleteMessage(message.chatId, {
+              remoteJid: message.chatId,
+              id: message.id,
+              fromMe: false,
+              participant: message.senderId,
+            });
+          }
+          // 2. Apply strike
+          const strikeRes = governor.addStrike(
+            message.chatId,
+            message.senderId,
+            violation.reason || 'Hadallo anshax-xumo ah',
+            violation.word
+          );
+          const cleanNum = message.senderId.split('@')[0].split(':')[0];
+
+          if (strikeRes.action === 'warn_1') {
+            const warnMsg =
+              `⚠️ *[CARDOSO AI — DIGNIIN ANSHAX (1/3)]* ⚠️\n\n` +
+              `Xubinta @${cleanNum}, fariintaadii waa la tirtiray sababtoo ah waxay jabisay xeerka anshaxa kooxda (Ereyo xun/Aflagaado).\n\n` +
+              `💡 *Xusuusin:* Waxaad haysataa 2 digniinood oo kale. Haddii aad gaarto 3, toos ayaa kooxda lagaaga saarayaa! 🤝`;
+            await transport.sendMessage(message.chatId, warnMsg, { mentions: [message.senderId] });
+          } else if (strikeRes.action === 'warn_2') {
+            const warnMsg =
+              `🚨 *[CARDOSO AI — DIGNIIN KALE OO ADAG (2/3)]* 🚨\n\n` +
+              `Xubinta @${cleanNum}, fariintaadii mar labaad ayaa la tirtiray! Tani waa digniintii kuugu dambaysay.\n\n` +
+              `⛔ *Digniin:* Haddii aad mar saddexaad eray xun ama aflagaado soo qorto, kooxda *toos ayaa lagaaga saari doonaa* (Permanent Kick)!`;
+            await transport.sendMessage(message.chatId, warnMsg, { mentions: [message.senderId] });
+          } else {
+            // Action === 'kick' (3 Strikes reached)
+            await this.whatsappManager.kickMember(message.chatId, message.senderId);
+            const kickMsg =
+              `🚨 *[CARDOSO AI — CIQAABTA KOOXDA (KA-SAARIS)]* 🚨\n\n` +
+              `Xubinta @${cleanNum} si toos ah ayaa looga saaray kooxda sababtoo ah waxay gaartay 3 digniinood oo ku saabsan cay, aflagaado, iyo jabinta xeerarka kooxda!\n\n` +
+              `🤖 _Kooxdan waxaa si adag u ilaaliya Cardoso AI Autonomous Governor._`;
+            await transport.sendMessage(message.chatId, kickMsg, { mentions: [message.senderId] });
+          }
+
+          return { handled: true, reason: 'Profanity strike executed' };
+        }
+      }
+
+      // 3. Anti-Flood & Anti-Spam Check
+      if (!isSenderAdmin) {
+        const floodCheck = this.whatsappManager.getGovernor().checkFlood(message.chatId, message.senderId);
+        if (floodCheck.isFlooding) {
+          console.log(`🌊 [Auto-Group Anti-Flood] Flood spam laga helay ${message.senderId} ee group-ka ${message.chatId}. Tirtirid...`);
+          if (message.id) {
+            await this.whatsappManager.deleteMessage(message.chatId, {
+              remoteJid: message.chatId,
+              id: message.id,
+              fromMe: false,
+              participant: message.senderId,
+            });
+          }
+          const cleanNum = message.senderId.split('@')[0].split(':')[0];
+          const floodAlert =
+            `🛑 *[CARDOSO AI — ILAALADA ANTI-FLOOD]* 🌊\n\n` +
+            `Xubinta @${cleanNum}, fariimaha badan ee is-daba-jooga ah (spam flood) waa mamnuuc kooxdan. Fadlan xawaaraha daji si looga fogaado ciqaab!`;
+          await transport.sendMessage(message.chatId, floodAlert, { mentions: [message.senderId] });
+          return { handled: true, reason: 'Anti-flood executed and message deleted' };
+        }
+      }
+
+      // Record active participation timestamp for ghost/inactive member tracking
+      this.whatsappManager.getGovernor().recordMemberActivity(message.chatId, message.senderId);
+
+      // 4. Autonomous Vision NSFW & Inappropriate Media Shield (Zero manual commands needed)
+      if (!isSenderAdmin && message.media?.type === 'image' && message.media?.dataBase64) {
+        const mediaSafety = await this.whatsappManager.getGovernor().screenMediaSafety(
+          { mimeType: message.media.mimeType, dataBase64: message.media.dataBase64 },
+          this.engine?.getAIOrchestrator?.()
+        );
+        if (mediaSafety.isViolating) {
+          console.log(`🚨 [Auto-Group Media Shield] Violating image from ${message.senderId} in ${message.chatId}. Reason: ${mediaSafety.reason}`);
+          if (message.id) {
+            await this.whatsappManager.deleteMessage(message.chatId, {
+              remoteJid: message.chatId,
+              id: message.id,
+              fromMe: false,
+              participant: message.senderId,
+            });
+          }
+          await this.whatsappManager.kickMember(message.chatId, message.senderId);
+          const cleanNum = message.senderId.split('@')[0].split(':')[0];
+          const alertMsg =
+            `🚨 *[CARDOSO AI — ILAALADA SAWIRRADA EE KOOXDA (MEDIA SHIELD)]* 🚨\n\n` +
+            `⚠️ Xubinta @${cleanNum} si toos ah ayaa looga saaray kooxda!\n` +
+            `🚫 *Sababta:* Waxaa la soo diray sawir anshax-xumo ah ama mamnuuc ah (${mediaSafety.reason}).\n\n` +
+            `🤖 _Kooxdan waxaa si toos ah 24/7 u ilaaliya Cardoso AI Vision Shield._`;
+          await transport.sendMessage(message.chatId, alertMsg, { mentions: [message.senderId] });
+          return { handled: true, reason: 'NSFW image violation: deleted and member kicked' };
+        }
+      }
+
+      // 5. Autonomous Polyglot Code Review & Debugging (Zero manual commands needed)
+      if (text.length > 25 && !text.startsWith('!')) {
+        const codeDetect = this.whatsappManager.getGovernor().detectCodeSnippet(text);
+        if (codeDetect.isCode && codeDetect.snippet.length >= 30) {
+          console.log(`👨‍💻 [Auto-Group Polyglot Code] Code snippet (${codeDetect.language}) detected from ${message.senderId}. Generating autonomous review...`);
+          const review = await this.whatsappManager.getGovernor().reviewCodeSnippet(
+            codeDetect.snippet,
+            codeDetect.language,
+            this.engine?.getAIOrchestrator?.()
+          );
+          await transport.sendMessage(message.chatId, review, {
+            replyToMessageId: message.id,
+          });
+          return { handled: true, reason: 'Autonomous code review provided' };
+        }
+      }
+
+      // 6. Autonomous Natural Language Assistance (Zero commands or prefixes needed)
+      if (/(?:xeerarka|rules|xeer)\s*(?:group|koox)/i.test(lowerText) || /(?:maxaa|waxa)\s*mamnuuc\s*ah/i.test(lowerText)) {
+        const rulesText = await this.whatsappManager.getGroupRules(message.chatId);
+        await transport.sendMessage(message.chatId, rulesText, { replyToMessageId: message.id });
+        return { handled: true, reason: 'Autonomous natural rules explanation' };
+      }
+
+      if (/(?:maxaa\s*(?:maanta\s*)?dhacay|doodd?(?:a|ii)?\s*maanta\s*(?:ii\s*)?soo\s*koob|summary\s*(?:ah)?\s*maanta)/i.test(lowerText)) {
+        const recentMsgs = this.whatsappManager.getRecentGroupMessages(message.chatId);
+        const summaryText = await this.whatsappManager.getGovernor().generateEveningSummary(
+          'Kooxda',
+          recentMsgs,
+          this.engine?.getAIOrchestrator?.()
+        );
+        await transport.sendMessage(message.chatId, summaryText, { replyToMessageId: message.id });
+        return { handled: true, reason: 'Autonomous natural discussion summary' };
+      }
+    }
+
     // If AI is specifically disabled for this sender (!off <number>), do not respond at all
     if (!message.isGroup && !isAdminUser && this.whatsappManager.isAIDisabledForNumber(message.senderPhone || message.chatId)) {
       console.log(`ℹ️ [Router] Message from ${message.senderId} ignored (AI disabled for this number via !off).`);
@@ -578,6 +750,522 @@ SHURUUCDA DUGSIIYA:
       }
     }
 
+    // ─── 1e. Autonomous Group Management Toggle (!maamul on/off/status/list/enhance/topic/rules/strikes) ──
+    const maamulToggleMatch = text.match(/^[!./#]?(?:maamul)\s+(on|off|status|list|enhance|brand|topic|post|rules|xeerar|lock|unlock|strikes|clearstrikes)(?:\s+([\s\S]+))?$/i);
+    if (maamulToggleMatch && isAdminUser) {
+      const subAction = maamulToggleMatch[1].toLowerCase();
+      const groupArg = maamulToggleMatch[2]?.trim();
+
+      if (subAction === 'on') {
+        let targetJid = '';
+        let groupName = '';
+
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (!found) {
+            await transport.sendMessage(
+              message.chatId,
+              `⚠️ Lama helin group magaciisu yahay ama la xidhiidha *"${groupArg}"*.\n` +
+              `Fadlan hubi magaca saxda ah ama toos group-ka dhexdiisa uga qor: \`!maamul on\``
+            );
+            return { handled: true, reason: 'group not found for maamul on' };
+          }
+          targetJid = found.jid;
+          groupName = found.name;
+        } else if (message.isGroup) {
+          targetJid = message.chatId;
+          const info = await this.whatsappManager.getGroupInfo(targetJid);
+          groupName = info.info?.subject || 'Kooxda';
+        } else {
+          await transport.sendMessage(
+            message.chatId,
+            `ℹ️ Fadlan sheeg magaca group-ka aad rabto in bot-ku la wareego maamulkiisa:\n` +
+            `• Tusaale: \`!maamul on Jaamacadda\`\n` +
+            `• Ama toos group-ka dhexdiisa ka qor: \`!maamul on\``
+          );
+          return { handled: true, reason: 'missing group target for maamul on' };
+        }
+
+        const res = await this.whatsappManager.enableAutoGroup(targetJid, groupName);
+
+        // Send Takeover Announcement in the group
+        const announcement = res.announcement ||
+          `🤖👑 *[CARDOSO AI — AWOODDA GUUD & MAAMULKA TOOSKA AH (100% AUTONOMOUS TAKEOVER)]* 👑🤖\n\n` +
+          `✅ *Kooxda:* *${res.groupName}*\n` +
+          `👑 *Maamulaha Sare:* Mulkiilaha ayaa Cardoso AI siiyay awoodda buuxda ee maamulka kooxdan!\n\n` +
+          `⚡ *ILAALADA TOOSKA AH EE FIRFIRCOON (ACTIVE 24/7):*\n` +
+          `🚫 *Anti-Link & Auto-Kick:* Xubin kasta oo link soo dhigta isla markiiba waa la saarayaa!\n` +
+          `🛑 *Anti-Profanity (3-Strikes):* Ereyada xun, cayda iyo aflagaadada ciqaab adag ayaa ka dhalanaysa.\n` +
+          `🌊 *Anti-Flood:* Fariimaha is-daba-jooga ah iyo spam-ka toos ayaa loo tirtirayaa.\n` +
+          `👋 *Auto-Welcome:* Qof kasta oo ku soo biira waxaa si toos ah loogu soo dhaweynayaa magaciisa iyo xeerarka kooxda.\n` +
+          `💡 *Autonomous Topics:* Bot-ku wuxuu si toos ah u soo dhigi doonaa xikmado iyo doodo wax dhisaya.\n\n` +
+          `_Kooxdu hadda waxay ku jirtaa gacmo aamin ah oo 100% autonomous ah!_ ✨`;
+
+        await transport.sendMessage(targetJid, announcement);
+
+        if (message.chatId !== targetJid) {
+          await transport.sendMessage(
+            message.chatId,
+            `✅ *[MAAMULKA TOOSKA AH EE KOOXDA WAAR]:*\n` +
+            `Bot-ku si toos ah ayuu ula wareegay maamulka kooxda *"${res.groupName}"*!\n` +
+            `• Group ID: \`${targetJid}\`\n` +
+            `• AI Branding: Description + 3D Logo + Settings Lock (DONE ✅)\n` +
+            `• Anti-Link: ON (Auto-delete + Auto-kick)\n` +
+            `• Anti-Profanity: ON (3-Strikes: Somali, Arabic, English)\n` +
+            `• Anti-Flood: ON (Spam suppression)\n` +
+            `• Auto-Welcome: ON\n` +
+            `• Autonomous Daily Topics: ACTIVE 24/7\n\n` +
+            `💡 _Adigu wax kale ma qoraysid; bot-ka ayaa 100% wax kasta si toos ah u maamulaya!_`
+          );
+        }
+        return { handled: true, reason: 'Auto-group management enabled' };
+      }
+
+      if (subAction === 'enhance' || subAction === 'brand') {
+        let targetJid = '';
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (!found) {
+            await transport.sendMessage(message.chatId, `⚠️ Lama helin group magaciisu yahay *"${groupArg}"*.`);
+            return { handled: true, reason: 'group not found' };
+          }
+          targetJid = found.jid;
+        } else if (message.isGroup) {
+          targetJid = message.chatId;
+        } else {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg magaca group-ka: `!maamul enhance <magac>` ama group-ka dhexdiisa ka qor: `!maamul enhance`');
+          return { handled: true, reason: 'missing group target' };
+        }
+
+        await transport.sendMessage(message.chatId, '🎨 *[CARDOSO AI]*: Casriyeynta kooxda (Branding & AI Logo Generation) ayaa socota... Fadlan sug wax yar! ⏳');
+        const res = await this.whatsappManager.autoBrandGroup(targetJid);
+        await transport.sendMessage(targetJid, res.message);
+        if (message.chatId !== targetJid) {
+          await transport.sendMessage(message.chatId, `✅ Kooxda *"${res.subject}"* si guul leh ayaa loo casriyeeyay!`);
+        }
+        return { handled: true, reason: 'Group branding enhanced' };
+      }
+
+      if (subAction === 'topic' || subAction === 'post') {
+        let targetJid = '';
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (!found) {
+            await transport.sendMessage(message.chatId, `⚠️ Lama helin group magaciisu yahay *"${groupArg}"*.`);
+            return { handled: true, reason: 'group not found' };
+          }
+          targetJid = found.jid;
+        } else if (message.isGroup) {
+          targetJid = message.chatId;
+        } else {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg magaca group-ka: `!maamul topic <magac>`');
+          return { handled: true, reason: 'missing group target' };
+        }
+
+        const res = await this.whatsappManager.postGovernorTopic(targetJid, transport);
+        if (message.chatId !== targetJid) {
+          await transport.sendMessage(message.chatId, res.message);
+        }
+        return { handled: true, reason: 'Governor topic posted' };
+      }
+
+      if (subAction === 'rules' || subAction === 'xeerar') {
+        let targetJid = message.isGroup ? message.chatId : '';
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (found) targetJid = found.jid;
+        }
+        if (!targetJid) {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg magaca group-ka ama toos group-ka dhexdiisa uga qor: `!maamul rules`');
+          return { handled: true, reason: 'missing group target' };
+        }
+        const rules = await this.whatsappManager.getGroupRules(targetJid);
+        await transport.sendMessage(targetJid, rules);
+        if (message.chatId !== targetJid) {
+          await transport.sendMessage(message.chatId, '✅ Xeerarkii kooxda si toos ah ayaa loogu soo dhigay!');
+        }
+        return { handled: true, reason: 'Governor rules posted' };
+      }
+
+      if (subAction === 'lock' || subAction === 'unlock') {
+        let targetJid = message.isGroup ? message.chatId : '';
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (found) targetJid = found.jid;
+        }
+        if (!targetJid) {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg magaca group-ka: `!maamul lock <magac>`');
+          return { handled: true, reason: 'missing group target' };
+        }
+        const lockRes = await this.whatsappManager.setGroupInfoLock(targetJid, subAction === 'lock');
+        await transport.sendMessage(message.chatId, lockRes.message);
+        return { handled: true, reason: 'Group info lock toggled' };
+      }
+
+      if (subAction === 'strikes') {
+        let targetJid = message.isGroup ? message.chatId : '';
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (found) targetJid = found.jid;
+        }
+        if (!targetJid) {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg magaca group-ka: `!maamul strikes <magac>`');
+          return { handled: true, reason: 'missing group target' };
+        }
+        const strikesMap = this.whatsappManager.getGovernor().getStrikes(targetJid);
+        const users = Object.entries(strikesMap);
+        if (users.length === 0) {
+          await transport.sendMessage(message.chatId, '✅ Kooxdan ma jiraan xubno digniino ama dambiyo anshax ku leh hadda. Nidaamku waa 100% nadiif!');
+        } else {
+          let report = `🚨 *[LIISKA DIGNIINADA ANSHAXA EE KOOXDA]* 🚨\n\n`;
+          users.forEach(([phone, rec], i) => {
+            report += `${i + 1}. 👤 *+${phone}* — *${rec.count}/3 Digniinood*\n`;
+            rec.history.forEach(h => {
+              report += `   • _${h.reason}_ ${h.word ? `("${h.word}")` : ''}\n`;
+            });
+            report += '\n';
+          });
+          report += `💡 _Si aad digniinaha uga tirto qof qor:_ \`!maamul clearstrikes @user\``;
+          await transport.sendMessage(message.chatId, report);
+        }
+        return { handled: true, reason: 'Strikes report displayed' };
+      }
+
+      if (subAction === 'clearstrikes') {
+        let targetJid = message.isGroup ? message.chatId : '';
+        const target = this.extractTargetParticipant(message, groupArg);
+        if (!target) {
+          await transport.sendMessage(message.chatId, 'ℹ️ Fadlan sheeg qofka aad digniinaha ka tirayso: `!maamul clearstrikes @user` ama lambarkiisa.');
+          return { handled: true, reason: 'missing clearstrikes target' };
+        }
+        this.whatsappManager.getGovernor().clearStrikes(targetJid, target);
+        await transport.sendMessage(message.chatId, `✅ Xubinta (${target}) dhammaan digniinihii anshaxa waa laga cafiyay!`);
+        return { handled: true, reason: 'Strikes cleared' };
+      }
+
+      if (subAction === 'off') {
+        let targetJid = '';
+
+        if (groupArg) {
+          const found = await this.whatsappManager.findGroupByNameOrJid(groupArg);
+          if (!found) {
+            await transport.sendMessage(
+              message.chatId,
+              `⚠️ Lama helin group magaciisu yahay ama la xidhiidha *"${groupArg}"*.`
+            );
+            return { handled: true, reason: 'group not found for maamul off' };
+          }
+          targetJid = found.jid;
+        } else if (message.isGroup) {
+          targetJid = message.chatId;
+        } else {
+          await transport.sendMessage(
+            message.chatId,
+            `ℹ️ Fadlan sheeg magaca group-ka aad maamulka tooska ah ka daminayso:\n` +
+            `• Tusaale: \`!maamul off Jaamacadda\`\n` +
+            `• Ama group-ka dhexdiisa ka qor: \`!maamul off\``
+          );
+          return { handled: true, reason: 'missing group target for maamul off' };
+        }
+
+        const res = await this.whatsappManager.disableAutoGroup(targetJid);
+        const offNotice =
+          `🛑 *[CARDOSO AI — MAAMULKII TOOSKA AHAA WAA LA JOOJIYAY]*\n\n` +
+          `Maamulkii tooska ahaa (Auto-Guard & Anti-Link) ee kooxdan *"${res.groupName}"* waa la damiyay amarka Mulkiilaha darted.`;
+        await transport.sendMessage(targetJid, offNotice);
+
+        if (message.chatId !== targetJid) {
+          await transport.sendMessage(message.chatId, `🛑 Maamulkii tooska ahaa ee kooxda *"${res.groupName}"* waa la damiyay.`);
+        }
+        return { handled: true, reason: 'Auto-group management disabled' };
+      }
+
+      if (subAction === 'status' || subAction === 'list') {
+        const groups = this.whatsappManager.getAutoManagedGroups();
+        if (groups.length === 0) {
+          await transport.sendMessage(
+            message.chatId,
+            `ℹ️ *[MAAMULKA TOOSKA AH EE GROUPS-KA]*\n\nHadda ma jiro group uu bot-ku si toos ah u maamulo.\n\n💡 Si aad koox ugu darto, qor:\n\`!maamul on <magaca-group-ka>\` ama toos group-ka dhexdiisa uga qor \`!maamul on\`.`
+          );
+        } else {
+          let listMsg = `🛡️ *[GROUPS-KA UU BOT-KU SI TOOS AH U MAAMULO (${groups.length})]* 🛡️\n\n`;
+          groups.forEach((g, idx) => {
+            listMsg += `${idx + 1}. 👥 *${g.name}*\n   • ID: \`${g.jid}\`\n   • Ilaalada: *Anti-Link ON + Auto-Welcome ON + Anti-Profanity ON*\n\n`;
+          });
+          listMsg += `💡 _Si aad koox uga saarto maamulka tooska ah, qor:_ \`!maamul off <magaca-group-ka>\``;
+          await transport.sendMessage(message.chatId, listMsg);
+        }
+        return { handled: true, reason: 'Auto-group list displayed' };
+      }
+    }
+
+    // Dynamic Group Rules for any member in an auto-managed group
+    if (/^[!./#]?(?:rules|xeerar|xeerarka)$/i.test(lowerText.trim()) && message.isGroup && this.whatsappManager.isAutoGroupManaged(message.chatId)) {
+      const rulesText = await this.whatsappManager.getGroupRules(message.chatId);
+      await transport.sendMessage(message.chatId, rulesText);
+      return { handled: true, reason: 'Group dynamic rules displayed' };
+    }
+
+    // ─── 1d.1. Interactive WhatsApp Poll Command (!poll) ─────────────────────
+    if (/^[!./#]?poll\b/i.test(lowerText)) {
+      if (!isAdminUser && !(await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId))) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Codbixinta waxaa abuuri kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized poll attempt' };
+      }
+      const rawArgs = text.replace(/^[!./#]?poll\s*/i, '').trim();
+      const parts = rawArgs.split(/[|,\n]/).map(p => p.trim()).filter(Boolean);
+      if (parts.length < 3) {
+        await transport.sendMessage(
+          message.chatId,
+          `📊 *[CARDOSO AI — INTERACTIVE POLL CREATOR]*\n\n` +
+          `Fadlan u qor qaabkan:\n` +
+          `\`!poll Su'aasha | Dooro 1 | Dooro 2 | [Dooro 3...]\`\n\n` +
+          `💡 *Tusaale:*\n` +
+          `\`!poll Luuqadee ugu fiican? | JavaScript | Python | Go | Rust\``
+        );
+        return { handled: true, reason: 'invalid poll syntax' };
+      }
+      const title = parts[0];
+      const options = parts.slice(1);
+      const pollRes = await this.whatsappManager.createPoll(message.chatId, title, options, 1);
+      if (!pollRes.success) {
+        await transport.sendMessage(message.chatId, `⚠️ ${pollRes.message}`);
+      }
+      return { handled: true, reason: 'Poll created' };
+    }
+
+    // ─── 1d.2. Smart Night Curfew / Quiet Hours (!curfew) ────────────────────
+    if (/^[!./#]?(?:curfew|hurdo|nasasho)\b/i.test(lowerText)) {
+      if (!isAdminUser && !(await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId))) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized curfew attempt' };
+      }
+      const parts = lowerText.replace(/^[!./#]?(?:curfew|hurdo|nasasho)\s*/i, '').trim().split(/\s+/);
+      const sub = parts[0];
+      if (sub === 'on' || sub === 'enable') {
+        const start = parseInt(parts[1] || '23', 10);
+        const end = parseInt(parts[2] || '6', 10);
+        const cfg = this.whatsappManager.setCurfew(message.chatId, true, isNaN(start) ? 23 : start, isNaN(end) ? 6 : end);
+        await transport.sendMessage(
+          message.chatId,
+          `🌙 *[CARDOSO AI — SAACADDA HURDADA WAA LA SHIDAY (CURFEW ON)]* 😴\n\n` +
+          `• Xilliga Xidhitaanka: \`${cfg.startHour}:00 PM\`\n` +
+          `• Xilliga Furitaanka: \`0${cfg.endHour}:00 AM\`\n\n` +
+          `Bot-ku si toos ah ayuu kooxda u xidhi doonaa habeenkii, subaxiina dib ugu furi doonaa isagoo duco iyo dhiirigelin soo dhigaya! ✨`
+        );
+        return { handled: true, reason: 'Curfew enabled' };
+      } else if (sub === 'off' || sub === 'disable') {
+        this.whatsappManager.setCurfew(message.chatId, false);
+        await transport.sendMessage(
+          message.chatId,
+          `🟢 *[CARDOSO AI — SAACADDA HURDADA WAA LA DAMIYAY]*\nKooxdu waxay ahaanaysaa mid furan 24/7.`
+        );
+        return { handled: true, reason: 'Curfew disabled' };
+      } else {
+        const cur = this.whatsappManager.getCurfew(message.chatId);
+        const statusStr = cur?.enabled
+          ? `✅ *SHIDAN TAHAY (ON)* (\`${cur.startHour}:00 PM\` - \`0${cur.endHour}:00 AM\`)`
+          : `❌ *DAMISAN TAHAY (OFF)*`;
+        await transport.sendMessage(
+          message.chatId,
+          `🌙 *[XILIGA HURDADA & NASASHADA KOOXDA (CURFEW)]*\n\n` +
+          `• Xaaladda Hadda: ${statusStr}\n\n` +
+          `💡 *Sida loo isticmaalo:*\n` +
+          `• \`!curfew on 23 6\` — Shid saacadda hurdada (11:00 PM ilaa 6:00 AM)\n` +
+          `• \`!curfew off\` — Dami saacadda hurdada`
+        );
+        return { handled: true, reason: 'Curfew status displayed' };
+      }
+    }
+
+    // ─── 1d.3. Anti-Delete / Ghost Hunter (!ghost / !deleted) ─────────────────
+    if (/^[!./#]?(?:ghost|deleted|tirtiray|la_tirtiray)\b/i.test(lowerText) && message.isGroup) {
+      const isSenderAdmin = isAdminUser || (await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId));
+      if (!isSenderAdmin) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Ghost Messages waxaa arki kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized ghost view attempt' };
+      }
+      const revokedList = this.whatsappManager.getRevokedMessages(message.chatId);
+      if (revokedList.length === 0) {
+        await transport.sendMessage(
+          message.chatId,
+          `👻 *[CARDOSO AI — GHOST VAULT]*\n\nHadda ma jiraan fariimo dhawaan la tirtiray (Delete for everyone) oo keydka ku jira.`
+        );
+        return { handled: true, reason: 'No ghost messages found' };
+      }
+      let outMsg = `👻 *[CARDOSO AI — GHOST VAULT / FARIIMAHA LA TIRTIRAY (${revokedList.length})]* 🕵️‍♂️\n\n`;
+      revokedList.slice(-5).reverse().forEach((r, idx) => {
+        const userNum = r.sender.split('@')[0].split(':')[0];
+        const dateStr = new Date(r.deletedAt).toLocaleTimeString();
+        outMsg += `${idx + 1}. 👤 *@${userNum}* (${dateStr}):\n   💬 _"${r.text}"_\n\n`;
+      });
+      outMsg += `_Cardoso AI Ghost Shield wuxuu xafidaa fariimaha la tirtiro._`;
+      await transport.sendMessage(message.chatId, outMsg, {
+        mentions: revokedList.slice(-5).map(r => r.sender),
+      });
+      return { handled: true, reason: 'Ghost messages retrieved' };
+    }
+
+    // ─── 1d.4. Live Sandboxed Code Runner (!code / !run) ──────────────────────
+    if (/^[!./#]?(?:code|run|koodh)\b/i.test(lowerText)) {
+      const rawCodeArgs = text.replace(/^[!./#]?(?:code|run|koodh)\s*/i, '').trim();
+      if (!rawCodeArgs) {
+        await transport.sendMessage(
+          message.chatId,
+          `💻 *[CARDOSO AI — LIVE CODE RUNNER & INTERPRETER]* ⚡\n\n` +
+          `Ku fuli JavaScript si toos ah oo sandboxed ah WhatsApp-ka dhexdiisa!\n\n` +
+          `💡 *Tusaalooyinka:*\n` +
+          `• \`!code js [1, 2, 3, 4].map(x => x * 10)\`\n` +
+          `• \`!run const sum = (a, b) => a + b; sum(25, 75)\`\n` +
+          `• \`!code python print("Hello World")\` (AI static analysis)\n\n` +
+          `🤖 _Waxaa dhisay Cardoso Software Engineering Core._`
+        );
+        return { handled: true, reason: 'code helper shown' };
+      }
+
+      const langMatch = rawCodeArgs.match(/^(?:js|javascript|node)\s+(.+)$/is);
+      if (langMatch || !/^(?:py|python|sql|java|cpp|rust|go)\b/i.test(rawCodeArgs)) {
+        const jsCode = langMatch ? langMatch[1].trim() : rawCodeArgs;
+        const cleanCode = jsCode.replace(/^```(?:js|javascript)?\n?/, '').replace(/\n?```$/, '').trim();
+        const result = codeRunnerService.executeJavaScript(cleanCode);
+        const decree = codeRunnerService.formatResult(result, cleanCode);
+        await transport.sendMessage(message.chatId, decree);
+        return { handled: true, reason: 'JavaScript code executed' };
+      }
+    }
+
+    // ─── 1d.5. Voice Transcription Guide (!transcribe / !rogcodka) ───────────
+    if (/^[!./#]?(?:transcribe|rogcodka|qorcodka|dhageyso)\b/i.test(lowerText)) {
+      const isAudio = (message as any).media?.type === 'audio';
+      if (!isAudio && !message.quotedMessageId) {
+        await transport.sendMessage(
+          message.chatId,
+          `🎙️ *[CARDOSO AI — FAHAMKA & QORAALKA CODKA]* 📝\n\n` +
+          `Si aad codka qoraal ugu rogto:\n` +
+          `1. *Reply ku qabo codka (Quote)* oo ku qor: \`!transcribe\` ama \`!rogcodka\`\n` +
+          `2. Ama soo dir *Cod (Voice Note)* adigoo caption-kiisa ku qoraya \`!transcribe\`.\n\n` +
+          `Bot-ku codka wuu dhagaysanayaa eray-ka-eray wuxuuna kuu soo saarayaa qoraal cad iyo dulmar kooban! 🎧✨`
+        );
+        return { handled: true, reason: 'transcribe helper shown' };
+      }
+    }
+
+    // ─── 1d.6. Quiz Leaderboard (!leaderboard / !xididka / !guulaha) ─────────
+    if (/^[!./#]?(?:leaderboard|xididka|guulaha|scoreboard|hore)\b/i.test(lowerText) && message.isGroup) {
+      const board = this.whatsappManager.getQuizLeaderboard(message.chatId, 10);
+      await transport.sendMessage(message.chatId, board, {
+        mentions: this.whatsappManager.getGovernor().getLeaderboard(message.chatId, 10).map(e => `${e.user}@s.whatsapp.net`),
+      });
+      return { handled: true, reason: 'Leaderboard displayed' };
+    }
+
+    // ─── 1d.7. Inactive Members Audit (!inactive [days]) ─────────────────────
+    if (/^[!./#]?(?:inactive|maqna|aamus|dadmaqna)\b/i.test(lowerText) && message.isGroup) {
+      const isSenderAdmin = isAdminUser || (await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId));
+      if (!isSenderAdmin) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized inactive check' };
+      }
+      const daysArg = parseInt(lowerText.replace(/^[!./#]?(?:inactive|maqna|aamus|dadmaqna)\s*/i, '').trim(), 10);
+      const days = isNaN(daysArg) || daysArg < 1 ? 30 : daysArg;
+      const inactives = this.whatsappManager.getGovernor().getInactiveMembers(message.chatId, days);
+      if (inactives.length === 0) {
+        await transport.sendMessage(
+          message.chatId,
+          `✅ *[CARDOSO AI — XUBNAHA FIRFIRCOON]*\n\n` +
+          `Dhammaan xubnuhu waxay firfircoon yihiin ${days} maalmood gudahood! 🎉\n\n` +
+          `_Bot-ku wuu daawanayaa dhaq-dhaqaaqa xubnaha maalin kasta._`
+        );
+      } else {
+        const jids = inactives.map(u => `${u}@s.whatsapp.net`);
+        let inactiveMsg =
+          `😴 *[CARDOSO AI — XUBNAHA MAQAN (${days} maalmood)]* 👥\n\n` +
+          `Xubnaha aan wax qorin ${days} maalmood:\n\n`;
+        inactives.slice(0, 20).forEach((u, i) => {
+          inactiveMsg += `${i + 1}. @${u}\n`;
+        });
+        if (inactives.length > 20) inactiveMsg += `\n...iyo ${inactives.length - 20} qof oo kale.\n`;
+        inactiveMsg += `\n💡 _Kick-garee ama u dir digniino si aad kooxda firfircoon u jirto._`;
+        await transport.sendMessage(message.chatId, inactiveMsg, { mentions: jids.slice(0, 20) });
+      }
+      return { handled: true, reason: 'Inactive members listed' };
+    }
+
+    // ─── 1d.8. Scheduled Announcement (!schedule / !jadwal) ──────────────────
+    if (/^[!./#]?(?:schedule|jadwal|war|announcement)\b/i.test(lowerText) && message.isGroup) {
+      const isSenderAdmin = isAdminUser || (await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId));
+      if (!isSenderAdmin) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized schedule attempt' };
+      }
+      const rawSchedArgs = text.replace(/^[!./#]?(?:schedule|jadwal|war|announcement)\s*/i, '').trim();
+
+      // List command
+      if (/^(?:list|liiska|show|eeg)$/i.test(rawSchedArgs)) {
+        const list = this.whatsappManager.listScheduledAnnouncements(message.chatId);
+        if (list.length === 0) {
+          await transport.sendMessage(message.chatId, `📅 *[CARDOSO AI — JADWALKA]*\n\nMa jiro wax xayeysiis ah oo la dejiyay.\n\n💡 Tusaale: \`!schedule 14:30 Kulan casariyeedka waa 15:00!\``);
+        } else {
+          let listMsg = `📅 *[CARDOSO AI — JADWALKA XAYEYSIISYADA (${list.length})]* ⏰\n\n`;
+          list.forEach((ann, i) => {
+            const h = String(ann.hour).padStart(2, '0');
+            const m = String(ann.minute).padStart(2, '0');
+            listMsg += `${i + 1}. ⏰ \`${h}:${m}\` — ${ann.message.slice(0, 60)}${ann.message.length > 60 ? '...' : ''}\n   _ID: \`${ann.id}\`_\n\n`;
+          });
+          await transport.sendMessage(message.chatId, listMsg);
+        }
+        return { handled: true, reason: 'Schedule list shown' };
+      }
+
+      // Cancel command: !schedule cancel <id>
+      const cancelMatch = rawSchedArgs.match(/^(?:cancel|tirtir|dami)\s+(\S+)$/i);
+      if (cancelMatch) {
+        const removed = this.whatsappManager.cancelScheduledAnnouncement(message.chatId, cancelMatch[1]);
+        await transport.sendMessage(
+          message.chatId,
+          removed
+            ? `✅ *[CARDOSO AI]*: Xayeysiiska ID \`${cancelMatch[1]}\` waa la baabi'iyay.`
+            : `⚠️ *[CARDOSO AI]*: ID-da \`${cancelMatch[1]}\` lama helin jadwalka.`
+        );
+        return { handled: true, reason: 'Schedule cancelled' };
+      }
+
+      // Add schedule: !schedule HH:MM <message>
+      const timeMatch = rawSchedArgs.match(/^(\d{1,2}):(\d{2})\s+(.+)$/s);
+      if (!timeMatch) {
+        await transport.sendMessage(
+          message.chatId,
+          `📅 *[CARDOSO AI — JADWALKA XAYEYSIISYADA]* ⏰\n\n` +
+          `💡 *Sida loo isticmaalo:*\n` +
+          `• \`!schedule 14:30 Kulanku waa billaabanayaa!\` — Jadwal xayeysiis\n` +
+          `• \`!schedule list\` — Eeg xayeysiisyada la dejiyay\n` +
+          `• \`!schedule cancel <id>\` — Baabi'i xayeysiis\n\n` +
+          `📌 Waqtigu waa 24-saacadood (00:00–23:59).`
+        );
+        return { handled: true, reason: 'schedule syntax help shown' };
+      }
+
+      const hour = parseInt(timeMatch[1], 10);
+      const minute = parseInt(timeMatch[2], 10);
+      const annMsg = timeMatch[3].trim();
+
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        await transport.sendMessage(message.chatId, '⚠️ *[CARDOSO AI]*: Waqtiga saxda ah soo geli (00:00–23:59).');
+        return { handled: true, reason: 'invalid schedule time' };
+      }
+
+      const annId = this.whatsappManager.scheduleGroupAnnouncement(message.chatId, hour, minute, annMsg);
+      await transport.sendMessage(
+        message.chatId,
+        `✅ *[CARDOSO AI — JADWALKA]* 📅\n\n` +
+        `🕐 *Waqtiga:* \`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}\`\n` +
+        `📢 *Fariin:* ${annMsg}\n` +
+        `🔑 *ID:* \`${annId}\`\n\n` +
+        `_Bot-ku si toos ah ayuu u soo diraya xilliga la qabanayo!_ 🤖`
+      );
+      return { handled: true, reason: 'Announcement scheduled' };
+    }
+
     // ─── 1e. Comprehensive WhatsApp Management Help Command (!maamul / !whatsapp) ──
     if (/^[!./#]?(?:maamul|whatsapp|status-help|bot-help)\b/i.test(lowerText) && isAdminUser) {
       const helpText =
@@ -602,7 +1290,27 @@ SHURUUCDA DUGSIIYA:
         `• \`!autoreply add <erey> | <jawaab>\` — Sameyso jawaab toos ah oo degdeg ah\n` +
         `• \`!autoreply list\` — Soo bandhig jawaabaha tooska ah ee kuu kaydsan\n` +
         `• \`!autoreply delete <erey>\` — Tirtir jawaab toos ah\n\n` +
-        `👥 *MAAMULKA GROUPS-KA (100% CONTROL):*\n` +
+        `👥 *MAAMULKA GROUPS-KA (100% CONTROL & AUTONOMOUS GOVERNOR):*\n` +
+        `• \`!maamul on [magaca]\` — ⭐ *AUTONOMOUS TAKEOVER*: Bot-ku si buuxda ha ula wareego kooxda\n` +
+        `• \`!poll <su'aal> | <opt1> | <opt2>\` — 📊 *INTERACTIVE POLL*: Codbixin toos ah oo WhatsApp ah\n` +
+        `• \`!curfew on/off\` (ama \`!hurdo\`) — 🌙 *SMART CURFEW*: Saacadda hurdada & xidhitaanka habeenkii\n` +
+        `• \`!ghost\` (ama \`!deleted\`) — 👻 *GHOST VAULT*: Soo saar fariimihii la tirtiray (Delete for everyone)\n` +
+        `• \`!code js <koodh>\` (ama \`!run\`) — 💻 *LIVE CODE RUNNER*: Ku dhex fuli JavaScript WhatsApp-ka\n` +
+        `• \`!transcribe\` (ama \`!rogcodka\`) — 🎙️ *VOICE TRANSCRIBER*: Codka WhatsApp-ka u rog qoraal cad\n` +
+        `• \`!leaderboard\` (ama \`!xididka\`) — 🏆 *QUIZ LEADERBOARD*: Eeg xididdada quiz-ka kooxda\n` +
+        `• \`!inactive [days]\` (ama \`!maqna\`) — 😴 *INACTIVE AUDIT*: Soo saar xubnaha aan wax qorin\n` +
+        `• \`!schedule HH:MM <fariin>\` — 📅 *SCHEDULED ANNOUNCEMENT*: Jadwal xayeysiis waqti gaar ah\n` +
+        `• \`!schedule list\` — Eeg xayeysiisyada la dejiyay\n` +
+        `• \`!schedule cancel <id>\` — Baabi'i xayeysiis jadwal ah\n` +
+        `• \`!maamul enhance [magaca]\` — 🎨 *AI BRANDING*: Auto-update Description + AI Logo Profile Picture + Lock Info\n` +
+        `• \`!maamul topic [magaca]\` — 💡 *AI TOPIC*: Soo dhig dood ama xikmad caqli badan oo ku habboon kooxda\n` +
+        `• \`!maamul rules [magaca]\` — 📜 *RULES*: Soo bandhig ama soo dhig xeerarka kooxda\n` +
+        `• \`!maamul lock/unlock\` — 🔒 Xidh ama fur beddelista xogta kooxda (Admins only / Everyone)\n` +
+        `• \`!maamul strikes\` — 🚨 Eeg xubnaha qaba digniinaha anshaxa (Strikes 1-3)\n` +
+        `• \`!maamul clearstrikes @user\` — 🔄 Ka tirtir digniinaha anshaxa xubin gaar ah\n` +
+        `• \`!maamul off [magaca]\` — Dami maamulka tooska ah ee kooxda\n` +
+        `• \`!maamul status\` — Eeg liiska groups-ka uu bot-ku si toos ah u maamulo\n` +
+        `• \`!rules\` (ama \`!xeerar\`) — Xeerarka rasmiga ah ee kooxda (Qof kasta)\n` +
         `• \`!tagall [fariin]\` — Dhammaan xubnaha kooxda hal mar tag garee\n` +
         `• \`!kick @user\` — Qofka ka saar kooxda\n` +
         `• \`!add <lambar>\` — Qofka ku dar kooxda\n` +

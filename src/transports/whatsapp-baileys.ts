@@ -857,6 +857,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
+    // ─── Group Participants Updates (Auto-Welcome / Auto-Guard) ───────────────
+    this.socket.ev.on('group-participants.update', async ({ id, participants, action }: any) => {
+      try {
+        if (action === 'add' && this.whatsappManager.isAutoGroupManaged(id)) {
+          await this.whatsappManager.handleAutoWelcome(id, participants, this);
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] Error handling group-participants.update: ${err?.message}`);
+      }
+    });
+
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
       const nowSec = Math.floor(Date.now() / 1000);
 
@@ -1184,6 +1195,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     // ─── Unwrap View Once ("one-click" 1️⃣), Ephemeral & Detect Message Type ──
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
+
+    // Anti-Delete / Ghost message capture for groups (Delete for Everyone)
+    const revokeProto = msg.message?.protocolMessage || (innerMsg as any)?.protocolMessage;
+    if (revokeProto?.type === proto.Message.ProtocolMessage.Type.REVOKE && revokeProto.key?.id) {
+      this.whatsappManager.recordRevocation(chatId, revokeProto.key.id);
+      return;
+    }
+
     const msgType = unwrapped.msgType;
     const isViewOnce = unwrapped.isViewOnce || Boolean((msg.key as any)?.isViewOnce);
     const isAudio = unwrapped.mediaKind === 'audio';
@@ -1237,6 +1256,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       // Send read receipt so WhatsApp marks it read and never re-delivers it on future reconnects
       if (this.socket && chatId !== 'status@broadcast') {
         this.socket.readMessages([msg.key]).catch(() => {});
+      }
+
+      // Record in group message cache for Anti-Delete / Ghost Hunter
+      if (isGroup && text.trim()) {
+        const senderJid = msg.key.participant || msg.participant || (msg.key as any)?.senderPn || chatId;
+        this.whatsappManager.recordIncomingGroupMessage(chatId, msg.key.id, senderJid, text.trim());
       }
     }
 
