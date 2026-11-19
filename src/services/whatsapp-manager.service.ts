@@ -57,7 +57,7 @@ export class WhatsAppManagerService {
   private configuredAdminPhones: string[] | null = null;
   private postedStatuses: Map<string, PostedStatusRecord> = new Map();
   private inProgressDeletes: Set<string> = new Set();
-  private rejectAllCalls: boolean = true;
+  private rejectAllCalls: boolean = false;
   private rejectedCallNumbers: Set<string> = new Set();
   private allowedCallNumbers: Set<string> = new Set();
   private readonly callRejectStoragePath: string;
@@ -65,7 +65,8 @@ export class WhatsAppManagerService {
   constructor(options?: WhatsAppManagerOptions) {
     this.authDir = options?.authDir || path.join(process.cwd(), 'baileys_auth_info');
     this.statusStoragePath = options?.statusStoragePath || path.join(process.cwd(), 'data', 'posted-statuses.json');
-    this.callRejectStoragePath = path.join(path.dirname(this.statusStoragePath), 'call-reject-config.json');
+    // Store call-reject config alongside auth files so it survives Render restarts
+    this.callRejectStoragePath = path.join(this.authDir, 'call-reject-config.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
@@ -1684,7 +1685,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     try {
       if (fs.existsSync(this.callRejectStoragePath)) {
         const raw = JSON.parse(fs.readFileSync(this.callRejectStoragePath, 'utf8'));
-        this.rejectAllCalls = raw.rejectAll !== undefined ? Boolean(raw.rejectAll) : true;
+        this.rejectAllCalls = raw.rejectAll !== undefined ? Boolean(raw.rejectAll) : false;
         if (Array.isArray(raw.rejectedNumbers)) {
           this.rejectedCallNumbers = new Set(raw.rejectedNumbers.map((n: string) => String(n).replace(/\D/g, '')).filter(Boolean));
         }
@@ -1766,10 +1767,13 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     }
     this.rejectedCallNumbers.delete(cleanPhone);
     this.allowedCallNumbers.add(cleanPhone);
+    // If rejectAll is ON, still allow this specific number by turning off global reject
+    // so the allowed list takes effect correctly
+    this.rejectAllCalls = false;
     this.saveCallRejectConfig();
     return {
       success: true,
-      message: `📞 *[Call Unreject]*: Lambarka +${cleanPhone} wicitaankiisa waa loo furay! Hadda wuu soo wici karaa xataa haddii guud ahaan wicitaannada la xidhay.`,
+      message: `📞 *[Call Unreject]*: Lambarka +${cleanPhone} wicitaankiisa waa loo furay! Wuu soo wici karaa hadda. ✅`,
     };
   }
 

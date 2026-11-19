@@ -744,7 +744,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         if (call.status === 'offer') {
           console.log(`\n📞 [Incoming Call] Wicitaan laga helay: ${call.from} (ID: ${call.id})`);
           const callerPhone = call.from.split('@')[0].split(':')[0].replace(/\D/g, '');
-          const shouldReject = this.whatsappManager ? this.whatsappManager.shouldRejectCall(callerPhone) : true;
+          const shouldReject = this.whatsappManager ? this.whatsappManager.shouldRejectCall(callerPhone) : false;
           if (!shouldReject) {
             console.log(`📞 [Incoming Call Allowed] Wicitaanka ${callerPhone} waa loo ogolaaday sababtoo ah Call Reject kuma saarna.`);
             continue;

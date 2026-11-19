@@ -676,29 +676,37 @@ suite.test('Call Reject Management (!reject all, !reject <number>, !unreject all
     statusStoragePath: testConfigPath,
   });
 
-  // 1. By default, rejectAllCalls is true
-  assertTrue(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'Default should reject calls');
-  assertTrue(mgr.shouldRejectCall('+252634333444'), 'Default should reject caller');
+  // 1. By default, rejectAllCalls is FALSE — calls are allowed unless explicitly blocked
+  assertFalse(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'Default should ALLOW calls (rejectAll=false)');
+  assertFalse(mgr.shouldRejectCall('+252634333444'), 'Default should ALLOW caller (rejectAll=false)');
 
-  // 2. Unreject specific number
+  // 2. Reject all calls
+  const rejectAllFirst = mgr.setRejectAllCalls(true);
+  assertTrue(rejectAllFirst.success, 'Reject all should succeed');
+  assertTrue(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'After reject all: should block');
+  assertTrue(mgr.shouldRejectCall('252634333444'), 'After reject all: other callers also blocked');
+
+  // 3. Unreject specific number (turns off rejectAll, allows that number)
   const unrejectOne = mgr.unrejectCallNumber('252634111222');
   assertTrue(unrejectOne.success, 'Unreject single number should succeed');
   assertFalse(mgr.shouldRejectCall('252634111222@s.whatsapp.net'), 'Unrejected number must be allowed through');
-  assertTrue(mgr.shouldRejectCall('252634333444'), 'Other callers must still be rejected');
+  // rejectAll is now false, so other callers are also allowed (unless explicitly rejected)
+  assertFalse(mgr.shouldRejectCall('252634333444'), 'After unreject number: rejectAll turned off, others allowed');
 
-  // 3. Unreject all
+  // 4. Reject all again, then unreject all
+  mgr.setRejectAllCalls(true);
   const unrejectAll = mgr.unrejectAllCalls();
   assertTrue(unrejectAll.success, 'Unreject all should succeed');
   assertFalse(mgr.shouldRejectCall('252634111222'), 'All callers should be allowed');
   assertFalse(mgr.shouldRejectCall('252634333444'), 'All callers should be allowed');
 
-  // 4. Reject specific number when rejectAll is off
+  // 5. Reject specific number when rejectAll is off
   const rejectOne = mgr.rejectCallNumber('252634999888');
   assertTrue(rejectOne.success, 'Reject single number should succeed');
   assertTrue(mgr.shouldRejectCall('252634999888'), 'Rejected number must be blocked');
   assertFalse(mgr.shouldRejectCall('252634333444'), 'Non-rejected number must still be allowed');
 
-  // 5. Reject all
+  // 6. Reject all — everyone blocked
   const rejectAll = mgr.setRejectAllCalls(true);
   assertTrue(rejectAll.success, 'Reject all should succeed');
   assertTrue(mgr.shouldRejectCall('252634333444'), 'All callers must now be blocked');
