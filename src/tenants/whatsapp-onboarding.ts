@@ -98,7 +98,7 @@ export class WhatsAppOnboardingService {
   ): Promise<{ handled: boolean; reason?: string }> {
     this.pruneExpired();
 
-    const text = (message.content || '').trim();
+    const text = (message.content || (message as any).text || '').trim();
     const lower = text.toLowerCase();
     const chatId = message.chatId || message.senderId;
 
@@ -283,6 +283,18 @@ export class WhatsAppOnboardingService {
 
     // ─── 3. Streamlined !join Form (Personal Only, Sender Number Auto-Registered, Name + 4-Digit PIN) ─
     if (/^[!./#]?join\b|^!isdiiwaangeli\b/i.test(lower)) {
+      const senderPhone = this.extractSenderWhatsAppPhone(message);
+      const isOwnerOrAdmin =
+        isAdminUser ||
+        this.manager.isOwnerPhone(senderPhone) ||
+        this.manager.isOwnerChat(chatId) ||
+        (senderPhone ? this.manager.registry.getAllActiveAdminPhones().includes(senderPhone) : false);
+
+      // If Owner or Admin writes !join, silently swallow so AI does not reply
+      if (isOwnerOrAdmin) {
+        return { handled: true, reason: '!join ignored for owner/admin' };
+      }
+
       if (message.isGroup) {
         await transport.sendMessage(
           chatId,
@@ -292,7 +304,6 @@ export class WhatsAppOnboardingService {
         return { handled: true, reason: '!join redirected from group to DM' };
       }
 
-      const senderPhone = this.extractSenderWhatsAppPhone(message);
       if (!senderPhone) {
         await transport.sendMessage(
           chatId,

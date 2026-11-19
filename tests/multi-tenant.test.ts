@@ -28,6 +28,7 @@ import { WhatsAppBaileysTransport } from '../src/transports/whatsapp-baileys.js'
 import { createStudioServer } from '../src/web/studio-server.js';
 import { IMessagingTransport, IncomingMessage, OutgoingMedia } from '../src/transports/transport.interface.js';
 import { generateSubscriberGuidePdfBuffer } from '../src/services/user-guide-pdf.service.js';
+import { WhatsAppOnboardingService } from '../src/tenants/whatsapp-onboarding.js';
 
 function createTempAppConfig(tempRoot: string): AppConfig {
   return {
@@ -640,6 +641,83 @@ async function runTests() {
       assert.strictEqual(okOtp.json().portalUrl, webPortalUrl);
     } finally {
       (ownerCtx as any).transport = prevOwnerTransport;
+    }
+
+    // ─── Verification of New Requirements: Admin /portal Login, Privacy, Owner !join, and Notifications ───
+    // 1. Admin login via /portal with Phone + PIN
+    const adminLoginRes = await invokeServer('POST', '/api/public/portal-login', {
+      body: { phone: '0634777888', pin: 'secret_password_99' },
+    });
+    assert.strictEqual(adminLoginRes.status, 200);
+    const adminLoginData = adminLoginRes.json();
+    assert.strictEqual(adminLoginData.isAdmin, true);
+    assert(adminLoginData.portalUrl.startsWith('/?admin_token=adm_'), 'Admin portalUrl must route to admin dashboard with admin_token');
+    const adminToken = adminLoginData.portalUrl.split('admin_token=')[1];
+
+    // 2. Admin dashboard access via admin_token
+    const adminDashRes = await invokeServer('GET', adminLoginData.portalUrl);
+    assert.strictEqual(adminDashRes.status, 200);
+    assert(adminDashRes.text.includes('Cabdi Staff'), 'Admin dashboard HTML must render display name');
+
+    // 3. Subscriber Privacy: verify /api/admin/tenants does NOT leak accessToken for subscribers
+    const tenantsApiRes = await invokeServer('GET', '/api/admin/tenants', {
+      headers: { 'x-admin-token': adminToken },
+    });
+    assert.strictEqual(tenantsApiRes.status, 200);
+    const tenantsList = tenantsApiRes.json().tenants;
+    for (const t of tenantsList) {
+      if (t.id !== 'owner') {
+        assert.strictEqual(t.accessToken, undefined, `Subscriber ${t.id} accessToken must NEVER be exposed to admin`);
+      }
+    }
+
+    // 4. Owner !join suppression (AI must not respond when owner types !join)
+    const onbService = new WhatsAppOnboardingService(manager);
+    const ownerJoinRes = await onbService.handleMessage(
+      {
+        id: 'msg_owner_join',
+        senderId: '252634000001@s.whatsapp.net',
+        chatId: '252634000001@s.whatsapp.net',
+        text: '!join',
+        senderPhone: '252634000001',
+        timestamp: Date.now(),
+        isGroup: false,
+      },
+      mockTr as any,
+      true
+    );
+    assert.strictEqual(ownerJoinRes.handled, true, '!join must be handled silently for owner');
+    assert.strictEqual(ownerJoinRes.reason, '!join ignored for owner/admin');
+
+    // 5. Dashboard / Web Signup notifications sent to BOTH Owner AND Super Admin
+    const superAdmin = registry.createAdminUser({
+      username: 'super_lead',
+      password: 'super_password_123',
+      displayName: 'Super Admin Lead',
+      phoneNumber: '252634999111',
+      role: 'super_admin',
+    });
+    assert(superAdmin);
+
+    const prevOwnerTrTest = ownerCtx.transport;
+    (ownerCtx as any).transport = mockTr;
+    try {
+      mockTr.sentMessages = [];
+      const signupRes = await manager.registerPublicSignup({
+        name: 'Garaad Business',
+        phone: '0634998877',
+        category: 'business',
+        notes: 'Testing dashboard signup notifications',
+      });
+      assert(signupRes.tenant);
+      // Verify WhatsApp message sent to Owner
+      const notifiedOwner = mockTr.sentMessages.some((m) => m.chatId.includes('252634000001'));
+      // Verify WhatsApp message sent to Super Admin
+      const notifiedSuperAdmin = mockTr.sentMessages.some((m) => m.chatId.includes('252634999111'));
+      assert(notifiedOwner, 'Owner must receive WhatsApp notification of dashboard signup');
+      assert(notifiedSuperAdmin, 'Super Admin must receive WhatsApp notification of dashboard signup');
+    } finally {
+      (ownerCtx as any).transport = prevOwnerTrTest;
     }
 
     console.log('✅ Test 7 passed: Multi-admin Basic Auth, /portal PIN & OTP login, and SaaS HTTP endpoints verified.');

@@ -13,7 +13,7 @@ import { MessageRouter } from '../pipeline/message-router.js';
 import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { IMessagingTransport } from '../transports/transport.interface.js';
 import { BotCategory, GuardedFeature, PlanFeatures, PlanGuard, PlanTier } from './plan-catalog.js';
-import { normalizeSubscriptionPhone, TenantRecord, TenantRegistry } from './tenant-registry.js';
+import { normalizeSubscriptionPhone, TenantRecord, TenantRegistry, AdminUserRecord } from './tenant-registry.js';
 import { getCategoryStarterTemplate } from './tenant-templates.js';
 import { CloudStateSync } from './cloud-state-sync.js';
 import { WhatsAppOnboardingService } from './whatsapp-onboarding.js';
@@ -168,6 +168,29 @@ export class TenantManager {
     if (typeof this.expiryTimer.unref === 'function') {
       this.expiryTimer.unref();
     }
+  }
+
+  public isOwnerPhone(rawPhone: string): boolean {
+    const clean = normalizeSubscriptionPhone(rawPhone || '');
+    if (!clean) return false;
+    for (const p of this.config.security.adminPhoneNumbers || []) {
+      if (normalizeSubscriptionPhone(p) === clean) return true;
+    }
+    const ownerTenant = this.registry.getTenant('owner');
+    if (ownerTenant?.allowedPhone && normalizeSubscriptionPhone(ownerTenant.allowedPhone) === clean) {
+      return true;
+    }
+    const botNum = this.getOwnerContext()?.transport?.getBotNumber?.();
+    if (botNum && normalizeSubscriptionPhone(botNum) === clean) {
+      return true;
+    }
+    return false;
+  }
+
+  public isOwnerChat(chatId: string): boolean {
+    if (!chatId) return false;
+    const clean = normalizeSubscriptionPhone(chatId.split('@')[0]);
+    return this.isOwnerPhone(clean);
   }
 
   public getTenantAdminPhones(tenantId: string): string[] {
@@ -487,7 +510,7 @@ export class TenantManager {
       await this.mountTenant(result.tenant, false);
       this.markTenantDirty(result.tenant.id, ['db'], true);
     } else if (!result.alreadyPending) {
-      this.notifyAdminsOfPendingSignup(result.tenant, { ownerOnly: Boolean(input.ownerOnlyNotification) }).catch((err) => {
+      await this.notifyAdminsOfPendingSignup(result.tenant, { ownerOnly: Boolean(input.ownerOnlyNotification) }).catch((err) => {
         console.warn('[TenantManager] Failed notifying admins of pending signup:', err?.message || err);
       });
     }
@@ -506,7 +529,10 @@ export class TenantManager {
       return { sent: false, message: 'Fadlan geli lambar WhatsApp oo sax ah.', hasPin: false };
     }
     const tenant = this.registry.getTenantByPhone(cleanPhone);
-    if (!tenant) {
+    const adminUser = !tenant ? this.registry.getAdminByPhone(cleanPhone) : null;
+    const isOwner = !tenant && !adminUser ? this.isOwnerPhone(cleanPhone) : false;
+
+    if (!tenant && !adminUser && !isOwner) {
       return {
         sent: false,
         message: 'Lambarkan lama helin diiwaanka. Fadlan marka hore iska diiwaangeli bogga /join.',
@@ -515,7 +541,7 @@ export class TenantManager {
     }
 
     const ownerCtx = this.getOwnerContext();
-    const tenantCtx = this.getContext(tenant.id);
+    const tenantCtx = tenant ? this.getContext(tenant.id) : null;
     const activeTransport = tenantCtx?.transport?.isConnected
       ? tenantCtx.transport
       : ownerCtx?.transport?.isConnected
@@ -523,19 +549,21 @@ export class TenantManager {
       : null;
 
     if (!activeTransport) {
+      const hasPin = Boolean(tenant?.hasPin || adminUser || isOwner);
       return {
         sent: false,
-        hasPin: Boolean(tenant.hasPin),
-        message: tenant.hasPin
+        hasPin,
+        message: hasPin
           ? 'WhatsApp OTP hadda ma shidna — fadlan ku soo gal Lambarkaaga & PIN-kaaga.'
           : 'Server-ka WhatsApp hadda lama xidhna si OTP loo diro; fadlan la xidhiidh maamulka link-gaaga.',
       };
     }
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
+    const targetId = tenant ? tenant.id : adminUser ? `admin:${adminUser.id}` : 'admin:owner';
     this.portalOtps.set(cleanPhone, {
       code,
-      tenantId: tenant.id,
+      tenantId: targetId,
       expiresAt: Date.now() + 10 * 60 * 1000,
       attempts: 0,
     });
@@ -551,16 +579,16 @@ export class TenantManager {
       .catch(() => false);
 
     if (!ok) {
-      return { sent: false, hasPin: Boolean(tenant.hasPin), message: 'Dirista WhatsApp OTP way fashilantay, fadlan isku day PIN-ka.' };
+      return { sent: false, hasPin: Boolean(tenant?.hasPin || adminUser || isOwner), message: 'Dirista WhatsApp OTP way fashilantay, fadlan isku day PIN-ka.' };
     }
     return {
       sent: true,
-      hasPin: Boolean(tenant.hasPin),
+      hasPin: Boolean(tenant?.hasPin || adminUser || isOwner),
       message: `6-da lambar ee xaqiijinta waxaa loo diray WhatsApp-ka +${cleanPhone}!`,
     };
   }
 
-  public verifyPortalOtp(rawPhone: string, rawCode: string): TenantRecord | null {
+  public verifyPortalOtp(rawPhone: string, rawCode: string): (TenantRecord & { isAdmin?: boolean; adminUser?: AdminUserRecord }) | null {
     const cleanPhone = normalizeSubscriptionPhone(rawPhone || '');
     const cleanCode = String(rawCode || '').replace(/\s+/g, '');
     const entry = this.portalOtps.get(cleanPhone);
@@ -578,6 +606,38 @@ export class TenantManager {
       return null;
     }
     this.portalOtps.delete(cleanPhone);
+    if (entry.tenantId.startsWith('admin:')) {
+      const adminId = entry.tenantId.slice('admin:'.length);
+      const adminUser = adminId === 'owner'
+        ? { id: 'adm_owner', username: 'owner', displayName: 'Owner Super Admin', phoneNumber: cleanPhone, role: 'super_admin' as const, active: true, createdAt: Date.now() }
+        : this.registry.listAdminUsers().find(a => a.id === adminId) || null;
+      return {
+        id: 'owner',
+        name: adminUser?.displayName || 'Admin',
+        allowedPhone: cleanPhone,
+        category: 'personal',
+        planTier: 'owner',
+        status: 'active',
+        accessToken: '',
+        monthsPurchased: 999,
+        trialUsed: false,
+        startedAt: Date.now(),
+        expiresAt: null,
+        expiryNotified: false,
+        featuresJson: '{}',
+        customGeminiKey: '',
+        awayMode: false,
+        extraAdmins: [],
+        signupNotes: '',
+        promoCodeUsed: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        hasPin: true,
+        effectiveFeatures: {} as any,
+        isAdmin: true,
+        adminUser: adminUser || undefined,
+      };
+    }
     return this.registry.getTenant(entry.tenantId);
   }
 
@@ -590,19 +650,34 @@ export class TenantManager {
       return { notified: 0 };
     }
 
-    let recipients: string[] = [];
-    if (options?.ownerOnly) {
-      const primaryEnvOwner = this.config.security.adminPhoneNumbers[0]
-        ? normalizeSubscriptionPhone(this.config.security.adminPhoneNumbers[0])
-        : '';
-      const botOwnerPhone = ownerCtx.transport?.getBotNumber?.()
-        ? normalizeSubscriptionPhone(ownerCtx.transport.getBotNumber()!)
-        : '';
-      const soleOwner = primaryEnvOwner || botOwnerPhone;
-      if (soleOwner) recipients = [soleOwner];
-    } else {
-      recipients = this.registry.getAllActiveAdminPhones(this.config.security.adminPhoneNumbers);
+    const recipientSet = new Set<string>();
+
+    // 1. Gather all owner phone numbers
+    for (const p of this.config.security.adminPhoneNumbers || []) {
+      const clean = normalizeSubscriptionPhone(p);
+      if (clean) recipientSet.add(clean);
     }
+    const ownerTenantPhone = this.registry.getTenant('owner')?.allowedPhone;
+    if (ownerTenantPhone) {
+      const clean = normalizeSubscriptionPhone(ownerTenantPhone);
+      if (clean) recipientSet.add(clean);
+    }
+    const botOwnerPhone = ownerCtx.transport?.getBotNumber?.();
+    if (botOwnerPhone) {
+      const clean = normalizeSubscriptionPhone(botOwnerPhone);
+      if (clean) recipientSet.add(clean);
+    }
+
+    // 2. If not restricted to owner only (e.g. signups from dashboard /join), include all active Super Admins & Staff Admins
+    if (!options?.ownerOnly) {
+      const adminPhones = this.registry.getAllActiveAdminPhones();
+      for (const p of adminPhones) {
+        const clean = normalizeSubscriptionPhone(p);
+        if (clean) recipientSet.add(clean);
+      }
+    }
+
+    const recipients = Array.from(recipientSet);
     if (recipients.length === 0) {
       return { notified: 0 };
     }

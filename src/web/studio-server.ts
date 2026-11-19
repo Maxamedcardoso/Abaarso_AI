@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import http from 'http';
+import crypto from 'crypto';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
 import { IMessagingTransport } from '../transports/transport.interface.js';
@@ -10,7 +11,7 @@ import { StatusReactorService, statusReactorService } from '../services/status-r
 import { AppConfig } from '../config/env.js';
 import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
 import { TenantManager } from '../tenants/tenant-manager.js';
-import { TenantRecord } from '../tenants/tenant-registry.js';
+import { normalizeSubscriptionPhone, TenantRecord } from '../tenants/tenant-registry.js';
 import { getCategoryStarterTemplate } from '../tenants/tenant-templates.js';
 import { renderJoinHTML } from './views/join-page.js';
 import { renderClientPortalHTML } from './views/client-page.js';
@@ -27,7 +28,29 @@ export interface StudioServerOptions {
   studioPasswordOverride?: string;
 }
 
-function sanitizeTenantForResponse(t: TenantRecord) {
+function parseCookies(header?: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!header) return map;
+  for (const item of header.split(';')) {
+    const idx = item.indexOf('=');
+    if (idx > 0) {
+      const k = item.slice(0, idx).trim();
+      const v = item.slice(idx + 1).trim();
+      map[k] = decodeURIComponent(v);
+    }
+  }
+  return map;
+}
+
+interface AdminSessionInfo {
+  username: string;
+  displayName: string;
+  role: string;
+  expiresAt: number;
+}
+const adminSessions = new Map<string, AdminSessionInfo>();
+
+function sanitizeTenantForResponse(t: TenantRecord, isClientSelf: boolean = false) {
   return {
     id: t.id,
     name: t.name,
@@ -35,7 +58,7 @@ function sanitizeTenantForResponse(t: TenantRecord) {
     category: t.category,
     planTier: t.planTier,
     status: t.status,
-    accessToken: t.accessToken,
+    accessToken: (isClientSelf || t.id === 'owner') ? t.accessToken : undefined,
     monthsPurchased: t.monthsPurchased,
     trialUsed: t.trialUsed,
     startedAt: t.startedAt,
@@ -131,9 +154,67 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       res.status(503).json({ status: 'error', message: 'Unavailable' });
       return;
     }
-    const phone = String(req.body?.phone || '').trim();
+    const rawPhone = String(req.body?.phone || '').trim();
     const pin = String(req.body?.pin || '').trim();
-    const tenant = tenantManager.registry.verifyTenantPin(phone, pin);
+    const cleanPhone = normalizeSubscriptionPhone(rawPhone);
+
+    // 1. Check if user is an Admin or Super Admin
+    const adminUser = tenantManager.registry.verifyAdminByPhoneAndPin(rawPhone, pin);
+    if (adminUser) {
+      const adminToken = 'adm_' + crypto.randomBytes(32).toString('hex');
+      adminSessions.set(adminToken, {
+        username: adminUser.username,
+        displayName: adminUser.displayName,
+        role: adminUser.role,
+        expiresAt: Date.now() + 7 * 24 * 3600 * 1000,
+      });
+      res.setHeader('Set-Cookie', `cardoso_admin_session=${adminToken}; Path=/; Max-Age=604800; SameSite=Lax`);
+      res.json({
+        status: 'ok',
+        isAdmin: true,
+        portalUrl: `/?admin_token=${adminToken}`,
+        admin: adminUser,
+        message: `Ku soo dhawoow Dashboard-ka Maamulka, ${adminUser.displayName}!`,
+      });
+      return;
+    }
+
+    // 2. Check if user is the Owner
+    const isOwnerPhone = tenantManager.isOwnerPhone(rawPhone) ||
+      (cleanPhone && tenantManager.registry.getTenant('owner')?.allowedPhone &&
+       normalizeSubscriptionPhone(tenantManager.registry.getTenant('owner')!.allowedPhone) === cleanPhone);
+    const ownerTenantPin = tenantManager.registry.verifyTenantPin(rawPhone, pin);
+    const matchesStudioPassword = studioPassword && pin === studioPassword;
+
+    if (isOwnerPhone && (matchesStudioPassword || ownerTenantPin?.id === 'owner')) {
+      const adminToken = 'adm_' + crypto.randomBytes(32).toString('hex');
+      adminSessions.set(adminToken, {
+        username: 'owner',
+        displayName: 'Owner Super Admin',
+        role: 'super_admin',
+        expiresAt: Date.now() + 7 * 24 * 3600 * 1000,
+      });
+      res.setHeader('Set-Cookie', `cardoso_admin_session=${adminToken}; Path=/; Max-Age=604800; SameSite=Lax`);
+      res.json({
+        status: 'ok',
+        isAdmin: true,
+        portalUrl: `/?admin_token=${adminToken}`,
+        admin: {
+          id: 'adm_owner',
+          username: 'owner',
+          displayName: 'Owner Super Admin',
+          phoneNumber: cleanPhone,
+          role: 'super_admin',
+          active: true,
+          createdAt: Date.now(),
+        },
+        message: 'Ku soo dhawoow Dashboard-ka Maamulka (Owner)!',
+      });
+      return;
+    }
+
+    // 3. Fall through to subscriber verification
+    const tenant = tenantManager.registry.verifyTenantPin(rawPhone, pin);
     if (!tenant) {
       res.status(401).json({ status: 'error', message: 'Lambarka ama PIN-ka ma saxna.' });
       return;
@@ -141,8 +222,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const portalUrl = `/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
     res.json({
       status: 'ok',
+      isAdmin: false,
       portalUrl,
-      tenant: sanitizeTenantForResponse(tenant),
+      tenant: sanitizeTenantForResponse(tenant, true),
     });
   });
 
@@ -166,13 +248,31 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     const phone = String(req.body?.phone || '').trim();
     const code = String(req.body?.code || '').trim();
-    const tenant = tenantManager.verifyPortalOtp(phone, code);
-    if (!tenant) {
+    const result = tenantManager.verifyPortalOtp(phone, code);
+    if (!result) {
       res.status(401).json({ status: 'error', message: 'Code-ka xaqiijinta ma saxna ama wuu dhacay.' });
       return;
     }
-    const portalUrl = `/client/${encodeURIComponent(tenant.id)}?token=${encodeURIComponent(tenant.accessToken)}`;
-    res.json({ status: 'ok', portalUrl, tenant: sanitizeTenantForResponse(tenant) });
+    if ((result as any).isAdmin) {
+      const adminUser = (result as any).adminUser;
+      const adminToken = 'adm_' + crypto.randomBytes(32).toString('hex');
+      adminSessions.set(adminToken, {
+        username: adminUser?.username || 'admin',
+        displayName: adminUser?.displayName || 'Admin',
+        role: adminUser?.role || 'staff_admin',
+        expiresAt: Date.now() + 7 * 24 * 3600 * 1000,
+      });
+      res.setHeader('Set-Cookie', `cardoso_admin_session=${adminToken}; Path=/; Max-Age=604800; SameSite=Lax`);
+      res.json({
+        status: 'ok',
+        isAdmin: true,
+        portalUrl: `/?admin_token=${adminToken}`,
+        admin: adminUser,
+      });
+      return;
+    }
+    const portalUrl = `/client/${encodeURIComponent(result.id)}?token=${encodeURIComponent(result.accessToken)}`;
+    res.json({ status: 'ok', isAdmin: false, portalUrl, tenant: sanitizeTenantForResponse(result, true) });
   });
 
   app.get('/api/public/template', (req: Request, res: Response) => {
@@ -557,6 +657,26 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return;
     }
 
+    // 1. Session Token Auth (via Query, Header, or Cookie)
+    const cookies = parseCookies(req.headers.cookie);
+    const queryToken = typeof req.query.admin_token === 'string' ? req.query.admin_token : '';
+    const headerToken = typeof req.headers['x-admin-token'] === 'string' ? req.headers['x-admin-token'] : '';
+    const cookieToken = cookies['cardoso_admin_session'] || '';
+
+    const token = queryToken || headerToken || cookieToken;
+    if (token) {
+      const session = adminSessions.get(token);
+      if (session && session.expiresAt > Date.now()) {
+        (req as any).adminLabel = `${session.displayName} (${session.role})`;
+        if (queryToken && !cookieToken) {
+          res.setHeader('Set-Cookie', `cardoso_admin_session=${token}; Path=/; Max-Age=604800; SameSite=Lax`);
+        }
+        next();
+        return;
+      }
+    }
+
+    // 2. HTTP Basic Auth (for backwards compatibility / direct API clients)
     const header = req.headers.authorization || '';
     const [scheme, encoded] = header.split(' ');
     if (scheme === 'Basic' && encoded) {
@@ -581,11 +701,29 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
     }
 
+    // 3. If browser navigates directly to root HTML page, redirect to /portal
+    if (req.method === 'GET' && req.accepts && req.accepts('html') && req.path === '/') {
+      res.redirect('/portal');
+      return;
+    }
+
     res.setHeader('WWW-Authenticate', 'Basic realm="CARDOSO AI Admin Studio"');
     res.status(401).send('Furaha sirta ah ayaa loo baahan yahay.');
   };
 
   app.use(requireAdminAuth);
+
+  app.post('/api/admin/logout', (req: Request, res: Response) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = (typeof req.query.admin_token === 'string' && req.query.admin_token) ||
+      (typeof req.headers['x-admin-token'] === 'string' && req.headers['x-admin-token']) ||
+      cookies['cardoso_admin_session'];
+    if (token) {
+      adminSessions.delete(token);
+    }
+    res.setHeader('Set-Cookie', 'cardoso_admin_session=; Path=/; Max-Age=0; SameSite=Lax');
+    res.json({ status: 'ok', message: 'Logged out' });
+  });
 
   // ─── 4. Super Admin SaaS Management APIs ───────────────────────────────────
   app.get('/api/admin/tenants', (req: Request, res: Response) => {
@@ -596,7 +734,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const list = tenantManager.registry.listTenants(false).map((t) => {
       const ctx = tenantManager.getContext(t.id);
       return {
-        ...sanitizeTenantForResponse(t),
+        ...sanitizeTenantForResponse(t, false),
         runtime: {
           connected: Boolean(ctx?.transport?.isConnected),
           botNumber: ctx?.transport?.getBotNumber() || null,
@@ -635,11 +773,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         customGeminiKey: customGeminiKey ? String(customGeminiKey) : undefined,
         notes: notes ? String(notes) : undefined,
       });
-      const portalUrl = `/client/${encodeURIComponent(ctx.tenant.id)}?token=${encodeURIComponent(ctx.tenant.accessToken)}`;
       res.status(201).json({
         status: 'ok',
-        portalUrl,
-        tenant: sanitizeTenantForResponse(ctx.tenant),
+        tenant: sanitizeTenantForResponse(ctx.tenant, false),
       });
     } catch (err: any) {
       res.status(400).json({ status: 'error', message: err?.message || 'Lama abuuri karin' });

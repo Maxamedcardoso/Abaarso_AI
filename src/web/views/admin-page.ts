@@ -22,6 +22,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       <span class="pill pill-violet">👑 ${escapeAdminHtml(adminLabel)}</span>
       <a href="/join" target="_blank" class="btn btn-ghost btn-sm">🔗 Bogga Isdiiwaangelinta (/join)</a>
       <span class="pill pill-amber" id="ownerWaBadge">Owner WhatsApp: --</span>
+      <button onclick="logoutAdmin()" class="btn btn-ghost btn-sm" style="color:#f87171;">🚪 Ka Bax</button>
     </div>
   </header>
 
@@ -151,10 +152,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
 
         <div id="directCreateResult" style="display:none;margin-top:1.25rem;padding:1rem;border-radius:12px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);">
           <div style="font-weight:700;color:#34d399;margin-bottom:0.35rem;">✅ Macmiilka Cusub Waa La Diyaariyay!</div>
-          <div id="directCreateUrl" style="font-family:monospace;font-size:0.84rem;word-break:break-all;margin-bottom:0.65rem;"></div>
-          <div style="display:flex;gap:0.5rem;">
-            <button class="btn btn-ghost btn-sm" onclick="copyText(window.lastCreatedSubUrl, 'Portal link waa la koobiyey')">📋 Copy Portal Link</button>
-            <a id="directOpenLink" href="#" target="_blank" class="btn btn-emerald btn-sm">🔗 Fur Portal-ka</a>
+          <div style="font-size:0.86rem;color:var(--text-muted);margin-bottom:0.4rem;">
+            🔒 <strong>Kalsoonida &amp; Qarsoodiga Macmiilka:</strong> Xogta wada-hadallada qofkan waa mid u gaar ah oo la dhowray. Macmiilku wuxuu si madaxbannaan uga geli karaa <code>/portal</code> lambarkiisa WhatsApp iyo PIN-kiisa.
           </div>
         </div>
       </section>
@@ -493,8 +492,6 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         return;
       }
       tbody.innerHTML = list.map(t => {
-        const portalPath = '/client/' + encodeURIComponent(t.id) + '?token=' + encodeURIComponent(t.accessToken);
-        const fullPortalUrl = window.location.origin + portalPath;
         const waStatus = t.runtime?.connected
           ? '<span class="pill pill-green">Online</span>'
           : '<span class="pill pill-muted">Offline</span>';
@@ -507,9 +504,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           '<td>' + statusBadge(t.status) + '</td>' +
           '<td style="font-size:0.82rem;">' + formatDaysLeft(t.expiresAt) + '</td>' +
           '<td>' + waStatus + '<div style="font-size:0.76rem;color:var(--text-muted);margin-top:0.2rem;">' + (t.runtime?.contactsCount || 0) + ' contacts</div></td>' +
-          '<td><div style="display:flex;gap:0.35rem;flex-wrap:wrap;">' +
-            '<button class="btn btn-ghost btn-sm" onclick="copyText(\\'' + fullPortalUrl + '\\', \\'Portal link waa la koobiyey\\')">📋 Link</button>' +
-            '<a class="btn btn-ghost btn-sm" href="' + portalPath + '" target="_blank">🔗 Fur</a>' +
+          '<td><div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;">' +
+            '<span class="pill pill-cyan" title="Xogta wada-hadallada macmiilkan waa mid u gaar ah oo la dhowray">🔒 Qarsoodi</span>' +
             '<button class="btn btn-emerald btn-sm" onclick="renewTenant(\\'' + t.id + '\\')">+1 Bil</button>' +
             (t.status === 'active'
               ? '<button class="btn btn-danger btn-sm" onclick="suspendTenant(\\'' + t.id + '\\')">Suspend</button>'
@@ -586,13 +582,17 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       });
       const data = await res.json();
       if (!res.ok) { showToast('❌ ' + (data.message || 'Error'), true); return; }
-      const fullUrl = window.location.origin + data.portalUrl;
-      window.lastCreatedSubUrl = fullUrl;
       document.getElementById('directCreateResult').style.display = 'block';
-      document.getElementById('directCreateUrl').textContent = fullUrl;
-      document.getElementById('directOpenLink').href = data.portalUrl;
       showToast('✅ Macmiil cusub waa la abuuray!');
       loadAdminOverview();
+    }
+
+    async function logoutAdmin() {
+      try {
+        await fetch('/api/admin/logout', { method: 'POST' });
+      } catch {}
+      document.cookie = 'cardoso_admin_session=; Path=/; Max-Age=0; SameSite=Lax';
+      window.location.href = '/portal';
     }
 
     function openEditModal(id) {

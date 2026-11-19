@@ -818,6 +818,58 @@ export class TenantRegistry {
     return Boolean(res?.changes > 0);
   }
 
+  public getAdminByPhone(rawPhone: string): AdminUserRecord | null {
+    const db = this.ensureDb();
+    const cleanPhone = normalizeSubscriptionPhone(rawPhone || '');
+    if (!cleanPhone) return null;
+    const rows = db.prepare('SELECT * FROM admin_users WHERE active = 1').all() as any[];
+    for (const r of rows) {
+      if (normalizeSubscriptionPhone(r.phone_number || '') === cleanPhone) {
+        return {
+          id: r.id,
+          username: r.username,
+          displayName: r.display_name,
+          phoneNumber: r.phone_number || '',
+          role: r.role,
+          active: Boolean(r.active),
+          createdAt: r.created_at,
+        };
+      }
+    }
+    return null;
+  }
+
+  public verifyAdminByPhoneAndPin(rawPhoneOrUser: string, rawPin: string): AdminUserRecord | null {
+    const db = this.ensureDb();
+    const cleanPhone = normalizeSubscriptionPhone(rawPhoneOrUser || '');
+    const cleanUser = String(rawPhoneOrUser || '').trim().toLowerCase();
+    const cleanPin = String(rawPin || '').trim();
+    if ((!cleanPhone && !cleanUser) || !cleanPin) return null;
+
+    const rows = db.prepare('SELECT * FROM admin_users WHERE active = 1').all() as any[];
+    for (const row of rows) {
+      const matchPhone = cleanPhone && normalizeSubscriptionPhone(row.phone_number || '') === cleanPhone;
+      const matchUser = cleanUser && row.username.toLowerCase() === cleanUser;
+      if (matchPhone || matchUser) {
+        const { hash } = this.hashPassword(cleanPin, row.password_salt);
+        const a = Buffer.from(row.password_hash, 'hex');
+        const b = Buffer.from(hash, 'hex');
+        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+          return {
+            id: row.id,
+            username: row.username,
+            displayName: row.display_name,
+            phoneNumber: row.phone_number || '',
+            role: row.role,
+            active: Boolean(row.active),
+            createdAt: row.created_at,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
   public getAllActiveAdminPhones(envPhones: string[] = []): string[] {
     const db = this.ensureDb();
     const set = new Set<string>();
