@@ -1266,6 +1266,54 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Announcement scheduled' };
     }
 
+    // ─── 1d.9. Islamic Prayer Times, Athan & Du'a (!salaad / !prayer / !eedan / !adhan) ──
+    if (/^[!./#]?(?:salaad|salaadda|prayer|prayers|eedan|adhan|aadaanka)\b/i.test(lowerText)) {
+      const prayerService = this.whatsappManager.getPrayerTimesService();
+      const subArg = lowerText.replace(/^[!./#]?(?:salaad|salaadda|prayer|prayers|eedan|adhan|aadaanka)\s*/i, '').trim();
+
+      // If user specifically requested playing the Athan (!eedan or !salaad eedan)
+      if (/^(?:eedan|adhan|aadaanka|cod)/i.test(subArg) || /^[!./#]?(?:eedan|adhan|aadaanka)$/i.test(lowerText.trim())) {
+        const isFajr = /fajr|subax/i.test(subArg);
+        await transport.sendMessage(message.chatId, `🕌 *[CARDOSO AI — EEDANKA SALAADDA]*\n\nWaxaa la diyaarinayaa Eedanka codka ah iyo Ducada... 🎧`);
+
+        // Send Voice Note Athan
+        const athan = await prayerService.getAthanAudio(isFajr);
+        if (athan && athan.buffer.length > 0) {
+          if (transport.sendMedia) {
+            await transport.sendMedia(message.chatId, {
+              type: 'audio',
+              dataBuffer: athan.buffer,
+              mimeType: athan.mimeType || 'audio/ogg; codecs=opus',
+              ptt: true,
+            });
+          }
+        }
+
+        // Send Sunnah Du'a Text
+        await transport.sendMessage(message.chatId, prayerService.getDuaAfterAthanText());
+
+        // Send Sunnah Du'a Voice Note
+        const dua = await prayerService.getDuaAudio();
+        if (dua && dua.buffer.length > 0) {
+          if (transport.sendMedia) {
+            await transport.sendMedia(message.chatId, {
+              type: 'audio',
+              dataBuffer: dua.buffer,
+              mimeType: dua.mimeType || 'audio/ogg; codecs=opus',
+              ptt: true,
+            });
+          }
+        }
+
+        return { handled: true, reason: 'Athan and Dua audio broadcasted' };
+      }
+
+      // Default: Display today's prayer timetable + countdown to next prayer
+      const summaryText = prayerService.getScheduleSummaryText();
+      await transport.sendMessage(message.chatId, summaryText);
+      return { handled: true, reason: 'Prayer times schedule displayed' };
+    }
+
     // ─── 1e. Comprehensive WhatsApp Management Help Command (!maamul / !whatsapp) ──
     if (/^[!./#]?(?:maamul|whatsapp|status-help|bot-help)\b/i.test(lowerText) && isAdminUser) {
       const helpText =
@@ -1302,6 +1350,7 @@ SHURUUCDA DUGSIIYA:
         `• \`!schedule HH:MM <fariin>\` — 📅 *SCHEDULED ANNOUNCEMENT*: Jadwal xayeysiis waqti gaar ah\n` +
         `• \`!schedule list\` — Eeg xayeysiisyada la dejiyay\n` +
         `• \`!schedule cancel <id>\` — Baabi'i xayeysiis jadwal ah\n` +
+        `• \`!salaad\` (ama \`!eedan\`) — 🕌 *PRAYER TIMES & ATHAN*: Waqtiyada salaadda, Eedanka codka ah & Ducada eedanka\n` +
         `• \`!maamul enhance [magaca]\` — 🎨 *AI BRANDING*: Auto-update Description + AI Logo Profile Picture + Lock Info\n` +
         `• \`!maamul topic [magaca]\` — 💡 *AI TOPIC*: Soo dhig dood ama xikmad caqli badan oo ku habboon kooxda\n` +
         `• \`!maamul rules [magaca]\` — 📜 *RULES*: Soo bandhig ama soo dhig xeerarka kooxda\n` +

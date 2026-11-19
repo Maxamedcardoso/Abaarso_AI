@@ -6,6 +6,7 @@ import { BroadcastService, broadcastService } from './broadcast.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
 import { groupGovernorService, GroupGovernorService } from './group-governor.service.js';
+import { prayerTimesService, PrayerTimesService, PrayerDefinition, PrayerKey } from './prayer-times.service.js';
 
 export interface WhatsAppManagerOptions {
   authDir?: string;
@@ -82,6 +83,7 @@ export class WhatsAppManagerService {
   private readonly autoGroupStoragePath: string;
   private autoManagedGroups: Map<string, { jid: string; name: string; enabledAt: number }> = new Map();
   private readonly governor: GroupGovernorService = groupGovernorService;
+  private readonly prayerTimes: PrayerTimesService = prayerTimesService;
   private autonomousLoopTimer?: NodeJS.Timeout;
   private recentGroupMessages: Map<string, { id: string; sender: string; text: string; timestamp: number }[]> = new Map();
   private revokedGroupMessages: Map<string, RevokedGroupMessage[]> = new Map();
@@ -1797,7 +1799,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             }
           }
 
-          // 5. Scheduled Announcements Check (every hour, checks exact minute)
+          // 5. Scheduled Announcements Check (minute precision)
           const nowForAnn = new Date();
           const nowH = nowForAnn.getHours();
           const nowM = nowForAnn.getMinutes();
@@ -1817,11 +1819,105 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
               console.warn(`[Autonomous Governor] Scheduled announcement error: ${annErr?.message}`);
             }
           }
+
+          // 6. Autonomous Islamic Prayer Times, Voice Note Athan & Du'a Engine
+          try {
+            const duePrayer = this.prayerTimes.checkDuePrayer(groupJid);
+            if (duePrayer) {
+              await this.broadcastPrayerNotification(groupJid, duePrayer, transport);
+            }
+          } catch (prayerErr: any) {
+            console.warn(`[Autonomous Governor] Prayer notification error for ${groupJid}: ${prayerErr?.message}`);
+          }
         }
       } catch (err: any) {
         console.warn(`[WhatsAppManager] Error in autonomous governor loop: ${err?.message}`);
       }
-    }, 60 * 60 * 1000); // Runs hourly; for minute-precision scheduling, inner checks handle it
+    }, 60 * 1000); // Runs every 60 seconds for minute-exact prayer times & scheduled announcements
+  }
+
+  /**
+   * Broadcasts a complete prayer notification to a group:
+   * 1. Reverent text reminder with Quranic ayah and instructions.
+   * 2. Authentic Voice Note Athan (Ogg Opus PTT).
+   * 3. Authentic Sunnah Du'a after Athan text.
+   * 4. Authentic Sunnah Du'a Voice Note.
+   */
+  public async broadcastPrayerNotification(
+    groupJid: string,
+    prayer: PrayerDefinition,
+    transport?: any
+  ): Promise<void> {
+    console.log(`🕌 [Autonomous Governor] Broadcasting Prayer Notification (${prayer.somaliName} / ${prayer.arabicName}) for ${groupJid}...`);
+
+    // 1. Text Reminder
+    const textReminder = this.prayerTimes.getPrayerReminderText(prayer);
+    if (transport?.sendMessage) {
+      await transport.sendMessage(groupJid, textReminder);
+    } else if (this.socket) {
+      await this.socket.sendMessage(groupJid, { text: textReminder });
+    }
+
+    // 2. Authentic Voice Note Athan
+    try {
+      const athan = await this.prayerTimes.getAthanAudio(prayer.isFajr);
+      if (athan && athan.buffer.length > 0) {
+        if (transport?.sendMedia) {
+          await transport.sendMedia(groupJid, {
+            type: 'audio',
+            dataBuffer: athan.buffer,
+            mimeType: athan.mimeType || 'audio/ogg; codecs=opus',
+            ptt: true,
+          });
+        } else if (this.socket) {
+          await this.socket.sendMessage(groupJid, {
+            audio: athan.buffer,
+            mimetype: athan.mimeType || 'audio/ogg; codecs=opus',
+            ptt: true,
+          });
+        }
+      }
+    } catch (athanErr: any) {
+      console.warn(`[WhatsAppManager] Athan audio delivery error: ${athanErr?.message}`);
+    }
+
+    // 3. Sunnah Du'a after Athan (Text)
+    const duaText = this.prayerTimes.getDuaAfterAthanText();
+    if (transport?.sendMessage) {
+      await transport.sendMessage(groupJid, duaText);
+    } else if (this.socket) {
+      await this.socket.sendMessage(groupJid, { text: duaText });
+    }
+
+    // 4. Sunnah Du'a Voice Note
+    try {
+      const duaAudio = await this.prayerTimes.getDuaAudio();
+      if (duaAudio && duaAudio.buffer.length > 0) {
+        if (transport?.sendMedia) {
+          await transport.sendMedia(groupJid, {
+            type: 'audio',
+            dataBuffer: duaAudio.buffer,
+            mimeType: duaAudio.mimeType || 'audio/ogg; codecs=opus',
+            ptt: true,
+          });
+        } else if (this.socket) {
+          await this.socket.sendMessage(groupJid, {
+            audio: duaAudio.buffer,
+            mimetype: duaAudio.mimeType || 'audio/ogg; codecs=opus',
+            ptt: true,
+          });
+        }
+      }
+    } catch (duaErr: any) {
+      console.warn(`[WhatsAppManager] Du'a audio delivery error: ${duaErr?.message}`);
+    }
+
+    // 5. Mark as successfully notified for today
+    this.prayerTimes.markPrayerPosted(groupJid, prayer.key);
+  }
+
+  public getPrayerTimesService(): PrayerTimesService {
+    return this.prayerTimes;
   }
 
   public stopAutonomousGovernorLoop(): void {

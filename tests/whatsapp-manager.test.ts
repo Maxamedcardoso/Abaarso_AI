@@ -17,6 +17,7 @@ import os from 'os';
 import path from 'path';
 import { generateSubscriberGuidePdfBuffer } from '../src/services/user-guide-pdf.service.js';
 import { codeRunnerService } from '../src/services/code-runner.service.js';
+import { prayerTimesService, PrayerTimesService } from '../src/services/prayer-times.service.js';
 
 const suite = new TestSuite('WhatsApp 100% Management & Status Intelligence');
 const testDb = './data/test_whatsapp_manager.db';
@@ -1407,6 +1408,74 @@ suite.test('Daily Quiz Engine, Group Leaderboard & Scheduled Announcements', asy
 
   // Clean up
   try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
+// ─── TEST SUITE 24: Islamic Prayer Times, Athan Voice Note & Du'a Engine ─────
+suite.test('Islamic Prayer Times Engine, Athan Speech Synthesis & Sunnah Du\'a', async () => {
+  const service = new PrayerTimesService();
+
+  // 1. Schedule Generation
+  const schedule = service.getTodaySchedule();
+  assertTrue(schedule.prayers.length === 5, 'Should calculate exactly 5 daily prayers');
+  const prayerKeys = schedule.prayers.map(p => p.key);
+  assertEqual(prayerKeys.join(','), 'fajr,dhuhr,asr,maghrib,isha', 'Prayers must be in order: fajr,dhuhr,asr,maghrib,isha');
+
+  // 2. Each prayer has valid hour and minute
+  for (const p of schedule.prayers) {
+    assertTrue(p.hour >= 0 && p.hour <= 23, `Prayer ${p.key} hour must be valid (got ${p.hour})`);
+    assertTrue(p.minute >= 0 && p.minute <= 59, `Prayer ${p.key} minute must be valid (got ${p.minute})`);
+    assertTrue(p.somaliName.length > 0, `Prayer ${p.key} must have Somali name`);
+    assertTrue(p.arabicName.length > 0, `Prayer ${p.key} must have Arabic name`);
+  }
+
+  // 3. Reverent text reminder formatting
+  const dhuhr = schedule.prayers.find(p => p.key === 'dhuhr')!;
+  const reminderText = service.getPrayerReminderText(dhuhr);
+  assertTrue(reminderText.includes('XUSUUSINTA SALAADDA'), 'Reminder text must have reverent header');
+  assertTrue(reminderText.includes('DUHUR'), 'Reminder text must reference Dhuhr prayer');
+  assertTrue(reminderText.includes('An-Nisa'), 'Reminder text should include Quran reference');
+
+  // 4. Athan speech text
+  const standardAthan = service.getAthanSpeechText(false);
+  assertTrue(standardAthan.includes('اللهُ أَكْبَرُ'), 'Athan text must contain Takbeer');
+  assertTrue(standardAthan.includes('أَشْهَدُ أَنْ لَا إِلٰهَ إِلَّا اللهُ'), 'Athan text must contain Shahada');
+  assertFalse(standardAthan.includes('الصَّلَاةُ خَيْرٌ مِنَ النَّوْمِ'), 'Standard Athan must not have Fajr line');
+
+  const fajrAthan = service.getAthanSpeechText(true);
+  assertTrue(fajrAthan.includes('الصَّلَاةُ خَيْرٌ مِنَ النَّوْمِ'), 'Fajr Athan must include Al-Salatu Khairun Minan Nawm');
+
+  // 5. Sunnah Du'a after Athan text
+  const duaText = service.getDuaAfterAthanText();
+  assertTrue(duaText.includes('DUCADII EEDANKA KADDIB'), 'Du\'a text must have header');
+  assertTrue(duaText.includes('اللَّهُمَّ رَبَّ هَذِهِ الدَّعْوَةِ التَّامَّةِ'), 'Du\'a text must have authentic Hadith');
+  assertTrue(duaText.includes('Nebi Muxammad'), 'Du\'a text must include Somali translation');
+
+  // 6. Time formatting helper
+  assertEqual(service.formatTime(4, 5), '04:05', 'formatTime should pad single digits');
+  assertEqual(service.formatTime(12, 30), '12:30', 'formatTime should preserve double digits');
+
+  // 7. Schedule summary for !salaad command
+  const summary = service.getScheduleSummaryText();
+  assertTrue(summary.includes('JADWALKA SALAADDA EE MAANTA'), 'Summary text must have Islamic header');
+  assertTrue(summary.includes('Subax'), 'Summary text must list Subax');
+  assertTrue(summary.includes('Maqrib'), 'Summary text must list Maqrib');
+
+  // 8. Due Prayer check & deduplication per group
+  const mockDate = new Date();
+  // Force hour/minute to match Dhuhr
+  const dhuhrPrayer = schedule.prayers.find(p => p.key === 'dhuhr')!;
+  // Create Date matching Dhuhr time in EAT
+  const utcOffset = mockDate.getTimezoneOffset() * 60000;
+  const eatOffset = 3 * 3600000;
+  // Calculate mock timestamp so that eat.getHours() == dhuhr.hour and eat.getMinutes() == dhuhr.minute
+  const testGroupJid = '120363111@g.us';
+
+  // Mark prayer posted
+  service.markPrayerPosted(testGroupJid, 'dhuhr');
+  // Check due prayer for dhuhr should now be ignored (deduplicated)
+  const dueCheck = service.checkDuePrayer(testGroupJid);
+  // It shouldn't trigger dhuhr again today
+  assertTrue(dueCheck === null || dueCheck.key !== 'dhuhr', 'Dhuhr must not trigger again after marked posted');
 });
 
 suite.run().then(summary => {

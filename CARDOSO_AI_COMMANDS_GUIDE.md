@@ -91,6 +91,7 @@ Bot-kan waxaa lagu dhisay nidaam ammaan oo heer sare ah (**Strict Role-Based Acc
 | `!schedule cancel <id>` | `!schedule cancel ann_123` | 📅 Baabi'i xayeysiis jadwal ah | **Admin Only** |
 | `!code js <koodh>` | `!code js 2 + 2` | 💻 **LIVE CODE RUNNER**: Ku fuli JavaScript toos ah WhatsApp | **Qof Kasta** |
 | `!transcribe` | Reply codka + `!transcribe` | 🎙️ **VOICE TRANSCRIBER**: Codka WhatsApp-ka u rog qoraal cad | **Qof Kasta** |
+| `!salaad` (ama `!eedan`)| `!salaad` ama `!eedan` | 🕌 **PRAYER & ATHAN**: Waqtiyada salaadda, Eedanka codka ah & Ducada | **Qof Kasta** |
 | `!rules` (ama `!xeerar`)| `!rules` ama `!xeerar` | Soo bandhigista xeerarka kooxda ee bot-ku dejiyay (Qof kasta ayaa weydiin kara). | **Qof Kasta** |
 | `!tagall <fariin>` | `!tagall Ogeysiis shir degdeg ah` | Wuxuu wada tag-gareeyaa (mention) dhammaan xubnaha group-ka ku jira fariintaada. | **Admin Only** |
 | `!kick @qofka / <lambar>` | `!kick @252634949642` ama `!kick 252634949642` ama reply | Qofka group-ka laga saarayo (Kick member) — Waxaa lagu qori karaa @mention, lambar toos ah, ama quote. | **Admin Only** |
@@ -168,6 +169,7 @@ Amarradan waxaa loogu talagalay ardayda, macallimiinta, iyo cid kasta oo la hadl
 | !schedule cancel <id> | Admin Only  | Baabi'i xayeysiis jadwal ah               | !schedule cancel ann_123             |
 | !code js <koodh>  | Qof Kasta       | Ku fuli JavaScript toos ah WhatsApp-ka    | !code js [1, 2, 3].map(x => x*2)    |
 | !transcribe       | Qof Kasta       | Codka WhatsApp-ka u rog qoraal cad        | Reply to audio + !transcribe        |
+| !salaad / !eedan  | Qof Kasta       | Waqtiyada salaadda, Eedanka codka & Ducada | !salaad ama !eedan                  |
 | !tagall <fariin>  | Admin Only      | Tag-garee dhammaan xubnaha group-ka      | !tagall Shir degdeg ah 8:00pm       |
 | !kick @qofka      | Admin Only      | Ka saaridda qofka group-ka               | !kick @252634949642                 |
 | !add <taleefan>   | Admin Only      | Ku darista xubin cusub group-ka          | !add 252634949642                   |
