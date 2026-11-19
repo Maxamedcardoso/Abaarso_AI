@@ -1873,10 +1873,10 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       success: true,
       message: enabled
         ? '🔗 *[Status Link Campaign Mode]*: Waa la SHIDAY (ON)! ✅\n' +
-          '• Kaliya link-yada WhatsApp (wa.me) ee lambarka 25... ku bilowda ayaa la qabanayaa oo status toos loogu dhigayaa.\n' +
-          '• Haddii sawir iyo link wada socdaan, qofka waxaa lagu leeyahay *link-ga kaliya isoo dir*.\n' +
+          '• Kaliya dadka status link soo dhiga ayaa lala hadlayaa.\n' +
+          '• Haddii sawir iyo link wada socdaan, labadaba si toos ah oo wada jir ah ayaa status loogu wada dhigayaa.\n' +
           '• Qof hore link loogu dhigay mar labaad looma dhigayo.\n' +
-          '• AI lama hadlayo qofka ilaa la save-gareeyo mooyee (Save-me kaliya ayaa lala hadlayaa).'
+          '• Qofka hore contact-ka kuugu jiray lala hadli maayo, save-me-na laguma dhihi doono.'
         : '🔗 *[Status Link Campaign Mode]*: Waa la DAMIYAY (OFF)! Nidaamkii caadiga ahaa ayaa dib loogu noqday.',
     };
   }

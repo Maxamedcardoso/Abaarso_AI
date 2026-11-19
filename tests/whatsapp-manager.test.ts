@@ -669,11 +669,12 @@ suite.test('WhatsAppBaileysTransport caches status@broadcast and restores owner-
 });
 
 suite.test('Call Reject Management (!reject all, !reject <number>, !unreject all, !unreject <number>)', () => {
-  const testConfigPath = path.resolve(process.cwd(), 'data', 'test-call-reject-config.json');
-  try { if (fs.existsSync(testConfigPath)) fs.unlinkSync(testConfigPath); } catch {}
+  const testAuthDir = path.resolve(process.cwd(), 'data', 'test-auth-dir-reject');
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(testAuthDir, { recursive: true });
   
   const mgr = new WhatsAppManagerService({
-    statusStoragePath: testConfigPath,
+    authDir: testAuthDir,
   });
 
   // 1. By default, rejectAllCalls is FALSE — calls are allowed unless explicitly blocked
@@ -713,7 +714,7 @@ suite.test('Call Reject Management (!reject all, !reject <number>, !unreject all
   assertTrue(mgr.shouldRejectCall('252634111222'), 'All callers must now be blocked');
 
   // Clean up
-  try { if (fs.existsSync(testConfigPath)) fs.unlinkSync(testConfigPath); } catch {}
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
 });
 
 suite.test('Instant Goodbye & Farewell Detection (stops dragging conversations)', () => {
@@ -767,7 +768,13 @@ suite.test('WhatsAppManager saveContact syncs via addOrEditContact and records b
 });
 
 suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link on / !link off)', async () => {
-  const manager = new WhatsAppManagerService();
+  const testAuthDir = path.resolve(process.cwd(), 'data', 'test-auth-dir-botcontrol');
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(testAuthDir, { recursive: true });
+
+  const manager = new WhatsAppManagerService({
+    authDir: testAuthDir,
+  });
 
   // 1. AI Master Toggle state
   assertTrue(manager.isAIEnabled(), 'AI should be enabled by default');
@@ -798,9 +805,8 @@ suite.test('AI Master Toggle (!on / !off) and Status Link Campaign Mode (!link o
   await manager.saveContact('252639999000', 'Nimco Sahal');
   assertTrue(manager.isContactSaved('252639999000'), 'Saved contact should be recognized as saved');
 
-  // Reset states
-  manager.setLinkCampaignMode(false);
-  manager.setAIEnabled(true);
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
 });
 
 suite.run().then(summary => {

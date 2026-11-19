@@ -378,24 +378,16 @@ SHURUUCDA DUGSIIYA:
 
     // 1c-saveme. Auto-save contact on "save me" DM response and Link Campaign Mode handling
     if (!message.isGroup && !message.isFromMe) {
-      // 1c.1. Link Campaign Mode: If user sends image AND link together
-      if (
-        this.whatsappManager.isLinkCampaignMode() &&
-        !isAdminUser &&
-        (message.media?.type === 'image' || message.content.includes('[WhatsApp Image')) &&
-        /(?:https?:\/\/|wa\.me|chat\.whatsapp\.com|\b25\d{7,12}\b)/i.test(text)
-      ) {
-        await transport.sendMessage(
-          message.chatId,
-          'Walaal fadlan sawirka ha soo raacinin. Link-ga kaliya ee lambarkaaga WhatsApp ku xidhan (wa.me link lambarkaaga 25... ku bilowda) qoraal ahaan iigu soo dir si aan status kuugu dhigo. 📲'
-        );
-        return { handled: true, reason: 'Link campaign: image+link guidance sent' };
-      }
+      // 1c.1. Link Campaign Mode: If user sends Link (or Image/Media + Link together)
+      const isMediaAttached = Boolean(
+        (message.media?.type === 'image' || message.media?.type === 'video' || (message as any).media?.type === 'document') &&
+        (message.media?.dataBase64 || (message.media as any)?.dataBuffer)
+      );
 
-      // 1c.2. Link Campaign Mode: If user sends WhatsApp link (wa.me or 25... link)
       const isWaLink =
         /(?:https?:\/\/)?(?:wa\.me\/(?:\+?25\d{7,12}|message\/\S+)|api\.whatsapp\.com\/send\?phone=(?:\+?25\d{7,12})|chat\.whatsapp\.com\/\S+|https?:\/\/\S*25\d{7,12}\S*)/i.test(text) ||
-        /(?:https?:\/\/)?wa\.me\/\S+/i.test(text);
+        /(?:https?:\/\/)?wa\.me\/\S+/i.test(text) ||
+        /(?:https?:\/\/|\b25\d{7,12}\b)/i.test(text);
 
       if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser && isWaLink) {
         const senderPhone = message.senderPhone || message.chatId.replace(/\D/g, '');
@@ -407,17 +399,39 @@ SHURUUCDA DUGSIIYA:
           return { handled: true, reason: 'Link campaign: link already posted previously' };
         }
 
-        const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
-        const linkToPost = linkMatch ? linkMatch[0] : text.trim();
+        if (isMediaAttached) {
+          // Post BOTH image and link directly to WhatsApp Status without separating!
+          const buffer = message.media?.dataBase64
+            ? Buffer.from(message.media.dataBase64, 'base64')
+            : ((message.media as any)?.dataBuffer || Buffer.alloc(0));
 
-        await this.whatsappManager.postTextStatus(linkToPost);
-        this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+          await this.whatsappManager.postMediaStatus({
+            buffer,
+            mimeType: message.media!.mimeType,
+            caption: text.trim(),
+            type: message.media!.type === 'video' ? 'video' : 'image',
+          });
+          this.whatsappManager.recordLinkCampaignPoster(senderPhone);
 
-        await transport.sendMessage(
-          message.chatId,
-          `✅ *[Status Posted]*: Link-gaaga si guul leh ayaa loogu daabacay WhatsApp Status! 📲✨\nFadlan adiguna nambarkayga save gareyso si aad status-ka u aragto.`
-        );
-        return { handled: true, reason: 'Link campaign: posted status link' };
+          await transport.sendMessage(
+            message.chatId,
+            '✅ *[Status Posted]*: Sawirkaaga iyo Link-gaaga si toos ah ayaa labadaba WhatsApp Status loogu wada daabacay! 📲✨\nFadlan adiguna nambarkayga save gareyso.'
+          );
+          return { handled: true, reason: 'Link campaign: image and link posted together to status' };
+        } else {
+          // Text link only
+          const linkMatch = text.match(/(?:https?:\/\/)?(?:wa\.me\/\S+|api\.whatsapp\.com\/\S+|chat\.whatsapp\.com\/\S+|https?:\/\/\S+)/i);
+          const linkToPost = linkMatch ? linkMatch[0] : text.trim();
+
+          await this.whatsappManager.postTextStatus(linkToPost);
+          this.whatsappManager.recordLinkCampaignPoster(senderPhone);
+
+          await transport.sendMessage(
+            message.chatId,
+            '✅ *[Status Posted]*: Link-gaaga si guul leh ayaa loogu daabacay WhatsApp Status! 📲✨\nFadlan adiguna nambarkayga save gareyso.'
+          );
+          return { handled: true, reason: 'Link campaign: posted status link' };
+        }
       }
 
       // 1c.3. Save-Me Keywords & Contact Saving
@@ -1475,16 +1489,22 @@ SHURUUCDA DUGSIIYA:
       }
     }
 
-    // In Link Campaign Mode: Only saved contacts are permitted to chat with AI
+    // In Link Campaign Mode (!link on):
+    // Only status link submissions are handled.
+    // If user is already an existing contact, do NOT talk to them and do NOT say "Save me"
+    // If user is unsaved, guide them to send their status link or picture+link.
     if (this.whatsappManager.isLinkCampaignMode() && !isAdminUser && !message.isGroup) {
       const isSaved = this.whatsappManager.isContactSaved(message.chatId);
-      if (!isSaved) {
-        console.log(`ℹ️ [Router] Link Campaign Mode: Ignored unsaved contact ${message.chatId}`);
+      if (isSaved) {
+        console.log(`ℹ️ [Router] Link Campaign Mode: Existing contact ${message.chatId} ignored (no AI, no save-me).`);
+        return { handled: true, reason: 'Link campaign: existing contact ignored (no AI, no save-me)' };
+      } else {
+        console.log(`ℹ️ [Router] Link Campaign Mode: Unsaved contact ${message.chatId} prompted for status link.`);
         await transport.sendMessage(
           message.chatId,
-          'Walaal si aan u wada hadalno, fadlan iigu soo dir *Save me* iyo *Magacaaga*, ama *wa.me link-gaaga* si aan status kuugu dhigo oo aan kuu save-gareeyo! 📲'
+          'Walaal fadlan iigu soo dir *Link-gaaga* (ama *Sawirkaaga iyo Link-gaaga* wada socda) si aan toos status kuugu dhigo! 📲✨'
         );
-        return { handled: true, reason: 'Link campaign: unsaved contact blocked from AI' };
+        return { handled: true, reason: 'Link campaign: unsaved contact prompted for status link' };
       }
     }
 
