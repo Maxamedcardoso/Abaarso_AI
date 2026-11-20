@@ -35,33 +35,12 @@ export function renderPortalLoginHTML(): string {
     </div>
 
     <nav class="tabs-bar" style="justify-content:center;">
-      <button class="tab-btn active" onclick="switchLoginTab('admin', this)">👑 Owner / Admin</button>
-      <button class="tab-btn" onclick="switchLoginTab('pin', this)">🔑 Macmiilka (PIN)</button>
-      <button class="tab-btn" onclick="switchLoginTab('otp', this)">📲 WhatsApp OTP</button>
+      <button class="tab-btn active" onclick="switchLoginTab('pin', this)">🔑 Lambarka &amp; PIN</button>
+      <button class="tab-btn" onclick="switchLoginTab('otp', this)">📲 Code WhatsApp (OTP)</button>
     </nav>
 
-    <!-- METHOD 0: OWNER / ADMIN STUDIO LOGIN -->
-    <section id="login-tab-admin" class="glass-card tab-pane active">
-      <div class="card-title">👑 Galitaanka Mulkiilaha (Owner Super Admin)</div>
-      <div class="card-sub">Ku soo gal Username-ka (admin ama lambarkaaga) iyo Studio Password-kaaga.</div>
-
-      <form onsubmit="loginAsAdmin(event)">
-        <div class="form-group">
-          <label class="field-label">Username ama Lambarka WhatsApp</label>
-          <input class="field" id="adminUserField" value="admin" required placeholder="admin ama 0634949642" />
-        </div>
-        <div class="form-group">
-          <label class="field-label">Studio Password (Furaha Maamulka)</label>
-          <input class="field" id="adminPassField" type="password" required placeholder="Geli password-kaaga..." />
-        </div>
-        <button class="btn btn-primary" id="adminLoginBtn" type="submit" style="width:100%;padding:0.85rem;">
-          👑 Fur Owner Admin Studio
-        </button>
-      </form>
-    </section>
-
     <!-- METHOD 1: PHONE + PIN LOGIN -->
-    <section id="login-tab-pin" class="glass-card tab-pane">
+    <section id="login-tab-pin" class="glass-card tab-pane active">
       <div class="card-title">🔑 Ku Soo Gal Lambarkaaga &amp; PIN-ka</div>
       <div class="card-sub">Geli lambarkii aad isku diiwaangelisay iyo PIN-kii aad samaysatay.</div>
 
@@ -71,7 +50,7 @@ export function renderPortalLoginHTML(): string {
           <input class="field" id="pinPhone" required placeholder="Tusaale: 0634xxxxxx ama 252634xxxxxx" />
         </div>
         <div class="form-group">
-          <label class="field-label">Dashboard PIN / Password</label>
+          <label class="field-label">Dashboard PIN</label>
           <input class="field" id="pinCode" type="password" required placeholder="Geli PIN-kaaga..." />
         </div>
         <button class="btn btn-primary" id="pinLoginBtn" type="submit" style="width:100%;padding:0.85rem;">
@@ -122,35 +101,6 @@ export function renderPortalLoginHTML(): string {
       var pane = document.getElementById('login-tab-' + name);
       if (pane) pane.classList.add('active');
       if (btn) btn.classList.add('active');
-    }
-
-    async function loginAsAdmin(e) {
-      e.preventDefault();
-      var btn = document.getElementById('adminLoginBtn');
-      btn.disabled = true;
-      btn.textContent = "⏳ Waa la hubinayaa...";
-      try {
-        var res = await fetch('/api/public/portal-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone: document.getElementById('adminUserField').value.trim(),
-            pin: document.getElementById('adminPassField').value.trim()
-          })
-        });
-        var data = await res.json();
-        if (!res.ok || data.status !== 'ok') {
-          showToast('❌ ' + (data.message || 'Furaha sirta ah ama Username-ka ma saxna'), true);
-          return;
-        }
-        showToast('✅ Ku soo dhawoow Mulkiile! Waxaa laguu wareejinayaa Admin Studio...');
-        window.location.href = data.portalUrl || '/';
-      } catch (err) {
-        showToast("❌ Xidhiidhka server-ka ayaa go'an", true);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "👑 Fur Owner Admin Studio";
-      }
     }
 
     async function loginWithPin(e) {

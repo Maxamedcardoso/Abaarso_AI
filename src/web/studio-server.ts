@@ -17,6 +17,7 @@ import { renderJoinHTML } from './views/join-page.js';
 import { renderClientPortalHTML } from './views/client-page.js';
 import { renderAdminDashboardHTML } from './views/admin-page.js';
 import { renderPortalLoginHTML } from './views/portal-login-page.js';
+import { renderAdminLoginHTML } from './views/admin-login-page.js';
 
 export interface StudioServerOptions {
   port: number | string;
@@ -147,6 +148,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.get('/portal', (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderPortalLoginHTML());
+  });
+
+  app.get('/admin-login', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderAdminLoginHTML());
   });
 
   app.post('/api/public/portal-login', (req: Request, res: Response) => {
@@ -702,9 +708,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
     }
 
-    // 3. If browser navigates directly to root HTML page, redirect to /portal
+    // 3. If browser navigates directly to root HTML page, redirect to /admin-login
     if (req.method === 'GET' && req.accepts && req.accepts('html') && (req.path === '/' || req.path === '/admin' || req.path === '/dashboard')) {
-      res.redirect('/portal');
+      res.redirect('/admin-login');
       return;
     }
 
