@@ -1079,7 +1079,9 @@ Respond with ONLY valid JSON:
       }
     }
 
-    const senderJid = msg.key.participant || msg.participant || '';
+    const rawParticipant = msg.key.participant || (msg as any).participant || '';
+    const cleanSender = rawParticipant ? rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net' : '';
+    const senderJid = cleanSender || rawParticipant;
     if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
       console.log(`⚠️ [StatusReactor] SKIPPED: invalid senderJid="${senderJid}"`);
       return false;
@@ -1113,7 +1115,7 @@ Respond with ONLY valid JSON:
       ? (msg.messageTimestamp as any).toNumber()
       : Number(msg.messageTimestamp) || 0;
 
-    const maxAgeSec = isLinkMode ? 86400 : 3600; // 24h in link mode, 1h in normal mode
+    const maxAgeSec = 86400; // Status stories last 24h on WhatsApp; never discard fresh statuses within 24 hours!
     if (msgTimestamp > 0 && nowSec - msgTimestamp > maxAgeSec) {
       console.log(`⏳ [StatusReactor] Ignored old status from ${senderJid} (posted ${nowSec - msgTimestamp}s ago).`);
       return false;
@@ -1123,7 +1125,13 @@ Respond with ONLY valid JSON:
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
     const mediaKind = unwrapped.mediaKind || undefined;
-    const hasMedia = Boolean(mediaKind && (innerMsg.imageMessage || innerMsg.videoMessage || innerMsg.audioMessage || innerMsg.documentMessage));
+    const hasMedia = Boolean(
+      (mediaKind && (innerMsg?.imageMessage || innerMsg?.videoMessage || innerMsg?.audioMessage || innerMsg?.documentMessage)) ||
+      msg.message?.imageMessage ||
+      msg.message?.videoMessage ||
+      msg.message?.audioMessage ||
+      msg.message?.documentMessage
+    );
     const textParts = [
       innerMsg.conversation,
       innerMsg.extendedTextMessage?.text,

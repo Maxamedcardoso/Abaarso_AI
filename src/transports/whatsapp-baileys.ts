@@ -9,6 +9,7 @@ import makeWASocket, {
   downloadContentFromMessage,
   downloadMediaMessage,
   getBinaryNodeChild,
+  jidNormalizedUser,
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -451,6 +452,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false, // Do not dump hundreds of old historical chat messages on every connect
       shouldSyncHistoryMessage: () => false,
+      markOnlineOnConnect: true, // Ensure WhatsApp marks companion available and streams status@broadcast events
+      emitOwnEvents: true,
       getMessage: async (key) => this.getMessageForRetry(key),
     });
 
@@ -683,6 +686,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }, 4500);
         }
         console.log(`\n✅ [WhatsAppBaileys:${this.tenantId}] Successfully connected to WhatsApp Multi-Device network!`);
+        // Notify WhatsApp network that companion is active/available so live status updates stream reliably
+        this.socket?.sendPresenceUpdate?.('available').catch(() => {});
       }
     });
 
@@ -873,11 +878,24 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
-        const isStatusBroadcast = msg.key?.remoteJid === 'status@broadcast';
+        if (!msg?.key) continue;
+
+        // ─── WhatsApp Status (Story) Dedicated Handler ───────────────────────
+        // Stories arrive under remoteJid === 'status@broadcast'.
+        // Route them immediately to handleIncomingStatusMessage so they are
+        // NEVER dropped by chat timestamp filters, View-Once stubs, or processedMessageIds!
+        if (msg.key.remoteJid === 'status@broadcast') {
+          try {
+            await this.handleIncomingStatusMessage(msg, type);
+          } catch (err: any) {
+            console.error('[WhatsAppBaileys] Error handling status@broadcast:', err);
+          }
+          continue;
+        }
+
         // Drop non-status messages sent before this bot run began (prevents executing old backlogged commands on startup).
-        // NEVER drop status@broadcast here so statuses posted around reconnects or with minor clock skew are always seen!
         const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-        if (!isStatusBroadcast && ts > 0 && ts < this.botStartTime - 5) {
+        if (ts > 0 && ts < this.botStartTime - 5) {
           if (msg.key?.id) this.processedMessageIds.add(msg.key.id);
           continue;
         }
@@ -894,16 +912,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         // 2. 'append' batches (offline / buffered events) are only accepted when they are
-        //    recent incoming messages or a View-Once message we are actively waiting for,
-        //    or active contact/owner status updates (up to 2h on reconnect).
+        //    recent incoming messages or a View-Once message we are actively waiting for.
         if (type !== 'notify') {
           const id = msg.key?.id || '';
           const isRecent = ts > 0 && nowSec - ts <= 300;
-          const isActiveStatus = ts === 0 || nowSec - ts <= 7200;
           const isPending = Boolean(id && this.pendingViewOnce.has(id));
-          const isOwnRecentStatus = Boolean(msg.key?.fromMe && isStatusBroadcast && isRecent);
-          const isRecentContactStatus = Boolean(!msg.key?.fromMe && isStatusBroadcast && isActiveStatus);
-          if (!isOwnRecentStatus && !isRecentContactStatus && (msg.key?.fromMe || !(isRecent || isPending))) continue;
+          if (msg.key?.fromMe || !(isRecent || isPending)) continue;
         }
 
         try {
@@ -1029,6 +1043,132 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     console.log(`📨 [View-Once 1️⃣] Qofka waxaa loo diray jawaab ku saabsan fariinta hal-mar-la-arko.`);
   }
 
+  /**
+   * Dedicated, unblockable handler for all WhatsApp Status (Story) events.
+   * Ensures 100% reliable real-time Auto-View (Seen receipts) and intelligent AI reactions/replies.
+   */
+  public async handleIncomingStatusMessage(msg: any, source: string): Promise<void> {
+    if (!msg?.key) return;
+    const id = msg.key.id;
+    if (!id) return;
+
+    const rawParticipant = msg.key.participant || msg.participant || '';
+    const cleanSender = rawParticipant ? jidNormalizedUser(rawParticipant) : '';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
+
+    // 1. Handle Status Revoke (Delete for Everyone of a story)
+    const isRevoke =
+      msg.message?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.REVOKE ||
+      (msg as any)?.messageStubType === proto.WebMessageInfo.StubType.REVOKE;
+    if (isRevoke) {
+      const revokedId = msg.message?.protocolMessage?.key?.id || id;
+      if (revokedId && (this.whatsappManager.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
+        console.log(`🗑️ [Status Revoke] Received status revoke for ${revokedId}. Propagating delete to all contacts...`);
+        await this.whatsappManager.deleteStatusById(revokedId, { fromPhone: true });
+      }
+      return;
+    }
+
+    // 2. Drop expired status backlogs older than 24 hours (86,400s)
+    if (ts > 0 && nowSec - ts > 86400) {
+      return;
+    }
+
+    // 3. Bot's own status broadcast posted from linked primary phone (fromMe === true)
+    if (msg.key.fromMe) {
+      if (!this.whatsappManager.hasPostedStatus(id)) {
+        let contentType: 'text' | 'image' | 'video' | 'audio' = 'text';
+        let content = '';
+        if (msg.message?.imageMessage) {
+          contentType = 'image';
+          content = msg.message.imageMessage.caption || '[Sawir]';
+        } else if (msg.message?.videoMessage) {
+          contentType = 'video';
+          content = msg.message.videoMessage.caption || '[Muuqaal]';
+        } else if (msg.message?.audioMessage) {
+          contentType = 'audio';
+          content = '[Cod]';
+        } else if (msg.message?.conversation) {
+          content = msg.message.conversation;
+        } else if (msg.message?.extendedTextMessage?.text) {
+          content = msg.message.extendedTextMessage.text;
+        }
+        this.whatsappManager.recordPostedStatus(id, contentType, content, undefined, 0);
+        console.log(`📱 [Phone Status Recorded] Recorded status posted from phone (${id}, ${contentType}): "${content.slice(0, 30)}"`);
+      }
+      return;
+    }
+
+    // 4. AUTO-VIEW STATUS (Real-Time Seen Mark)
+    // USER RULE: in both normal view and link campaign mode (!link on), bot ALWAYS views every status!
+    const shouldAutoView = this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
+    console.log(`📱 [Status Received] id=${id}, sender=${cleanSender || rawParticipant}, source=${source}, shouldAutoView=${shouldAutoView}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}`);
+
+    if (shouldAutoView && this.socket && cleanSender) {
+      try {
+        const statusKey = {
+          remoteJid: 'status@broadcast',
+          id,
+          participant: cleanSender,
+          fromMe: false,
+        };
+
+        // A) Direct raw WhatsApp Web read receipt stanza:
+        //    <receipt id="..." to="status@broadcast" participant="252634444444@s.whatsapp.net" type="read" t="..." />
+        //    Forces explicit type="read" directly to WhatsApp servers so sender immediately sees our profile in their status viewers list!
+        if (typeof (this.socket as any).sendReceipt === 'function') {
+          await (this.socket as any).sendReceipt('status@broadcast', cleanSender, [id], 'read').catch(() => {});
+        } else if (typeof (this.socket as any).sendNode === 'function') {
+          await (this.socket as any).sendNode({
+            tag: 'receipt',
+            attrs: {
+              id,
+              type: 'read',
+              to: 'status@broadcast',
+              participant: cleanSender,
+              t: nowSec.toString(),
+            },
+          }).catch(() => {});
+        }
+
+        // B) Also call official Baileys readMessages for companion state sync
+        if (typeof this.socket.readMessages === 'function') {
+          await this.socket.readMessages([statusKey]).catch(() => {});
+        }
+
+        console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${cleanSender} (id=${id})`);
+      } catch (err: any) {
+        console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${err?.message}`);
+      }
+    }
+
+    // 5. Record contact WhatsApp pushName and phone number JID
+    if (cleanSender && this.broadcast.isValidIndividualJid(cleanSender)) {
+      this.broadcast.recordContact(cleanSender, msg.pushName, false, Boolean(msg.pushName));
+    }
+    const rawPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
+    if (rawPn) {
+      const cleanPn = jidNormalizedUser(rawPn);
+      if (cleanPn && this.broadcast.isValidIndividualJid(cleanPn)) {
+        this.broadcast.recordContact(cleanPn, msg.pushName, false, Boolean(msg.pushName));
+      }
+    }
+
+    // 6. Status Reactor: Intelligently react (Love Cagaaran 💚) and comment like a real human,
+    // or when in Link Campaign Mode (!link on): view status, suppress story replies, and DM extracted phone numbers only.
+    if (this.socket && cleanSender) {
+      const isLinkMode = this.whatsappManager?.isLinkCampaignMode();
+      if (!isLinkMode && this.whatsappManager?.isAIDisabledForNumber(cleanSender)) {
+        console.log(`ℹ️ [WhatsAppBaileys] Status from ${cleanSender} ignored: AI disabled for this number (!off).`);
+      } else {
+        this.statusReactor.handleIncomingStatus(msg, this.socket, this.whatsappManager).catch((err: any) => {
+          console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
+        });
+      }
+    }
+  }
+
   private async processIncomingBaileysMessage(msg: any, source: string): Promise<void> {
     if (!msg?.key) return;
 
@@ -1083,133 +1223,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // ─── WhatsApp Status (Story) Handling & Auto-View Status ─────────────────
     if (chatId === 'status@broadcast') {
-      const statusSender = msg.key.participant || msg.participant || '';
-
-      // Check if this is a revoke (delete) of a status
-      if (msg.message?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.REVOKE) {
-        const revokedId = msg.message.protocolMessage.key?.id;
-        if (revokedId && (this.whatsappManager.hasPostedStatus(revokedId) || msg.key?.fromMe)) {
-          console.log(`🗑️ [Status Protocol Revoke] Received status revoke for ${revokedId}. Propagating delete to all contacts...`);
-          await this.whatsappManager.deleteStatusById(revokedId, { fromPhone: true });
-        }
-        return;
-      }
-
-      // Ignore empty stanzas, protocol messages, reaction stanzas, or edit stanzas
-      if (
-        !msg.message ||
-        msg.message?.protocolMessage ||
-        msg.message?.reactionMessage ||
-        (msg.message?.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)
-      ) {
-        return;
-      }
-
-      // Ignore expired status backlogs (older than 24 hours / 86400s)
-      const nowSec = Math.floor(Date.now() / 1000);
-      const msgTimestamp = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-      if (msgTimestamp > 0 && nowSec - msgTimestamp > 86400) {
-        return;
-      }
-
-      // If this is the bot's own broadcast status sent from this socket session (fromMe === true):
-      if (msg.key?.fromMe) {
-        if (msg.key?.id) {
-          let contentType: 'text' | 'image' | 'video' | 'audio' = 'text';
-          let content = '';
-          if (msg.message?.imageMessage) {
-            contentType = 'image';
-            content = msg.message.imageMessage.caption || '[Sawir]';
-          } else if (msg.message?.videoMessage) {
-            contentType = 'video';
-            content = msg.message.videoMessage.caption || '[Muuqaal]';
-          } else if (msg.message?.audioMessage) {
-            contentType = 'audio';
-            content = '[Cod]';
-          } else if (msg.message?.conversation) {
-            content = msg.message.conversation;
-          } else if (msg.message?.extendedTextMessage?.text) {
-            content = msg.message.extendedTextMessage.text;
-          }
-          if (!this.whatsappManager.hasPostedStatus(msg.key.id)) {
-            this.whatsappManager.recordPostedStatus(msg.key.id, contentType, content, undefined, 0);
-            console.log(`📱 [Phone Status Recorded] Recorded status posted from phone (${msg.key.id}, ${contentType}): "${content.slice(0, 30)}"`);
-          }
-        }
-        return;
-      }
-
-      // 1. Auto View Status: automatically mark contacts' status seen in real-time
-      // USER RULE: in both normal view and link campaign mode (!link on), bot ALWAYS views every status!
-      console.log(`📱 [Status Debug] incoming: sender=${statusSender}, fromMe=${msg.key?.fromMe}, id=${msg.key?.id}, viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}, reactorEnabled=${(this as any).statusReactor?.getConfig?.()?.enabled}`);
-      const shouldAutoView = this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
-      if (shouldAutoView && this.socket && statusSender && msg.key?.id) {
-        try {
-          const normalizeParticipantJid = (jid: string): string => {
-            if (!jid) return '';
-            const [userPart, serverPart] = jid.split('@');
-            if (!serverPart) return jid;
-            const cleanUser = userPart.split(':')[0];
-            return `${cleanUser}@${serverPart}`;
-          };
-
-          const rawSender = msg.key?.participant || msg.participant || statusSender;
-          const cleanSender = normalizeParticipantJid(rawSender);
-          const rawPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn || '';
-          const cleanPn = rawPn ? normalizeParticipantJid(rawPn) : '';
-
-          const participantsToAck = Array.from(new Set([cleanSender, rawSender, cleanPn].filter(Boolean)));
-          const keysToRead = participantsToAck.map((p) => ({
-            remoteJid: 'status@broadcast',
-            id: msg.key.id!,
-            participant: p,
-            fromMe: false,
-          }));
-
-          // 1. Official Baileys `sendReceipts(keys, 'read')` (PLURAL) forces explicit type="read"
-          //    directly to WhatsApp servers even if account privacy has readreceipts='none'!
-          let sentExplicitRead = false;
-          if (typeof (this.socket as any).sendReceipts === 'function') {
-            await (this.socket as any).sendReceipts(keysToRead, 'read');
-            sentExplicitRead = true;
-          }
-
-          // 2. Also call `readMessages` for Baileys internal store/sync
-          if (typeof this.socket.readMessages === 'function') {
-            await this.socket.readMessages([keysToRead[0]]).catch(() => {});
-          }
-
-          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${cleanSender} (explicitRead=${sentExplicitRead}, participants=${participantsToAck.join(',')})`);
-        } catch (e: any) {
-          console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
-        }
-      } else {
-        console.log(`⚠️ [Auto-View Status] SKIPPED: viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}, socket=${!!this.socket}, sender=${statusSender}, id=${msg.key?.id}`);
-      }
-
-      // 2. Record contact pushName and real phone number JID (participantPn) if present
-      if (statusSender && this.broadcast.isValidIndividualJid(statusSender)) {
-        this.broadcast.recordContact(statusSender, msg.pushName, false, Boolean(msg.pushName));
-      }
-      const statusParticipantPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
-      if (statusParticipantPn && this.broadcast.isValidIndividualJid(statusParticipantPn)) {
-        this.broadcast.recordContact(statusParticipantPn, msg.pushName, false, Boolean(msg.pushName));
-      }
-
-      // 3. Status Reactor: Intelligently react and comment like a real human,
-      // or when in Link Campaign Mode (!link on): view status, suppress story replies, and DM extracted phone numbers only.
-      if (this.socket) {
-        const isLinkMode = this.whatsappManager?.isLinkCampaignMode();
-        if (!isLinkMode && statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
-          console.log(`ℹ️ [WhatsAppBaileys] Status from ${statusSender} ignored: AI disabled for this number (!off).`);
-        } else {
-          this.statusReactor.handleIncomingStatus(msg, this.socket, this.whatsappManager).catch((err: any) => {
-            console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
-          });
-        }
-      }
-
-      // WhatsApp status updates are stories, do not route them as incoming private chat messages
+      await this.handleIncomingStatusMessage(msg, source);
       return;
     }
 
