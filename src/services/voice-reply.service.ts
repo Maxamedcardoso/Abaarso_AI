@@ -167,12 +167,16 @@ export class VoiceReplyService {
    * Converts an MP3 audio buffer to WhatsApp-native Ogg Opus format.
    * WhatsApp PTT (Voice Note) player strictly requires Ogg Opus container ("OggS" header).
    * This eliminates the "This audio is not available" error on WhatsApp!
-   }
+   */
+  public static convertMp3ToOggOpus(mp3Buffer: Buffer): Promise<Buffer> {
+    return new Promise((resolve) => {
+      try {
+        const inputStream = Readable.from(mp3Buffer);
 
         const chunks: Buffer[] = [];
         const outputStream = new PassThrough();
 
-        outputStream.on('data', chunk => chunks.push(chunk));
+        outputStream.on('data', (chunk: Buffer) => chunks.push(chunk));
         outputStream.on('end', () => resolve(Buffer.concat(chunks)));
         outputStream.on('error', (err) => {
           console.warn('[VoiceReply] FFmpeg Opus conversion stream error:', err?.message || err);
