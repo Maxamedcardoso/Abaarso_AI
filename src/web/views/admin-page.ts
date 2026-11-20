@@ -387,7 +387,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
             <label class="field-label">Habka Codka (Dooro midkood):</label>
             <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
               <button type="button" class="btn btn-primary btn-sm" id="btnAudioModeFile" onclick="setAudioSourceMode('file')">📁 Soo Geli Fayl (MP3/OGG)</button>
-              <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeUrl" onclick="setAudioSourceMode('url')">🌐 Link Cod ah (Audio URL)</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeUrl" onclick="setAudioSourceMode('url')">🌐 Link Video/Cod (TikTok, YouTube, MP3, MP4)</button>
               <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeTTS" onclick="setAudioSourceMode('tts')">🗣️ Qor Qoraal AI Cod ka Dhigto</button>
             </div>
 
@@ -404,14 +404,14 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
             <!-- Option C: Audio Link / URL -->
             <div id="voiceBoxUrl" style="display:none;">
               <div class="form-group" style="margin-bottom:0.5rem;">
-                <label class="field-label">Geli Link-ga Codka (Direct MP3/OGG/WAV URL)</label>
+                <label class="field-label">Geli Link-ga Video / Codka (TikTok, YouTube, MP3, MP4 URL)</label>
                 <div style="display:flex;gap:0.5rem;">
-                  <input class="field" id="voiceUrlInput" placeholder="https://tusaale.com/cod.mp3 ama link toos ah..." oninput="handleVoiceUrlInput(this.value)" />
+                  <input class="field" id="voiceUrlInput" placeholder="Geli link-ga TikTok, YouTube (ama Shorts), ama MP3/MP4 toos ah..." oninput="handleVoiceUrlInput(this.value)" />
                   <button type="button" class="btn btn-ghost btn-sm" onclick="previewVoiceUrl()">▶️ Tijaabi</button>
                 </div>
               </div>
               <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem;">
-                Link-ga waxaa toos looga soo dejinayaa internet-ka waxaana loo beddelayaa WhatsApp Voice Note (PTT) mowjad dabiici ah leh oo toos loo dhagaysan karo.
+                ✨ Link kasta (TikTok, YouTube, Shorts, ama link toos ah oo MP3/MP4 ah) waxaa toos looga soo saarayaa codka waxaana loo beddelayaa WhatsApp Voice Note (PTT) mowjad dabiici ah leh oo toos loo dhagaysan karo.
               </div>
               <audio id="voiceUrlAudioPreview" controls style="display:none;width:100%;margin-top:0.6rem;"></audio>
             </div>
@@ -1249,7 +1249,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       }
 
       btn.disabled = true;
-      btn.textContent = '⏳ Waa la dirayaa codka...';
+      btn.textContent = _voiceAudioMode === 'url' ? '⏳ Waa la soo dejinayaa link-ga oo codka loo beddelayaa...' : '⏳ Waa la dirayaa codka...';
       try {
         const res = await fetch('/api/owner/send-voice-group', {
           method: 'POST',

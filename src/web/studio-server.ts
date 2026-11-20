@@ -1098,63 +1098,132 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
-  // ─── Smart Audio Downloader: handles YouTube, TikTok, direct MP3/OGG/M4A links ───
+  // ─── Smart Audio Downloader: handles YouTube, TikTok, direct MP3/MP4/OGG/M4A links ───
   /**
    * Downloads audio from any URL and returns an Opus/OGG buffer ready for WhatsApp Voice Note.
    * Strategy:
-   *  1. YouTube / TikTok / Instagram / social media → @distube/ytdl-core
-   *  2. Direct audio files (MP3/OGG/WAV/M4A/WEBM) → fetch() directly
-   *  3. Unknown HTML pages → error with helpful message
+   *  1. TikTok (all URLs: vm.tiktok, vt.tiktok, standard videos) → TikWM API (direct audio/video stream)
+   *  2. YouTube (standard, youtu.be, shorts) → @distube/ytdl-core v5 (Ytdl)
+   *  3. Direct audio & video files (MP3, MP4, WAV, OGG, M4A, WEBM, etc.) → fetch() directly
+   * All non-OGG formats are converted to WhatsApp-native Opus OGG via FFmpeg.
    */
   async function downloadAudioFromUrl(url: string): Promise<Buffer> {
-    const lowerUrl = url.toLowerCase();
+    const cleanUrl = url.trim();
+    const lowerUrl = cleanUrl.toLowerCase();
 
-    // --- Strategy 1: YouTube / social media via ytdl-core ---
-    const isYouTube = /youtu\.be|youtube\.com/i.test(url);
-    const isTikTok  = /tiktok\.com/i.test(url);
-    const isFacebook = /facebook\.com|fb\.watch/i.test(url);
-    const isInstagram = /instagram\.com/i.test(url);
-
-    if (isYouTube || isTikTok || isFacebook || isInstagram) {
-      // Try ytdl-core for YouTube
-      if (isYouTube) {
-        try {
-          const ytdl = (await import('@distube/ytdl-core')).default;
-          const chunks: Buffer[] = [];
-          await new Promise<void>((resolve, reject) => {
-            const stream = ytdl(url, {
-              filter: 'audioonly',
-              quality: 'lowestaudio',
-              requestOptions: {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                },
-              },
-            });
-            stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-            stream.on('end', () => resolve());
-            stream.on('error', (err: Error) => reject(err));
-          });
-          const rawBuf = Buffer.concat(chunks);
-          if (rawBuf.length === 0) throw new Error('YouTube audio stream waa faaruq');
-          // Convert to Opus OGG
-          return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
-        } catch (ytErr: any) {
-          throw new Error(`YouTube link lama soo dajin karin: ${ytErr?.message}. Isku day link toos ah (MP3/OGG).`);
+    // --- Strategy 1: TikTok Downloader (TikWM API) ---
+    const isTikTok = /tiktok\.com/i.test(cleanUrl);
+    if (isTikTok) {
+      try {
+        console.log(`🎵 [VoiceNote] Downloading audio from TikTok: ${cleanUrl}`);
+        const tikRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        });
+        const tikData: any = await tikRes.json();
+        if (tikData.code !== 0 || !tikData.data) {
+          throw new Error(tikData.msg || 'TikTok video-ga lama helin ama waa private');
         }
+        const mediaUrl = tikData.data.music || tikData.data.play || tikData.data.wmplay;
+        if (!mediaUrl) {
+          throw new Error('TikTok audio track lama helin');
+        }
+        console.log(`🎵 [VoiceNote] Fetching TikTok audio track from: ${mediaUrl.slice(0, 60)}...`);
+        const mediaRes = await fetch(mediaUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://www.tiktok.com/',
+          },
+        });
+        if (!mediaRes.ok) {
+          throw new Error(`Cilad soo dejinta codka TikTok (HTTP ${mediaRes.status})`);
+        }
+        const rawBuf = Buffer.from(await mediaRes.arrayBuffer());
+        if (rawBuf.length === 0) throw new Error('Faylka codka TikTok waa faaruq (0 bytes)');
+        console.log(`🎵 [VoiceNote] Converting TikTok audio (${rawBuf.length} bytes) to WhatsApp OGG Opus...`);
+        return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+      } catch (tikErr: any) {
+        console.error('[VoiceNote] TikTok download error:', tikErr);
+        throw new Error(`TikTok codkiisa lama soo dejin karin: ${tikErr?.message}`);
       }
-      throw new Error(`${isTikTok ? 'TikTok' : isFacebook ? 'Facebook' : 'Instagram'} links toos looga soo dajin karin. Fadlan isticmaal link toos ah oo audio ah (MP3, OGG, M4A).`);
     }
 
-    // --- Strategy 2: Direct audio file fetch ---
-    const audioExtensions = /\.(mp3|ogg|opus|wav|m4a|aac|flac|webm|mp4)(\?.*)?$/i;
-    const looksLikeAudio = audioExtensions.test(lowerUrl);
+    // --- Strategy 2: YouTube Downloader (@distube/ytdl-core v5) ---
+    const isYouTube = /youtu\.be|youtube\.com/i.test(cleanUrl);
+    if (isYouTube) {
+      try {
+        console.log(`🎵 [VoiceNote] Downloading audio from YouTube: ${cleanUrl}`);
+        // Normalize shorts & short links
+        let targetUrl = cleanUrl;
+        const shortsMatch = cleanUrl.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]+)/i);
+        if (shortsMatch) {
+          targetUrl = `https://www.youtube.com/watch?v=${shortsMatch[1]}`;
+        } else {
+          const youtuBeMatch = cleanUrl.match(/youtu\.be\/([a-zA-Z0-9_-]+)/i);
+          if (youtuBeMatch) {
+            targetUrl = `https://www.youtube.com/watch?v=${youtuBeMatch[1]}`;
+          }
+        }
 
-    const fetchRes = await fetch(url, {
+        const { Ytdl } = await import('@distube/ytdl-core');
+        const ytdl = new Ytdl();
+
+        const downloadChunks = async (filterCriteria: any): Promise<Buffer> => {
+          return new Promise<Buffer>((resolve, reject) => {
+            const timeoutTimer = setTimeout(() => {
+              reject(new Error('YouTube audio soo dejintiisu waqti dheer ayey qaadatay (timeout 60s)'));
+            }, 60000);
+
+            try {
+              const stream = ytdl.download(targetUrl, {
+                filter: filterCriteria,
+                quality: 'lowestaudio',
+              });
+              const chunks: Buffer[] = [];
+              stream.on('data', (c: Buffer) => chunks.push(c));
+              stream.on('end', () => {
+                clearTimeout(timeoutTimer);
+                resolve(Buffer.concat(chunks));
+              });
+              stream.on('error', (err: any) => {
+                clearTimeout(timeoutTimer);
+                reject(err);
+              });
+            } catch (err) {
+              clearTimeout(timeoutTimer);
+              reject(err);
+            }
+          });
+        };
+
+        let rawBuf: Buffer;
+        try {
+          // Attempt audio-only criteria first
+          rawBuf = await downloadChunks({ hasAudio: true, hasVideo: false });
+        } catch (firstErr) {
+          console.warn('[VoiceNote] Audio-only stream failed, falling back to mixed audio stream:', firstErr);
+          rawBuf = await downloadChunks({ hasAudio: true });
+        }
+
+        if (!rawBuf || rawBuf.length === 0) {
+          throw new Error('YouTube audio stream waa faaruq (0 bytes)');
+        }
+        console.log(`🎵 [VoiceNote] Converting YouTube audio (${rawBuf.length} bytes) to WhatsApp OGG Opus...`);
+        return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+      } catch (ytErr: any) {
+        console.error('[VoiceNote] YouTube download error:', ytErr);
+        throw new Error(`YouTube codkiisa lama soo dejin karin: ${ytErr?.message}`);
+      }
+    }
+
+    // --- Strategy 3: Direct audio/video URL fetch (MP3, MP4, WAV, OGG, M4A, etc.) ---
+    console.log(`🎵 [VoiceNote] Fetching direct media from URL: ${cleanUrl}`);
+    const fetchRes = await fetch(cleanUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'audio/*,video/*,application/octet-stream,*/*',
-        'Range': 'bytes=0-', // support range requests for some CDNs
+        'Range': 'bytes=0-',
       },
     });
 
@@ -1163,13 +1232,14 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
 
     const contentType = fetchRes.headers.get('content-type') || '';
+    const audioExtensions = /\.(mp3|ogg|opus|wav|m4a|aac|flac|webm|mp4)(\?.*)?$/i;
+    const looksLikeAudio = audioExtensions.test(lowerUrl);
     const isAudioContent = /audio|video|octet-stream|mp4/i.test(contentType);
 
-    // If response looks like HTML page (not audio)
     if (!isAudioContent && !looksLikeAudio) {
       const snippet = Buffer.from(await fetchRes.clone().arrayBuffer()).slice(0, 500).toString('utf8');
       if (/<!doctype|<html/i.test(snippet)) {
-        throw new Error(`URL-ku wuxuu keenayaa webpage HTML ah, cod ma aha. Fadlan isticmaal link toos ah oo cod ah (MP3, OGG, M4A, iwm).`);
+        throw new Error('URL-ku wuxuu keenayaa webpage HTML ah, cod ama video ma aha. Fadlan geli link toos ah ama link YouTube/TikTok.');
       }
     }
 
@@ -1184,7 +1254,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       return rawBuf; // already OGG Opus, use as-is
     }
 
-    // Convert everything else (MP3, WAV, M4A, MP4 audio, etc.) to Opus OGG
+    // Convert everything else (MP3, WAV, M4A, MP4 video audio, etc.) to Opus OGG
     return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
   }
 
