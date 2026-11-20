@@ -514,6 +514,7 @@ export class WhatsAppManagerService {
 
   public setAutoViewStatus(enabled: boolean): void {
     this.autoViewStatus = enabled;
+    this.saveBotControlConfig(); // persist across restarts
     console.log(`👁️ [WhatsAppManager] Auto-View Status is now: ${enabled ? 'ENABLED' : 'DISABLED'}`);
   }
 
@@ -2646,6 +2647,9 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         if (raw.aiEnabled !== undefined) {
           this.aiEnabled = Boolean(raw.aiEnabled);
         }
+        if (raw.autoViewStatus !== undefined) {
+          this.autoViewStatus = Boolean(raw.autoViewStatus);
+        }
         if (raw.linkCampaignMode !== undefined) {
           this.linkCampaignMode = Boolean(raw.linkCampaignMode);
         }
@@ -2678,6 +2682,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const data = {
         aiEnabled: this.aiEnabled,
+        autoViewStatus: this.autoViewStatus,
         linkCampaignMode: this.linkCampaignMode,
         linkCampaignPostedSenders: Array.from(this.linkCampaignPostedSenders),
         disabledAINumbers: Array.from(this.disabledAINumbers),

@@ -203,21 +203,29 @@ export class StatusReactorService {
 
     const cleanSender = senderJid.replace(/[^0-9]/g, '');
 
-    // Check against connected bot user JID and LID
+    // Check against connected bot user JID and LID (must be at least 7 digits for safety)
     const socketOwnJid = socket?.user?.id ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
     const socketOwnLid = (socket?.user as any)?.lid ? (socket.user as any).lid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
-    if (socketOwnJid && (cleanSender.endsWith(socketOwnJid) || socketOwnJid.endsWith(cleanSender))) {
+    if (socketOwnJid && socketOwnJid.length >= 7 && (cleanSender === socketOwnJid || cleanSender.endsWith(socketOwnJid) || socketOwnJid.endsWith(cleanSender))) {
       return true;
     }
-    if (socketOwnLid && (cleanSender.endsWith(socketOwnLid) || socketOwnLid.endsWith(cleanSender))) {
+    if (socketOwnLid && socketOwnLid.length >= 7 && (cleanSender === socketOwnLid || cleanSender.endsWith(socketOwnLid) || socketOwnLid.endsWith(cleanSender))) {
       return true;
     }
 
-    // Check configured admin phone numbers
+    // Check configured admin phone numbers (use exact suffix match only when lengths differ significantly, else exact)
     const adminNumbers = this.configuredAdminPhones !== null
       ? this.configuredAdminPhones
       : (config.security.adminPhoneNumbers || []);
-    if (adminNumbers.some(admin => cleanSender.endsWith(admin) || admin.endsWith(cleanSender))) {
+    if (adminNumbers.some(admin => {
+      const cleanAdmin = admin.replace(/[^0-9]/g, '');
+      if (!cleanAdmin) return false;
+      // Exact match, or the sender's number ends with the full admin number (handles country-code variants)
+      // but only when admin number is at least 7 digits to avoid false partial matches
+      return cleanSender === cleanAdmin ||
+        (cleanAdmin.length >= 7 && cleanSender.endsWith(cleanAdmin)) ||
+        (cleanSender.length >= 7 && cleanAdmin.endsWith(cleanSender));
+    })) {
       return true;
     }
 
@@ -905,8 +913,14 @@ Respond with ONLY valid JSON:
    * Handles an incoming WhatsApp status event from Baileys transport.
    */
   public async handleIncomingStatus(msg: proto.IWebMessageInfo, socket: any): Promise<boolean> {
-    if (!this.config.enabled || !socket) return false;
-    if (!this.config.autoReact && !this.config.autoComment) return false;
+    if (!this.config.enabled || !socket) {
+      console.log(`⚠️ [StatusReactor] SKIPPED: enabled=${this.config.enabled}, socket=${!!socket}`);
+      return false;
+    }
+    if (!this.config.autoReact && !this.config.autoComment) {
+      console.log(`⚠️ [StatusReactor] SKIPPED: autoReact=${this.config.autoReact}, autoComment=${this.config.autoComment}`);
+      return false;
+    }
     // Suppress status interactions during Link Campaign Mode (!link on)
     if (whatsappManagerService.isLinkCampaignMode()) {
       return false;
@@ -914,6 +928,7 @@ Respond with ONLY valid JSON:
 
     const senderJid = msg.key.participant || msg.participant || '';
     if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
+      console.log(`⚠️ [StatusReactor] SKIPPED: invalid senderJid="${senderJid}"`);
       return false;
     }
 

@@ -892,14 +892,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         // 2. 'append' batches (offline / buffered events) are only accepted when they are
         //    recent incoming messages or a View-Once message we are actively waiting for,
-        //    or recent phone-posted status updates from the owner.
+        //    or recent phone-posted status updates from the owner/contacts.
         if (type !== 'notify') {
           const id = msg.key?.id || '';
           const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-          const isRecent = ts > 0 && nowSec - ts <= 120;
+          const isRecent = ts > 0 && nowSec - ts <= 300; // expanded to 5 min window
           const isPending = Boolean(id && this.pendingViewOnce.has(id));
           const isOwnRecentStatus = Boolean(msg.key?.fromMe && msg.key?.remoteJid === 'status@broadcast' && isRecent);
-          if (!isOwnRecentStatus && (msg.key?.fromMe || !(isRecent || isPending))) continue;
+          // Allow recent contact status updates through even on 'append' type (e.g. after reconnect)
+          const isRecentContactStatus = Boolean(!msg.key?.fromMe && msg.key?.remoteJid === 'status@broadcast' && isRecent);
+          if (!isOwnRecentStatus && !isRecentContactStatus && (msg.key?.fromMe || !(isRecent || isPending))) continue;
         }
 
         try {
@@ -1139,6 +1141,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
 
       // 1. Auto View Status: automatically mark contacts' status seen in real-time
+      console.log(`📱 [Status Debug] incoming: sender=${statusSender}, fromMe=${msg.key?.fromMe}, id=${msg.key?.id}, viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}, reactorEnabled=${(this as any).statusReactor?.getConfig?.()?.enabled}`);
       if (this.whatsappManager.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
         try {
           const statusKey = {
@@ -1151,6 +1154,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         } catch (e: any) {
           console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
         }
+      } else {
+        console.log(`⚠️ [Auto-View Status] SKIPPED: viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, socket=${!!this.socket}, sender=${statusSender}, id=${msg.key?.id}`);
       }
 
       // 2. Record contact pushName and real phone number JID (participantPn) if present
