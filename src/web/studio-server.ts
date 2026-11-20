@@ -1098,6 +1098,96 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
   });
 
+  // ─── Smart Audio Downloader: handles YouTube, TikTok, direct MP3/OGG/M4A links ───
+  /**
+   * Downloads audio from any URL and returns an Opus/OGG buffer ready for WhatsApp Voice Note.
+   * Strategy:
+   *  1. YouTube / TikTok / Instagram / social media → @distube/ytdl-core
+   *  2. Direct audio files (MP3/OGG/WAV/M4A/WEBM) → fetch() directly
+   *  3. Unknown HTML pages → error with helpful message
+   */
+  async function downloadAudioFromUrl(url: string): Promise<Buffer> {
+    const lowerUrl = url.toLowerCase();
+
+    // --- Strategy 1: YouTube / social media via ytdl-core ---
+    const isYouTube = /youtu\.be|youtube\.com/i.test(url);
+    const isTikTok  = /tiktok\.com/i.test(url);
+    const isFacebook = /facebook\.com|fb\.watch/i.test(url);
+    const isInstagram = /instagram\.com/i.test(url);
+
+    if (isYouTube || isTikTok || isFacebook || isInstagram) {
+      // Try ytdl-core for YouTube
+      if (isYouTube) {
+        try {
+          const ytdl = (await import('@distube/ytdl-core')).default;
+          const chunks: Buffer[] = [];
+          await new Promise<void>((resolve, reject) => {
+            const stream = ytdl(url, {
+              filter: 'audioonly',
+              quality: 'lowestaudio',
+              requestOptions: {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                },
+              },
+            });
+            stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+            stream.on('end', () => resolve());
+            stream.on('error', (err: Error) => reject(err));
+          });
+          const rawBuf = Buffer.concat(chunks);
+          if (rawBuf.length === 0) throw new Error('YouTube audio stream waa faaruq');
+          // Convert to Opus OGG
+          return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+        } catch (ytErr: any) {
+          throw new Error(`YouTube link lama soo dajin karin: ${ytErr?.message}. Isku day link toos ah (MP3/OGG).`);
+        }
+      }
+      throw new Error(`${isTikTok ? 'TikTok' : isFacebook ? 'Facebook' : 'Instagram'} links toos looga soo dajin karin. Fadlan isticmaal link toos ah oo audio ah (MP3, OGG, M4A).`);
+    }
+
+    // --- Strategy 2: Direct audio file fetch ---
+    const audioExtensions = /\.(mp3|ogg|opus|wav|m4a|aac|flac|webm|mp4)(\?.*)?$/i;
+    const looksLikeAudio = audioExtensions.test(lowerUrl);
+
+    const fetchRes = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'audio/*,video/*,application/octet-stream,*/*',
+        'Range': 'bytes=0-', // support range requests for some CDNs
+      },
+    });
+
+    if (!fetchRes.ok) {
+      throw new Error(`HTTP ${fetchRes.status} ${fetchRes.statusText} — URL-ka ma furan karin`);
+    }
+
+    const contentType = fetchRes.headers.get('content-type') || '';
+    const isAudioContent = /audio|video|octet-stream|mp4/i.test(contentType);
+
+    // If response looks like HTML page (not audio)
+    if (!isAudioContent && !looksLikeAudio) {
+      const snippet = Buffer.from(await fetchRes.clone().arrayBuffer()).slice(0, 500).toString('utf8');
+      if (/<!doctype|<html/i.test(snippet)) {
+        throw new Error(`URL-ku wuxuu keenayaa webpage HTML ah, cod ma aha. Fadlan isticmaal link toos ah oo cod ah (MP3, OGG, M4A, iwm).`);
+      }
+    }
+
+    const rawBuf = Buffer.from(await fetchRes.arrayBuffer());
+    if (rawBuf.length === 0) {
+      throw new Error('Faylka laga soo dejiyay waa faaruq (0 bytes)');
+    }
+
+    // Check magic bytes for OGG/Opus (already compatible with WhatsApp)
+    const magic4 = rawBuf.slice(0, 4).toString('ascii');
+    if (magic4 === 'OggS') {
+      return rawBuf; // already OGG Opus, use as-is
+    }
+
+    // Convert everything else (MP3, WAV, M4A, MP4 audio, etc.) to Opus OGG
+    return await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+  }
+
   app.post('/api/owner/send-voice-group', async (req: Request, res: Response) => {
     try {
       const { groupJids, groupJid, title, audioBase64, text, audioUrl } = req.body || {};
@@ -1111,27 +1201,9 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       if (audioUrl && String(audioUrl).trim()) {
         const cleanUrl = String(audioUrl).trim();
         try {
-          const fetchRes = await fetch(cleanUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-          });
-          if (!fetchRes.ok) {
-            res.status(400).json({ status: 'error', message: `Link-ga codka lama soo dejin karin (HTTP ${fetchRes.status}: ${fetchRes.statusText})` });
-            return;
-          }
-          const rawBuf = Buffer.from(await fetchRes.arrayBuffer());
-          if (rawBuf.length === 0) {
-            res.status(400).json({ status: 'error', message: 'Faylka laga soo dejiyay link-ga waa faaruq (0 bytes)' });
-            return;
-          }
-          if (rawBuf.slice(0, 4).toString() === 'OggS') {
-            opusBuffer = rawBuf;
-          } else {
-            opusBuffer = await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
-          }
+          opusBuffer = await downloadAudioFromUrl(cleanUrl);
         } catch (fetchErr: any) {
-          res.status(400).json({ status: 'error', message: `Cilad soo dejinta link-ga codka: ${fetchErr?.message}` });
+          res.status(400).json({ status: 'error', message: `❌ Link-ga codka lama soo dajin karin: ${fetchErr?.message}` });
           return;
         }
       } else if (audioBase64) {
