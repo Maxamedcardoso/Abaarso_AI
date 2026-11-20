@@ -97,6 +97,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       this.onConnectionChange = opts.onConnectionChange;
       this.onCredsSaved = opts.onCredsSaved;
     }
+    this.statusReactor.setWhatsAppManager(this.whatsappManager);
   }
 
   public static phonesMatch(allowedPhone: string, actualPhone: string): boolean {
@@ -872,9 +873,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const msg of messages) {
-        // Drop ANY message sent before this bot run began (prevents executing old backlogged commands on startup)
+        const isStatusBroadcast = msg.key?.remoteJid === 'status@broadcast';
+        // Drop non-status messages sent before this bot run began (prevents executing old backlogged commands on startup).
+        // NEVER drop status@broadcast here so statuses posted around reconnects or with minor clock skew are always seen!
         const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-        if (ts > 0 && ts < this.botStartTime - 5) {
+        if (!isStatusBroadcast && ts > 0 && ts < this.botStartTime - 5) {
           if (msg.key?.id) this.processedMessageIds.add(msg.key.id);
           continue;
         }
@@ -892,15 +895,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
         // 2. 'append' batches (offline / buffered events) are only accepted when they are
         //    recent incoming messages or a View-Once message we are actively waiting for,
-        //    or recent phone-posted status updates from the owner/contacts.
+        //    or active contact/owner status updates (up to 2h on reconnect).
         if (type !== 'notify') {
           const id = msg.key?.id || '';
-          const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-          const isRecent = ts > 0 && nowSec - ts <= 300; // expanded to 5 min window
+          const isRecent = ts > 0 && nowSec - ts <= 300;
+          const isActiveStatus = ts === 0 || nowSec - ts <= 7200;
           const isPending = Boolean(id && this.pendingViewOnce.has(id));
-          const isOwnRecentStatus = Boolean(msg.key?.fromMe && msg.key?.remoteJid === 'status@broadcast' && isRecent);
-          // Allow recent contact status updates through even on 'append' type (e.g. after reconnect)
-          const isRecentContactStatus = Boolean(!msg.key?.fromMe && msg.key?.remoteJid === 'status@broadcast' && isRecent);
+          const isOwnRecentStatus = Boolean(msg.key?.fromMe && isStatusBroadcast && isRecent);
+          const isRecentContactStatus = Boolean(!msg.key?.fromMe && isStatusBroadcast && isActiveStatus);
           if (!isOwnRecentStatus && !isRecentContactStatus && (msg.key?.fromMe || !(isRecent || isPending))) continue;
         }
 
@@ -1103,18 +1105,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         return;
       }
 
-      // Ignore historical status backlogs (older than 10 minutes) dumped by WhatsApp on socket connect
+      // Ignore expired status backlogs (older than 24 hours / 86400s)
       const nowSec = Math.floor(Date.now() / 1000);
       const msgTimestamp = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
-      if (msgTimestamp > 0 && nowSec - msgTimestamp > 600) {
+      if (msgTimestamp > 0 && nowSec - msgTimestamp > 86400) {
         return;
       }
 
-      // Owner/Admin status guard: NEVER auto-view, react or comment on the bot owner's status!
-      const isOwnerStatus = Boolean(msg.key?.fromMe) ||
-        (statusSender && this.statusReactor.isAdminOrSelf(statusSender, Boolean(msg.key?.fromMe), this.socket));
-      if (isOwnerStatus) {
-        // Record phone-posted status so !deletestatus and !statusviews can track it
+      // If this is the bot's own broadcast status sent from this socket session (fromMe === true):
+      if (msg.key?.fromMe) {
         if (msg.key?.id) {
           let contentType: 'text' | 'image' | 'video' | 'audio' = 'text';
           let content = '';
@@ -1146,13 +1145,41 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const shouldAutoView = this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
       if (shouldAutoView && this.socket && statusSender && msg.key?.id) {
         try {
-          const statusKey = {
-            remoteJid: 'status@broadcast',
-            id: msg.key.id,
-            participant: statusSender,
+          const normalizeParticipantJid = (jid: string): string => {
+            if (!jid) return '';
+            const [userPart, serverPart] = jid.split('@');
+            if (!serverPart) return jid;
+            const cleanUser = userPart.split(':')[0];
+            return `${cleanUser}@${serverPart}`;
           };
-          await this.socket.readMessages([statusKey]);
-          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${statusSender}`);
+
+          const rawSender = msg.key?.participant || msg.participant || statusSender;
+          const cleanSender = normalizeParticipantJid(rawSender);
+          const rawPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn || '';
+          const cleanPn = rawPn ? normalizeParticipantJid(rawPn) : '';
+
+          const participantsToAck = Array.from(new Set([cleanSender, rawSender, cleanPn].filter(Boolean)));
+          const keysToRead = participantsToAck.map((p) => ({
+            remoteJid: 'status@broadcast',
+            id: msg.key.id!,
+            participant: p,
+            fromMe: false,
+          }));
+
+          // 1. Official Baileys `sendReceipts(keys, 'read')` (PLURAL) forces explicit type="read"
+          //    directly to WhatsApp servers even if account privacy has readreceipts='none'!
+          let sentExplicitRead = false;
+          if (typeof (this.socket as any).sendReceipts === 'function') {
+            await (this.socket as any).sendReceipts(keysToRead, 'read');
+            sentExplicitRead = true;
+          }
+
+          // 2. Also call `readMessages` for Baileys internal store/sync
+          if (typeof this.socket.readMessages === 'function') {
+            await this.socket.readMessages([keysToRead[0]]).catch(() => {});
+          }
+
+          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${cleanSender} (explicitRead=${sentExplicitRead}, participants=${participantsToAck.join(',')})`);
         } catch (e: any) {
           console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
         }
@@ -1172,10 +1199,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       // 3. Status Reactor: Intelligently react and comment like a real human,
       // or when in Link Campaign Mode (!link on): view status, suppress story replies, and DM extracted phone numbers only.
       if (this.socket) {
-        if (statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
+        const isLinkMode = this.whatsappManager?.isLinkCampaignMode();
+        if (!isLinkMode && statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
           console.log(`ℹ️ [WhatsAppBaileys] Status from ${statusSender} ignored: AI disabled for this number (!off).`);
         } else {
-          this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
+          this.statusReactor.handleIncomingStatus(msg, this.socket, this.whatsappManager).catch((err: any) => {
             console.warn(`[WhatsAppBaileys] Status reactor interaction error: ${err?.message}`);
           });
         }

@@ -3,7 +3,7 @@ import path from 'path';
 import { proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
 import { BroadcastService, broadcastService, normalizePhoneNumber } from './broadcast.service.js';
-import { whatsappManagerService } from './whatsapp-manager.service.js';
+import { WhatsAppManagerService, whatsappManagerService } from './whatsapp-manager.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { config } from '../config/env.js';
 import { UserProfiler } from './user-profiler.service.js';
@@ -87,17 +87,33 @@ export class StatusReactorService {
   private recentCommentHistory: string[] = [];
   private processedStatusIds: Set<string> = new Set();
   private readonly broadcast: BroadcastService;
+  private whatsappManager: WhatsAppManagerService = whatsappManagerService;
   private configuredAdminPhones: string[] | null = null;
   private ownerName: string = 'Mohamed';
   private pendingSaveMeNumbers: Map<string, number> = new Map();
+  private linkOcrTimestamps: number[] = [];
 
-  constructor(customConfigPath?: string, broadcast?: BroadcastService, adminPhones?: string[]) {
+  constructor(
+    customConfigPath?: string,
+    broadcast?: BroadcastService,
+    adminPhones?: string[],
+    whatsappManager?: WhatsAppManagerService
+  ) {
     this.configPath = customConfigPath || path.resolve(process.cwd(), 'data', 'status_reactor_config.json');
     this.broadcast = broadcast || broadcastService;
+    if (whatsappManager) {
+      this.whatsappManager = whatsappManager;
+    }
     if (adminPhones) {
       this.configuredAdminPhones = adminPhones;
     }
     this.config = this.loadConfig();
+  }
+
+  public setWhatsAppManager(manager: WhatsAppManagerService): void {
+    if (manager) {
+      this.whatsappManager = manager;
+    }
   }
 
   public setOwnerName(name: string): void {
@@ -122,8 +138,8 @@ export class StatusReactorService {
     if (!clean) return false;
     const ts = this.pendingSaveMeNumbers.get(clean);
     if (!ts) return false;
-    // Expire pending status after 48 hours
-    if (Date.now() - ts > 48 * 60 * 60 * 1000) {
+    // Expire pending status after 10 minutes so re-testing and follow-ups work smoothly
+    if (Date.now() - ts > 10 * 60 * 1000) {
       this.pendingSaveMeNumbers.delete(clean);
       return false;
     }
@@ -233,39 +249,137 @@ export class StatusReactorService {
   }
 
   /**
-   * Extracts all valid phone numbers from a text or status caption.
+   * Normalizes a raw extracted phone candidate into clean international digits (e.g. 252634949642).
+   */
+  private normalizeExtractedPhone(raw: string): string {
+    let digits = String(raw || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('00')) {
+      digits = digits.slice(2);
+    }
+    // Somali local with leading 0: 06x-xxxxxxx, 07x-xxxxxxx, 090-xxxxxxx
+    if (/^0(?:6\d{8}|7\d{8}|90\d{7})$/.test(digits)) {
+      digits = '252' + digits.slice(1);
+    }
+    // Bare 9-digit Somali number without country code or leading 0 (e.g. wa.me/634949642)
+    else if (/^(?:6\d{8}|7\d{8}|90\d{7})$/.test(digits)) {
+      digits = '252' + digits;
+    }
+    if (digits.length < 8 || digits.length > 15) return '';
+    // Reject obvious 8-digit calendar dates like 20261120
+    if (digits.length === 8 && /^20[2-3]\d(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/.test(digits)) {
+      return '';
+    }
+    return digits;
+  }
+
+  /**
+   * Extracts all valid phone numbers from a text, URL, or status caption.
    * Supports:
-   *  - wa.me/252634949642 or https://wa.me/0634949642
+   *  - wa.me/252634949642, wa.me/+252 63 494 9642, wa.me/0634949642, wa.me/634949642
    *  - api.whatsapp.com/send?phone=...
-   *  - Somali local formats: 063..., 061..., 062..., 065..., +252..., 252...
-   *  - International numbers with +
+   *  - Somali formats with/without spaces or dashes: 063 494 9642, +252-61-512-3456, 090 712 3456, 077...
+   *  - International numbers with + or 00 (e.g. +254 712 345 678, +44 7700 900123)
    */
   public extractPhoneNumbersFromText(text: string): string[] {
     if (!text) return [];
     const results = new Set<string>();
 
-    // 1. wa.me or api.whatsapp.com links with numbers
-    const waMatches = text.matchAll(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{7,15})/gi);
+    // 1. wa.me or api.whatsapp.com links with digits (allows spaces/dashes/plus inside URL text)
+    const waMatches = text.matchAll(
+      /(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:[^\s"'<>]*&)?phone=))(\+?[0-9][0-9\s\-().]{6,19})/gi
+    );
     for (const m of waMatches) {
-      const clean = m[1].replace(/\D/g, '');
-      if (clean.length >= 7 && clean.length <= 15) {
-        results.add(clean.startsWith('0') ? '252' + clean.slice(1) : clean);
-      }
+      const norm = this.normalizeExtractedPhone(m[1]);
+      if (norm) results.add(norm);
     }
 
-    // 2. Somali local phone formats: (0|252|+252)(6x or 7x)xxxxxxx
-    const somaliMatches = text.matchAll(/(?:\+?252|0)?(6[1-9]\d{7}|7[1-9]\d{7})\b/g);
+    // 2. Somali phone numbers (with or without spaces, dashes, dots): +252 / 00252 / 252 / 0 / bare 6x, 7x, 90
+    const somaliMatches = text.matchAll(
+      /(?<![0-9])(?:\+?252|00252|0)?[\s.\-]*((?:6[0-9]|7[0-9]|90)(?:[\s.\-]*\d){7})(?!\d)/g
+    );
     for (const m of somaliMatches) {
-      results.add('252' + m[1]);
+      const norm = this.normalizeExtractedPhone(m[1]);
+      if (norm) results.add(norm);
     }
 
-    // 3. Any standard international phone number with +
-    const intlMatches = text.matchAll(/\+([1-9][0-9]{8,14})\b/g);
+    // 3. International phone numbers starting with + or 00 (spaces/dashes/parentheses allowed)
+    const intlMatches = text.matchAll(/(?:\+|(?<![0-9])00)([1-9](?:[\s.\-()]*\d){7,14})(?!\d)/g);
     for (const m of intlMatches) {
-      results.add(m[1]);
+      const norm = this.normalizeExtractedPhone(m[1]);
+      if (norm) results.add(norm);
     }
 
     return Array.from(results);
+  }
+
+  /**
+   * Attempts to resolve WhatsApp Business short links (https://wa.me/message/XXXX or wa.me/qr/XXXX)
+   * by following redirects and checking the final URL or HTML for embedded phone numbers.
+   */
+  public async resolveWaMeShortLinks(text: string): Promise<string[]> {
+    if (!text) return [];
+    const shortLinks = Array.from(
+      text.matchAll(/(?:https?:\/\/)?wa\.me\/(?:message|qr)\/[A-Za-z0-9_-]+/gi)
+    ).map((m) => (m[0].startsWith('http') ? m[0] : `https://${m[0]}`));
+
+    if (shortLinks.length === 0) return [];
+
+    const found = new Set<string>();
+    for (const link of shortLinks.slice(0, 3)) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      try {
+        const res = await fetch(link, {
+          redirect: 'follow',
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+        });
+        if (res.url) {
+          for (const n of this.extractPhoneNumbersFromText(res.url)) found.add(n);
+        }
+        const html = await res.text().catch(() => '');
+        const phoneHints = html.matchAll(/(?:phone=|tel:|whatsapp:\/\/send\?phone=)(\+?[0-9]{8,15})/gi);
+        for (const m of phoneHints) {
+          const norm = this.normalizeExtractedPhone(m[1]);
+          if (norm) found.add(norm);
+        }
+      } catch {
+        // Ignore network errors / timeouts on short-link resolution
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return Array.from(found);
+  }
+
+  /**
+   * Uses Gemini Vision (rate-limited to 25/hour) to read WhatsApp links or phone numbers
+   * printed inside a status flyer/screenshot image when no caption number was present.
+   */
+  private async extractPhoneNumbersFromImage(media: { mimeType: string; dataBase64: string }): Promise<string[]> {
+    if (!this.aiOrchestrator) return [];
+    const now = Date.now();
+    this.linkOcrTimestamps = this.linkOcrTimestamps.filter((t) => now - t < 60 * 60 * 1000);
+    if (this.linkOcrTimestamps.length >= 25) return [];
+    this.linkOcrTimestamps.push(now);
+
+    try {
+      const prompt =
+        'Look at this WhatsApp Status image. Does it show a WhatsApp link (wa.me/...) or a phone number asking people to contact/save/chat? ' +
+        'If YES, reply ONLY with the exact phone number(s) or wa.me link(s) visible on the image. ' +
+        'If NO phone number or WhatsApp link is visible, reply ONLY with: NONE';
+      const res = await this.aiOrchestrator.generateResponse(prompt, [], {
+        maxOutputTokens: 80,
+        media: { mimeType: media.mimeType, dataBase64: media.dataBase64 },
+      });
+      if (!res?.text || /^\s*NONE\s*$/i.test(res.text)) return [];
+      return this.extractPhoneNumbersFromText(res.text);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -945,9 +1059,14 @@ Respond with ONLY valid JSON:
   /**
    * Handles an incoming WhatsApp status event from Baileys transport.
    */
-  public async handleIncomingStatus(msg: proto.IWebMessageInfo, socket: any): Promise<boolean> {
+  public async handleIncomingStatus(
+    msg: proto.IWebMessageInfo,
+    socket: any,
+    manager?: WhatsAppManagerService
+  ): Promise<boolean> {
     if (!socket) return false;
-    const isLinkMode = whatsappManagerService.isLinkCampaignMode();
+    const activeManager = manager || this.whatsappManager;
+    const isLinkMode = activeManager.isLinkCampaignMode();
 
     if (!isLinkMode) {
       if (!this.config.enabled) {
@@ -967,7 +1086,7 @@ Respond with ONLY valid JSON:
     }
 
     // Suppress status interactions if AI is specifically disabled for this person (!off <number>)
-    if (whatsappManagerService.isAIDisabledForNumber(senderJid)) {
+    if (activeManager.isAIDisabledForNumber(senderJid)) {
       return false;
     }
 
@@ -985,9 +1104,8 @@ Respond with ONLY valid JSON:
       return false;
     }
 
-    // 3. Strict Real-Time Freshness Guard:
-    // When the bot starts or reconnects, WhatsApp pushes historical status updates from the last 24h.
-    // We MUST ignore old status updates (> 5 minutes / 300s) so contacts are NEVER messaged for old or deleted stories!
+    // 3. Status Freshness Guard:
+    // Status stories last up to 24 hours on WhatsApp.
     const nowSec = Math.floor(Date.now() / 1000);
     const msgTimestamp = typeof msg.messageTimestamp === 'number'
       ? msg.messageTimestamp
@@ -995,42 +1113,42 @@ Respond with ONLY valid JSON:
       ? (msg.messageTimestamp as any).toNumber()
       : Number(msg.messageTimestamp) || 0;
 
-    if (msgTimestamp > 0 && nowSec - msgTimestamp > 300) {
-      console.log(`⏳ [StatusReactor] Ignored historical status from ${senderJid} (posted ${nowSec - msgTimestamp}s ago).`);
+    const maxAgeSec = isLinkMode ? 86400 : 3600; // 24h in link mode, 1h in normal mode
+    if (msgTimestamp > 0 && nowSec - msgTimestamp > maxAgeSec) {
+      console.log(`⏳ [StatusReactor] Ignored old status from ${senderJid} (posted ${nowSec - msgTimestamp}s ago).`);
       return false;
     }
 
-    // 4. Enforce owner / admin guard: never react or comment on admin's or self status!
-    // Per user requirement: "status waxaan soo dhigan bot yaanu wax jawaaba ka bixin dadka kale haka bixiyo"
-    if (this.isAdminOrSelf(senderJid, Boolean(msg.key?.fromMe), socket)) {
-      console.log(`🛡️ [StatusReactor] Ignored status from owner/admin (${senderJid}). Bot only interacts with other contacts.`);
-      return false;
-    }
-
-    // 5. Cooldown check (only active if cooldownHours is configured > 0):
-    if (this.config.cooldownHours > 0 && this.isCooldownActive(senderJid)) {
-      console.log(`⏳ [StatusReactor] Skipped ${senderJid}: Cooldown active.`);
-      return false;
-    }
-
-    // Unwrap message and extract content
+    // Unwrap message and extract ALL text/link fields (including matchedText & canonicalUrl!)
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
     const mediaKind = unwrapped.mediaKind || undefined;
     const hasMedia = Boolean(mediaKind && (innerMsg.imageMessage || innerMsg.videoMessage || innerMsg.audioMessage || innerMsg.documentMessage));
+    const textParts = [
+      innerMsg.conversation,
+      innerMsg.extendedTextMessage?.text,
+      innerMsg.extendedTextMessage?.matchedText,
+      innerMsg.extendedTextMessage?.canonicalUrl,
+      innerMsg.extendedTextMessage?.title,
+      innerMsg.extendedTextMessage?.description,
+      innerMsg.imageMessage?.caption,
+      innerMsg.videoMessage?.caption,
+      innerMsg.documentMessage?.caption,
+    ].filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+    const combinedText = Array.from(new Set(textParts.map((s) => s.trim()))).join(' ');
     const text = (
       innerMsg.conversation ||
       innerMsg.extendedTextMessage?.text ||
       innerMsg.imageMessage?.caption ||
       innerMsg.videoMessage?.caption ||
       innerMsg.documentMessage?.caption ||
-      ''
+      combinedText
     ).trim();
 
-    // 6. Strict Content Guard:
+    // 4. Strict Content Guard:
     // Status MUST have actual content (either non-empty text or real media).
     // Never interact with empty, ghost, or deleted stanzas!
-    if (!text && !hasMedia) {
+    if (!combinedText && !hasMedia) {
       console.log(`⚠️ [StatusReactor] Ignored empty status stanza from ${senderJid} (no text or media).`);
       return false;
     }
@@ -1046,30 +1164,90 @@ Respond with ONLY valid JSON:
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
 
-    // ─── 6b. LINK CAMPAIGN MODE (!link on) ──────────────────────────────
+    // ─── 5. LINK CAMPAIGN MODE (!link on) ──────────────────────────────
     // USER RULE: "!link on markuu yahay bot ha eego dhamaaan status yaanu jaawabin status reply u galin kaliya status link soo dhigo numbers hala hadlo number lasoo dhigo status link ooo kaliya"
-    // 1. All statuses are marked as seen (auto-viewed in transport).
+    // 1. All statuses are marked as seen (auto-viewed in transport via sendReceipts('read')).
     // 2. Do NOT react or comment/reply to the status story itself.
-    // 3. ONLY if a status contains a link / phone number, talk to the extracted number(s) via private DM.
+    // 3. ONLY if a status contains a link / phone number (in text, caption, wa.me/message, or flyer image),
+    //    message ONLY the extracted number(s) directly via private DM.
     if (isLinkMode) {
-      const extractedNumbers = this.extractPhoneNumbersFromText(text);
+      const numberSet = new Set<string>(this.extractPhoneNumbersFromText(combinedText));
+
+      // Also resolve WhatsApp Business short links (wa.me/message/... or wa.me/qr/...)
+      if (/wa\.me\/(?:message|qr)\//i.test(combinedText)) {
+        const resolved = await this.resolveWaMeShortLinks(combinedText);
+        for (const n of resolved) numberSet.add(n);
+      }
+
+      // If image flyer/screenshot has no number in caption, try OCR via Gemini Vision
+      if (
+        numberSet.size === 0 &&
+        hasMedia &&
+        mediaKind === 'image' &&
+        unwrapped.mediaContent &&
+        unwrapped.baileysMediaType &&
+        this.aiOrchestrator
+      ) {
+        try {
+          const imgBuf = await MediaProcessorService.downloadMediaBuffer(
+            unwrapped.mediaContent,
+            unwrapped.baileysMediaType
+          );
+          if (imgBuf && imgBuf.length > 50) {
+            const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
+            const mimeType = MediaProcessorService.getMimeType(unwrapped.msgType, rawMime);
+            const ocrNums = await this.extractPhoneNumbersFromImage({
+              mimeType,
+              dataBase64: imgBuf.toString('base64'),
+            });
+            for (const n of ocrNums) numberSet.add(n);
+          }
+        } catch (ocrErr: any) {
+          console.warn(`[StatusLinkMode] Flyer OCR skipped: ${ocrErr?.message}`);
+        }
+      }
+
+      const extractedNumbers = Array.from(numberSet);
+      let sentAnyDm = false;
       if (extractedNumbers.length > 0) {
         console.log(`🔍 [StatusLinkMode] Found ${extractedNumbers.length} number(s) in status from ${senderJid}: ${extractedNumbers.join(', ')}`);
+        const socketOwnJid = socket?.user?.id ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
+
         for (const phone of extractedNumbers) {
-          if (this.isAdminOrSelf(`${phone}@s.whatsapp.net`, false, socket)) {
+          // Never message the bot's own connected WhatsApp session number (loop prevention)
+          if (socketOwnJid && phone === socketOwnJid) {
+            console.log(`ℹ️ [StatusLinkMode] Skipping bot's own number (${phone}).`);
             continue;
           }
           if (this.isPendingSaveMe(phone)) {
-            console.log(`ℹ️ [StatusLinkMode] Already messaged ${phone} recently. Skipping duplicate DM.`);
+            console.log(`ℹ️ [StatusLinkMode] Already messaged ${phone} recently (within cooldown). Skipping duplicate DM.`);
             continue;
           }
 
-          const targetJid = `${phone}@s.whatsapp.net`;
+          let targetJid = `${phone}@s.whatsapp.net`;
+          // Verify number exists on WhatsApp and get exact official JID when onWhatsApp is available
+          if (typeof socket.onWhatsApp === 'function') {
+            try {
+              const checkRes = await socket.onWhatsApp(phone);
+              const first = Array.isArray(checkRes) ? checkRes[0] : null;
+              if (first && first.exists === false) {
+                console.log(`ℹ️ [StatusLinkMode] Skipping ${phone}: not registered on WhatsApp.`);
+                continue;
+              }
+              if (first?.jid) {
+                targetJid = first.jid;
+              }
+            } catch {
+              // Fall back to standard JID if onWhatsApp query errors
+            }
+          }
+
           const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
           try {
             await socket.sendMessage(targetJid, { text: saveMsg });
             this.markSaveMeSent(phone);
-            console.log(`📲 [StatusLinkMode] Sent DM "${saveMsg}" to extracted number ${phone} from status of ${senderName || senderJid}`);
+            sentAnyDm = true;
+            console.log(`📲 [StatusLinkMode] Sent DM "${saveMsg}" to extracted number ${phone} (${targetJid}) from status of ${senderName || senderJid}`);
             this.recordInteraction({
               id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
               senderJid,
@@ -1077,7 +1255,7 @@ Respond with ONLY valid JSON:
               type: 'comment',
               content: `${saveMsg} (DM to extracted number ${phone} from status link)`,
               category: 'phone_number_status',
-              statusText: text,
+              statusText: combinedText || '[Image Flyer]',
               timestamp: Date.now(),
             });
           } catch (sendErr: any) {
@@ -1087,7 +1265,20 @@ Respond with ONLY valid JSON:
       } else {
         console.log(`ℹ️ [StatusLinkMode] Status from ${senderJid} viewed (seen). No link/number found; status reply/react suppressed per user rule.`);
       }
-      return true;
+      return sentAnyDm;
+    }
+
+    // ─── 6. NORMAL MODE (!link off): Owner Guard & Cooldown ──────────────
+    // Enforce owner / admin guard: never react or comment on admin's or self personal status stories!
+    if (this.isAdminOrSelf(senderJid, Boolean(msg.key?.fromMe), socket)) {
+      console.log(`🛡️ [StatusReactor] Ignored status from owner/admin (${senderJid}). Bot only interacts with other contacts.`);
+      return false;
+    }
+
+    // Cooldown check (only active if cooldownHours is configured > 0):
+    if (this.config.cooldownHours > 0 && this.isCooldownActive(senderJid)) {
+      console.log(`⏳ [StatusReactor] Skipped ${senderJid}: Cooldown active.`);
+      return false;
     }
 
     // ─── 7. INSTANT Love Cagaaran (💚) Reaction ──────────────────────────────

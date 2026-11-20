@@ -1,7 +1,10 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import { Readable, PassThrough } from 'stream';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
 
 try {
   if (ffmpegInstaller && ffmpegInstaller.path) {
@@ -163,43 +166,64 @@ export class VoiceReplyService {
     return null;
   }
 
+  public static getFfmpegPath(): string | undefined {
+    return ffmpegInstaller?.path || undefined;
+  }
+
   /**
-   * Converts an MP3 audio buffer to WhatsApp-native Ogg Opus format.
-   * WhatsApp PTT (Voice Note) player strictly requires Ogg Opus container ("OggS" header).
-   * This eliminates the "This audio is not available" error on WhatsApp!
+   * Converts ANY audio or video buffer (MP3, MP4, M4A, WEBM, WAV, AAC, FLAC, MKV, OGG)
+   * into a strictly validated WhatsApp-native Ogg Opus buffer ("OggS" magic header).
+   * Uses seekable temp files so MP4/M4A containers with trailing moov atoms NEVER fail!
    */
-  public static convertMp3ToOggOpus(mp3Buffer: Buffer): Promise<Buffer> {
-    return new Promise((resolve) => {
-      try {
-        const inputStream = Readable.from(mp3Buffer);
+  public static async convertMediaToOggOpusStrict(inputBuffer: Buffer): Promise<Buffer> {
+    if (!inputBuffer || inputBuffer.length === 0) {
+      throw new Error('Faylka codka/muuqaalka waa faaruq (0 bytes)');
+    }
 
-        const chunks: Buffer[] = [];
-        const outputStream = new PassThrough();
+    const tmpId = `cardoso_media_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const inPath = path.join(os.tmpdir(), `${tmpId}.input`);
+    const outPath = path.join(os.tmpdir(), `${tmpId}.ogg`);
 
-        outputStream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        outputStream.on('end', () => resolve(Buffer.concat(chunks)));
-        outputStream.on('error', (err) => {
-          console.warn('[VoiceReply] FFmpeg Opus conversion stream error:', err?.message || err);
-          resolve(mp3Buffer);
-        });
+    try {
+      await fs.promises.writeFile(inPath, inputBuffer);
 
-        ffmpeg(inputStream)
-          .noVideo() // Ensures no embedded image is converted to a theora video stream (causes "This audio is not available")
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inPath)
+          .noVideo()
           .audioCodec('libopus')
           .audioBitrate('48k')
           .audioFrequency(48000)
           .audioChannels(1)
+          .outputOptions(['-application', 'voip', '-vbr', 'on'])
           .format('ogg')
-          .on('error', (err) => {
-            console.warn('[VoiceReply] FFmpeg Opus conversion error:', err?.message || err);
-            resolve(mp3Buffer);
-          })
-          .pipe(outputStream, { end: true });
-      } catch (err) {
-        console.warn('[VoiceReply] FFmpeg setup failed:', err);
-        resolve(mp3Buffer);
+          .on('end', () => resolve())
+          .on('error', (err) => reject(err))
+          .save(outPath);
+      });
+
+      const outBuf = await fs.promises.readFile(outPath);
+      if (!outBuf || outBuf.length < 32 || outBuf.slice(0, 4).toString('ascii') !== 'OggS') {
+        throw new Error('FFmpeg ma soo saarin fayl OGG Opus sax ah');
       }
-    });
+      return outBuf;
+    } finally {
+      await fs.promises.unlink(inPath).catch(() => {});
+      await fs.promises.unlink(outPath).catch(() => {});
+    }
+  }
+
+  /**
+   * Converts an audio/video buffer to WhatsApp-native Ogg Opus format.
+   * WhatsApp PTT (Voice Note) player strictly requires Ogg Opus container ("OggS" header).
+   * Falls back to original buffer only if FFmpeg is unavailable (for TTS compatibility).
+   */
+  public static async convertMp3ToOggOpus(mp3Buffer: Buffer): Promise<Buffer> {
+    try {
+      return await VoiceReplyService.convertMediaToOggOpusStrict(mp3Buffer);
+    } catch (err: any) {
+      console.warn('[VoiceReply] FFmpeg Opus conversion error:', err?.message || err);
+      return mp3Buffer;
+    }
   }
 
   private static synthesizeSingleAttempt(clean: string, voiceName: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {

@@ -1060,23 +1060,41 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
 
     function handleVoiceUrlInput(val) {
       const audio = document.getElementById('voiceUrlAudioPreview');
-      if (audio && val && (val.startsWith('http://') || val.startsWith('https://'))) {
+      const cleanPath = (val || '').trim().split('?')[0].toLowerCase();
+      const isDirectAudio = cleanPath.endsWith('.mp3') || cleanPath.endsWith('.ogg') || cleanPath.endsWith('.opus') || cleanPath.endsWith('.wav') || cleanPath.endsWith('.m4a');
+      if (audio && isDirectAudio) {
         audio.src = val.trim();
         audio.style.display = 'block';
       }
     }
 
-    function previewVoiceUrl() {
+    async function previewVoiceUrl() {
       const input = document.getElementById('voiceUrlInput');
       const val = (input ? input.value : '').trim();
-      if (!val) { showToast('❌ Fadlan qor link-ga codka marka hore', true); return; }
+      if (!val) { showToast('❌ Fadlan qor link-ga codka/videoga marka hore', true); return; }
       const audio = document.getElementById('voiceUrlAudioPreview');
-      if (audio) {
-        audio.src = val;
-        audio.style.display = 'block';
-        audio.play().catch(function() {
-          showToast('ℹ️ Preview: Browser-ku ma ciyaari karo toos, server-ka ayaa u beddelaya OGG Opus', false);
+      showToast('⏳ Codka ayaa laga soo saarayaa link-ga si loo dhagaysto...', false);
+      try {
+        const res = await fetch('/api/owner/preview-voice-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audioUrl: val })
         });
+        if (!res.ok) {
+          const errData = await res.json().catch(function() { return {}; });
+          showToast(errData.message || '❌ Codka lama soo dejin karin', true);
+          return;
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        if (audio) {
+          audio.src = blobUrl;
+          audio.style.display = 'block';
+          audio.play().catch(function() {});
+        }
+        showToast('✅ Codkii waa diyaar (OGG Opus Voice Note)! Waad dhagaysan kartaa hadda.', false);
+      } catch (err) {
+        showToast('❌ Cilad tijaabinta: ' + err.message, true);
       }
     }
 

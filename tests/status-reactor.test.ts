@@ -1,6 +1,7 @@
 import { TestSuite, assertEqual, assertTrue, assertFalse } from './runner.js';
 import { StatusReactorService, statusReactorService } from '../src/services/status-reactor.service.js';
-import { whatsappManagerService } from '../src/services/whatsapp-manager.service.js';
+import { whatsappManagerService, WhatsAppManagerService } from '../src/services/whatsapp-manager.service.js';
+import { MediaUrlDownloaderService } from '../src/services/media-url-downloader.service.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { MessageRouter } from '../src/pipeline/message-router.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
@@ -711,6 +712,76 @@ suite.test('Strictly guarantees zero occurrences of "qaali" and zero generic "he
       }
     }
   }
+});
+
+suite.test('!link on mode uses tenant WhatsAppManagerService, suppresses story replies, and DMs ONLY extracted status link numbers', async () => {
+  const tenantAuthDir = './data/test_link_mode_auth';
+  const tenantManager = new WhatsAppManagerService({
+    authDir: tenantAuthDir,
+    statusStoragePath: './data/test_link_mode_statuses.json',
+  });
+  tenantManager.setLinkCampaignMode(true);
+  // Ensure global singleton is OFF to prove per-tenant instance wiring works!
+  whatsappManagerService.setLinkCampaignMode(false);
+
+  const service = new StatusReactorService('./data/test_sr_link_cfg.json', undefined, undefined, tenantManager);
+  service.setOwnerName('Mohamed');
+
+  const sentDms: Array<{ jid: string; content: any; options?: any }> = [];
+  const mockSocket: any = {
+    user: { id: '252630000001:0@s.whatsapp.net' },
+    onWhatsApp: async (phone: string) => [{ exists: true, jid: `${phone}@s.whatsapp.net` }],
+    sendMessage: async (jid: string, content: any, options?: any) => {
+      sentDms.push({ jid, content, options });
+      return { key: { id: 'dm_' + sentDms.length } };
+    },
+  };
+
+  // 1. Normal status without any link or phone number -> NO reaction, NO reply, NO DM
+  const normalStatus: any = {
+    key: { remoteJid: 'status@broadcast', id: 'ST_LINK_NORMAL_1', participant: '252631111111@s.whatsapp.net', fromMe: false },
+    pushName: 'Cali',
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: { conversation: 'Jimco wanaagsan asxaabta dhammaan!' },
+  };
+  await service.handleIncomingStatus(normalStatus, mockSocket, tenantManager);
+  assertEqual(sentDms.length, 0, 'Normal status in !link on mode must NOT get reaction, story reply, or DM');
+
+  // 2. Status containing spaced Somali numbers, Puntland 090, bare 63 wa.me, and bot own number
+  const linkStatus: any = {
+    key: { remoteJid: 'status@broadcast', id: 'ST_LINK_NUM_1', participant: '252632222222@s.whatsapp.net', fromMe: false },
+    pushName: 'Hodan',
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    message: {
+      extendedTextMessage: {
+        text: 'Save me: +252 61 512 3456 | 090 712 3456 | wa.me/634445566 | self 252630000001',
+        canonicalUrl: 'https://wa.me/252639998877',
+      },
+    },
+  };
+  await service.handleIncomingStatus(linkStatus, mockSocket, tenantManager);
+
+  const dmJids = sentDms.map((m) => m.jid);
+  assertTrue(dmJids.includes('252615123456@s.whatsapp.net'), 'Should DM spaced +252 61 number');
+  assertTrue(dmJids.includes('252907123456@s.whatsapp.net'), 'Should DM Puntland 090 number');
+  assertTrue(dmJids.includes('252634445566@s.whatsapp.net'), 'Should normalize wa.me/63... to 25263...');
+  assertTrue(dmJids.includes('252639998877@s.whatsapp.net'), 'Should extract number from canonicalUrl');
+  assertFalse(dmJids.includes('252630000001@s.whatsapp.net'), 'Must skip bot own connected JID');
+  assertFalse(dmJids.includes('252632222222@s.whatsapp.net'), 'Must NOT reply to status poster if their number is not in the link');
+  assertTrue(sentDms.every((m) => !m.content?.react && !m.options?.quoted), 'Must NEVER react or quote-reply the status story in !link on mode');
+
+  // 3. MediaUrlDownloader URL extraction from mobile share text
+  assertEqual(
+    MediaUrlDownloaderService.extractUrl('Daawo muuqaalkan cajiibka ah https://vm.tiktok.com/ZMh987654/'),
+    'https://vm.tiktok.com/ZMh987654/',
+    'Should extract URL from mobile share text'
+  );
+
+  try {
+    if (fs.existsSync('./data/test_sr_link_cfg.json')) fs.unlinkSync('./data/test_sr_link_cfg.json');
+    if (fs.existsSync('./data/test_link_mode_statuses.json')) fs.unlinkSync('./data/test_link_mode_statuses.json');
+    if (fs.existsSync(tenantAuthDir)) fs.rmSync(tenantAuthDir, { recursive: true, force: true });
+  } catch {}
 });
 
 suite.run().then(summary => {

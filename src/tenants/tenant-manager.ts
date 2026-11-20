@@ -342,7 +342,8 @@ export class TenantManager {
       adminPhones,
     });
 
-    const statusReactor = new StatusReactorService(paths.reactorStoragePath, broadcast, adminPhones);
+    const statusReactor = new StatusReactorService(paths.reactorStoragePath, broadcast, adminPhones, whatsappManager);
+    statusReactor.setWhatsAppManager(whatsappManager);
     statusReactor.setOwnerName(tenant.name || 'Mohamed');
 
     const quotaTracker = new QuotaTracker(
