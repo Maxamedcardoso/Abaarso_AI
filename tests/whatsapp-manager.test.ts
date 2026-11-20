@@ -1494,6 +1494,88 @@ suite.test('Islamic Prayer Times Engine, Athan Speech Synthesis & Sunnah Du\'a',
   assertTrue(dueCheck === null || dueCheck.key !== 'dhuhr', 'Dhuhr must not trigger again after marked posted');
 });
 
+// ─── TEST SUITE 25: Autonomous Daily Member Growth & Audio Voice Notes ────────
+suite.test('Autonomous Daily Member Growth (Auto-Add) & Voice Note Delivery', async () => {
+  const testAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-autoadd-test-'));
+  const manager = new WhatsAppManagerService({ authDir: testAuthDir });
+  const testGroupJid = '120363888888@g.us';
+
+  // 1. Initial Auto-Add Config defaults
+  const initialCfg = manager.getAutoAddConfig(testGroupJid);
+  assertEqual(initialCfg.dailyLimit, 5, 'Default daily limit should be 5 members');
+  assertEqual(initialCfg.totalAdded, 0, 'Initial total added should be 0');
+
+  // 2. Set and persist Auto-Add Config
+  const updatedCfg = manager.setAutoAddConfig(testGroupJid, { enabled: true, dailyLimit: 8 });
+  assertTrue(updatedCfg.enabled, 'Auto-add should be enabled');
+  assertEqual(updatedCfg.dailyLimit, 8, 'Daily limit should be updated to 8');
+
+  // Re-read from memory/persistence
+  const reloadedCfg = manager.getAutoAddConfig(testGroupJid);
+  assertTrue(reloadedCfg.enabled, 'Reloaded config should have auto-add enabled');
+  assertEqual(reloadedCfg.dailyLimit, 8, 'Reloaded config should have limit 8');
+
+  // 3. Eligible Contacts Count
+  const counts = await manager.getEligibleContactsCount(testGroupJid);
+  assertTrue(typeof counts.totalContacts === 'number', 'totalContacts should be numeric');
+  assertTrue(typeof counts.eligibleCount === 'number', 'eligibleCount should be numeric');
+
+  // 4. Offline socket safety check
+  const offlineResult = await manager.autoAddDailyMembers(testGroupJid, 5);
+  assertFalse(offlineResult.success, 'autoAddDailyMembers without socket should report not connected');
+  assertTrue(offlineResult.message.includes('xirna'), 'Message should indicate WhatsApp is disconnected');
+
+  // 5. Mock Socket for Auto-Add Execution
+  const addedMembers: string[] = [];
+  const mockSocket: any = {
+    groupMetadata: async () => ({
+      id: testGroupJid,
+      subject: 'Kooxda Tijaabada',
+      participants: [
+        { id: '252634000001@s.whatsapp.net', admin: 'admin' },
+      ],
+    }),
+    groupParticipantsUpdate: async (_jid: string, participants: string[], _action: string) => {
+      addedMembers.push(...participants);
+      return [{ status: '200', jid: participants[0] }];
+    },
+    user: { id: '252634000000:1@s.whatsapp.net' },
+  };
+
+  manager.setSocket(mockSocket);
+
+  // 6. Voice Note PTT delivery to group
+  const sentMediaMessages: any[] = [];
+  const sentTextMessages: any[] = [];
+  const mockTransport: any = {
+    sendMessage: async (jid: string, text: string) => {
+      sentTextMessages.push({ jid, text });
+      return { id: 'msg_text_1' };
+    },
+    sendMedia: async (jid: string, media: any) => {
+      sentMediaMessages.push({ jid, media });
+      return { id: 'msg_media_1' };
+    },
+  };
+
+  const fakeOpusBuffer = Buffer.from('OggS_fake_audio_opus_waveform');
+  const voiceRes = await manager.sendVoiceNoteToGroup(
+    testGroupJid,
+    fakeOpusBuffer,
+    'OGEYSIIS MUHIIM AH',
+    mockTransport
+  );
+  assertTrue(voiceRes.success, 'Voice note dispatch should succeed');
+  assertEqual(sentTextMessages.length, 1, 'Should send title header message');
+  assertTrue(sentTextMessages[0].text.includes('OGEYSIIS MUHIIM AH'), 'Header should contain title caption');
+  assertEqual(sentMediaMessages.length, 1, 'Should send audio media');
+  assertTrue(sentMediaMessages[0].media.ptt === true, 'Media should have ptt=true flag');
+  assertTrue(sentMediaMessages[0].media.mimeType.includes('opus'), 'Media should have opus mimetype');
+
+  // Clean up
+  try { if (fs.existsSync(testAuthDir)) fs.rmSync(testAuthDir, { recursive: true, force: true }); } catch {}
+});
+
 suite.run().then(summary => {
   process.exit(summary.failed > 0 ? 1 : 0);
 });

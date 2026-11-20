@@ -377,7 +377,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           <div style="margin-bottom:1rem;">
             <label class="field-label">Habka Codka (Dooro midkood):</label>
             <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
-              <button type="button" class="btn btn-primary btn-sm" id="btnAudioModeFile" onclick="setAudioSourceMode('file')">📁 Soo Geli Fayl Cod ah (MP3/OGG)</button>
+              <button type="button" class="btn btn-primary btn-sm" id="btnAudioModeFile" onclick="setAudioSourceMode('file')">📁 Soo Geli Fayl (MP3/OGG)</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeUrl" onclick="setAudioSourceMode('url')">🌐 Link Cod ah (Audio URL)</button>
               <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeTTS" onclick="setAudioSourceMode('tts')">🗣️ Qor Qoraal AI Cod ka Dhigto</button>
             </div>
 
@@ -389,6 +390,21 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
               </button>
               <div id="voiceFileSelectedName" style="margin-top:0.5rem;font-size:0.85rem;color:var(--primary);font-weight:700;"></div>
               <audio id="voiceAudioPreview" controls style="display:none;width:100%;margin-top:0.6rem;"></audio>
+            </div>
+
+            <!-- Option C: Audio Link / URL -->
+            <div id="voiceBoxUrl" style="display:none;">
+              <div class="form-group" style="margin-bottom:0.5rem;">
+                <label class="field-label">Geli Link-ga Codka (Direct MP3/OGG/WAV URL)</label>
+                <div style="display:flex;gap:0.5rem;">
+                  <input class="field" id="voiceUrlInput" placeholder="https://tusaale.com/cod.mp3 ama link toos ah..." oninput="handleVoiceUrlInput(this.value)" />
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="previewVoiceUrl()">▶️ Tijaabi</button>
+                </div>
+              </div>
+              <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem;">
+                Link-ga waxaa toos looga soo dejinayaa internet-ka waxaana loo beddelayaa WhatsApp Voice Note (PTT) mowjad dabiici ah leh oo toos loo dhagaysan karo.
+              </div>
+              <audio id="voiceUrlAudioPreview" controls style="display:none;width:100%;margin-top:0.6rem;"></audio>
             </div>
 
             <!-- Option B: TTS Text -->
@@ -405,6 +421,49 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           </button>
         </section>
       </div>
+
+      <!-- Section 3: Daily Auto-Add Members to Group -->
+      <section class="glass-card" style="margin-top:1.25rem;">
+        <div class="card-title">
+          <span>👥 Ku-Darista Tooska ah ee Xubnaha Maalin Walba (Daily Auto-Add Members)</span>
+          <span class="pill pill-green" id="autoAddActiveBadge">Auto-Growth 24/7</span>
+        </div>
+        <div class="card-sub">
+          Bot-ku wuxuu maalin walba si toos ah oo nabad ah (safe anti-ban throttling) kooxaha ugu darayaa xubno cusub oo ka tirsan contacts-ka ku kaydsan bot-ka.
+        </div>
+
+        <div class="grid-2" style="margin-top:0.85rem;align-items:center;">
+          <div style="background:rgba(8,13,25,0.7);border:1px solid var(--card-border);border-radius:10px;padding:0.85rem;">
+            <div class="form-group" style="margin-bottom:0.6rem;">
+              <label class="field-label">Dooro Kooxda aad rabto inaad xubnaha ku kordhiso:</label>
+              <select class="field" id="autoAddGroupSelect" onchange="onAutoAddGroupChanged(this.value)">
+                <option value="">Waa la soo rarayaa kooxaha...</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+              <button type="button" class="btn btn-emerald btn-sm" id="btnToggleAutoAdd" onclick="toggleAutoAddForSelectedGroup()">
+                🟢 Shid Ku-darista Maalinlaha ah (Daily ON)
+              </button>
+              <button type="button" class="btn btn-primary btn-sm" id="btnRunAutoAddNow" onclick="runAutoAddNowForSelectedGroup()">
+                🚀 Ku Dar 5 Xubnood Hadda (Run Now)
+              </button>
+            </div>
+          </div>
+
+          <div style="background:rgba(8,13,25,0.7);border:1px solid var(--card-border);border-radius:10px;padding:0.85rem;font-size:0.85rem;">
+            <div style="font-weight:700;margin-bottom:0.4rem;color:#38bdf8;">📊 Tirakoobka Contacts-ka Kooxda:</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+              <div>Wadarta Contacts-ka: <strong id="statTotalContacts">--</strong></div>
+              <div>U Diyaar ah Ku-darista: <strong id="statEligibleContacts" style="color:#34d399;">--</strong></div>
+              <div>Durba Kooxda ku jira: <strong id="statAlreadyInGroup">--</strong></div>
+              <div>Wadarta Lagu Daray: <strong id="statTotalAdded" style="color:#22d3ee;">--</strong></div>
+            </div>
+            <div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-muted);" id="statAutoAddLastRun">
+              Maalintii u dambaysay: --
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 
@@ -964,18 +1023,44 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
 
     // Voice Note to Groups Tab Functions
     var _voiceFileBase64 = null;
-    var _voiceAudioMode = 'file'; // 'file' or 'tts'
+    var _voiceAudioMode = 'file'; // 'file', 'url', or 'tts'
 
     function setAudioSourceMode(mode) {
       _voiceAudioMode = mode;
       var fileBox = document.getElementById('voiceBoxFile');
+      var urlBox = document.getElementById('voiceBoxUrl');
       var ttsBox = document.getElementById('voiceBoxTTS');
       var btnFile = document.getElementById('btnAudioModeFile');
+      var btnUrl = document.getElementById('btnAudioModeUrl');
       var btnTts = document.getElementById('btnAudioModeTTS');
       if (fileBox) fileBox.style.display = mode === 'file' ? 'block' : 'none';
+      if (urlBox) urlBox.style.display = mode === 'url' ? 'block' : 'none';
       if (ttsBox) ttsBox.style.display = mode === 'tts' ? 'block' : 'none';
       if (btnFile) btnFile.className = mode === 'file' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+      if (btnUrl) btnUrl.className = mode === 'url' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
       if (btnTts) btnTts.className = mode === 'tts' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+    }
+
+    function handleVoiceUrlInput(val) {
+      const audio = document.getElementById('voiceUrlAudioPreview');
+      if (audio && val && (val.startsWith('http://') || val.startsWith('https://'))) {
+        audio.src = val.trim();
+        audio.style.display = 'block';
+      }
+    }
+
+    function previewVoiceUrl() {
+      const input = document.getElementById('voiceUrlInput');
+      const val = (input ? input.value : '').trim();
+      if (!val) { showToast('❌ Fadlan qor link-ga codka marka hore', true); return; }
+      const audio = document.getElementById('voiceUrlAudioPreview');
+      if (audio) {
+        audio.src = val;
+        audio.style.display = 'block';
+        audio.play().catch(function() {
+          showToast('ℹ️ Preview: Browser-ku ma ciyaari karo toos, server-ka ayaa u beddelaya OGG Opus', false);
+        });
+      }
     }
 
     function handleVoiceFileSelected(input) {
@@ -1024,6 +1109,16 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
             '<br/><span style="font-size:0.75rem;color:var(--text-muted);">' + escapeAdminHtml(g.id) + ' · ' + (g.participantsCount || '?') + ' xubnood</span></span>' +
             '</label>';
         }).join('');
+
+        const select = document.getElementById('autoAddGroupSelect');
+        if (select) {
+          select.innerHTML = data.groups.map(function(g) {
+            return '<option value="' + escapeAdminHtml(g.id) + '">' + escapeAdminHtml(g.name || g.id) + (g.isManaged ? ' (Managed)' : '') + '</option>';
+          }).join('');
+          if (select.value) {
+            loadAutoAddStatusForGroup(select.value);
+          }
+        }
       } catch (err) {
         box.innerHTML = '<div style="color:#f87171;font-size:0.85rem;">Cilad ayaa dhacday: ' + err.message + '</div>';
       }
@@ -1047,6 +1142,13 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           return;
         }
         body.audioBase64 = _voiceFileBase64;
+      } else if (_voiceAudioMode === 'url') {
+        const urlVal = document.getElementById('voiceUrlInput').value.trim();
+        if (!urlVal) {
+          showToast('❌ Fadlan geli link-ga codka (Audio URL)', true);
+          return;
+        }
+        body.audioUrl = urlVal;
       } else {
         const text = document.getElementById('voiceTextInput').value.trim();
         if (!text) {
@@ -1071,6 +1173,89 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       } finally {
         btn.disabled = false;
         btn.textContent = '🚀 U Dir Kooxaha La Doortay (Send Voice Note PTT)';
+      }
+    }
+
+    // Auto-Add Daily Members UI Logic
+    var _selectedAutoAddGroup = '';
+
+    async function onAutoAddGroupChanged(jid) {
+      _selectedAutoAddGroup = jid;
+      if (jid) await loadAutoAddStatusForGroup(jid);
+    }
+
+    async function loadAutoAddStatusForGroup(jid) {
+      if (!jid) return;
+      _selectedAutoAddGroup = jid;
+      try {
+        const res = await fetch('/api/owner/auto-add/status?groupJid=' + encodeURIComponent(jid));
+        const data = await res.json();
+        if (data.status === 'ok') {
+          const cfg = data.config || {};
+          const counts = data.counts || {};
+          document.getElementById('statTotalContacts').textContent = String(counts.totalContacts || 0);
+          document.getElementById('statEligibleContacts').textContent = String(counts.eligibleCount || 0);
+          document.getElementById('statAlreadyInGroup').textContent = String(counts.alreadyInGroupCount || 0);
+          document.getElementById('statTotalAdded').textContent = String(cfg.totalAdded || 0);
+          document.getElementById('statAutoAddLastRun').textContent = 'Maalintii u dambaysay: ' + (cfg.lastRunDate || 'Wali ma socon') + ' · Xadka: ' + (cfg.dailyLimit || 5) + ' qof/maalintii';
+
+          const btnToggle = document.getElementById('btnToggleAutoAdd');
+          if (btnToggle) {
+            btnToggle.textContent = cfg.enabled ? '🛑 Dami Ku-darista Maalinlaha ah (Daily OFF)' : '🟢 Shid Ku-darista Maalinlaha ah (Daily ON)';
+            btnToggle.className = cfg.enabled ? 'btn btn-danger btn-sm' : 'btn btn-emerald btn-sm';
+          }
+          const badge = document.getElementById('autoAddActiveBadge');
+          if (badge) {
+            badge.textContent = cfg.enabled ? 'Auto-Growth ON 🟢' : 'Auto-Growth OFF 🛑';
+            badge.className = cfg.enabled ? 'pill pill-green' : 'pill pill-muted';
+          }
+        }
+      } catch (err) {
+        console.warn('loadAutoAddStatusForGroup error:', err);
+      }
+    }
+
+    async function toggleAutoAddForSelectedGroup() {
+      const select = document.getElementById('autoAddGroupSelect');
+      const jid = select ? select.value : _selectedAutoAddGroup;
+      if (!jid) { showToast('❌ Fadlan dooro koox marka hore', true); return; }
+      try {
+        const currentBtn = document.getElementById('btnToggleAutoAdd');
+        const willEnable = currentBtn && currentBtn.textContent.includes('Shid');
+        const res = await fetch('/api/owner/auto-add/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groupJid: jid, enabled: willEnable, dailyLimit: 5 })
+        });
+        const data = await res.json();
+        showToast(data.message || (willEnable ? 'Ku-darista waa la shiday' : 'Ku-darista waa la damiyay'));
+        await loadAutoAddStatusForGroup(jid);
+      } catch (err) {
+        showToast('❌ Cilad: ' + err.message, true);
+      }
+    }
+
+    async function runAutoAddNowForSelectedGroup() {
+      const select = document.getElementById('autoAddGroupSelect');
+      const jid = select ? select.value : _selectedAutoAddGroup;
+      if (!jid) { showToast('❌ Fadlan dooro koox marka hore', true); return; }
+      const btn = document.getElementById('btnRunAutoAddNow');
+      btn.disabled = true;
+      btn.textContent = '⏳ Waa la darayaa...';
+      try {
+        const res = await fetch('/api/owner/auto-add/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groupJid: jid, limit: 5 })
+        });
+        const data = await res.json();
+        showToast(data.message || 'Done', !data.success);
+        await loadAutoAddStatusForGroup(jid);
+      } catch (err) {
+        showToast('❌ Cilad: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 Ku Dar 5 Xubnood Hadda (Run Now)';
       }
     }
 

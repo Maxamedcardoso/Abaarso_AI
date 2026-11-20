@@ -1078,6 +1078,70 @@ SHURUUCDA DUGSIIYA:
       }
     }
 
+    // ─── 1d.2b. Autonomous Daily Member Auto-Add (!autoadd) ────────────────────
+    if (/^[!./#]?(?:autoadd|kudar|ku-dar)\b/i.test(lowerText)) {
+      if (!isAdminUser && !(await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId))) {
+        await transport.sendMessage(message.chatId, '⛔ *[CARDOSO AI]*: Amarkan waxaa isticmaali kara Admins-ka oo kaliya!');
+        return { handled: true, reason: 'unauthorized autoadd attempt' };
+      }
+
+      const match = text.match(/^[!./#]?(?:autoadd|kudar|ku-dar)(?:\s+(on|off|run|status))?(?:\s+(\d+))?$/i);
+      const action = (match?.[1] || 'status').toLowerCase();
+      const countArg = match?.[2] ? parseInt(match[2], 10) : undefined;
+      const groupJid = message.chatId;
+
+      if (action === 'on') {
+        const limit = countArg && countArg > 0 ? countArg : 5;
+        this.whatsappManager.setAutoAddConfig(groupJid, { enabled: true, dailyLimit: limit });
+        await transport.sendMessage(
+          message.chatId,
+          `🟢 *[CARDOSO AI — DAILY AUTO-ADD SHIDAN]* 👥\n\n` +
+          `Ku-darista tooska ah ee xubnaha maalinlaha ah waa la shiday!\n` +
+          `• Xadka maalintii: *${limit} xubnood*\n` +
+          `• Bot-ku wuxuu maalin walba si nabad ah kooxda ugu dari doonaa xubno cusub oo ka tirsan contacts-ka.`
+        );
+        return { handled: true, reason: 'autoadd enabled' };
+      }
+
+      if (action === 'off') {
+        this.whatsappManager.setAutoAddConfig(groupJid, { enabled: false });
+        await transport.sendMessage(
+          message.chatId,
+          `🛑 *[CARDOSO AI — DAILY AUTO-ADD DAMIN]* 👥\n\n` +
+          `Ku-darista tooska ah ee maalinlaha ah ee kooxdan waa la damiyay.`
+        );
+        return { handled: true, reason: 'autoadd disabled' };
+      }
+
+      if (action === 'run') {
+        const limit = countArg && countArg > 0 ? countArg : 5;
+        await transport.sendMessage(
+          message.chatId,
+          `⏳ *[CARDOSO AI]*: Ku-darista tooska ah ee ${limit} xubnood ayaa socota... Fadlan sug wax yar!`
+        );
+        const res = await this.whatsappManager.autoAddDailyMembers(groupJid, limit);
+        await transport.sendMessage(message.chatId, res.message);
+        return { handled: true, reason: 'autoadd run completed' };
+      }
+
+      // Default: status
+      const cfg = this.whatsappManager.getAutoAddConfig(groupJid);
+      const counts = await this.whatsappManager.getEligibleContactsCount(groupJid);
+      await transport.sendMessage(
+        message.chatId,
+        `📊 *[CARDOSO AI — XAALADDA AUTO-ADD-KA]* 👥\n\n` +
+        `• Xaaladda: ${cfg.enabled ? '🟢 *SHIDAN (Active)*' : '🔴 *DAMISAN (Disabled)*'}\n` +
+        `• Xadka Maalintii: *${cfg.dailyLimit || 5} xubnood*\n` +
+        `• Wadarta Guud ee Contacts-ka: *${counts.totalContacts} qof*\n` +
+        `• U Diyaar ah Ku-darista: *${counts.eligibleCount} qof*\n` +
+        `• Durba Kooxda ku jira: *${counts.alreadyInGroupCount} qof*\n` +
+        `• Wadarta Ilaa Hadda Lagu Daray: *${cfg.totalAdded || 0} qof*\n` +
+        `• Maalintii Ugu Dambaysay: *${cfg.lastRunDate || 'Wali ma socon'}*\n\n` +
+        `💡 *Awaamiirta:* \`!autoadd on\`, \`!autoadd off\`, \`!autoadd run [tirada]\``
+      );
+      return { handled: true, reason: 'autoadd status displayed' };
+    }
+
     // ─── 1d.3. Anti-Delete / Ghost Hunter (!ghost / !deleted) ─────────────────
     if (/^[!./#]?(?:ghost|deleted|tirtiray|la_tirtiray)\b/i.test(lowerText) && message.isGroup) {
       const isSenderAdmin = isAdminUser || (await this.whatsappManager.isParticipantGroupAdmin(message.chatId, message.senderId));
@@ -1351,6 +1415,7 @@ SHURUUCDA DUGSIIYA:
         `• \`!schedule list\` — Eeg xayeysiisyada la dejiyay\n` +
         `• \`!schedule cancel <id>\` — Baabi'i xayeysiis jadwal ah\n` +
         `• \`!salaad\` (ama \`!eedan\`) — 🕌 *PRAYER TIMES & ATHAN*: Waqtiyada salaadda, Eedanka codka ah & Ducada eedanka\n` +
+        `• \`!autoadd on/off/run\` — 👥 *AUTO-ADD MEMBERS*: Ku dar xubno cusub oo contacts ah maalin walba si toos ah\n` +
         `• \`!maamul enhance [magaca]\` — 🎨 *AI BRANDING*: Auto-update Description + AI Logo Profile Picture + Lock Info\n` +
         `• \`!maamul topic [magaca]\` — 💡 *AI TOPIC*: Soo dhig dood ama xikmad caqli badan oo ku habboon kooxda\n` +
         `• \`!maamul rules [magaca]\` — 📜 *RULES*: Soo bandhig ama soo dhig xeerarka kooxda\n` +

@@ -55,6 +55,15 @@ export interface GroupInfo {
   desc?: string;
 }
 
+export interface AutoAddGroupConfig {
+  groupJid: string;
+  enabled: boolean;
+  dailyLimit: number;
+  lastRunDate?: string;
+  totalAdded: number;
+  attemptedJids: string[];
+}
+
 export class WhatsAppManagerService {
   private socket: WASocket | null = null;
   private autoViewStatus: boolean = true;
@@ -81,7 +90,9 @@ export class WhatsAppManagerService {
   private awaitingOwnerPromoSetup: boolean = false;
   private readonly botControlStoragePath: string;
   private readonly autoGroupStoragePath: string;
+  private readonly autoAddStoragePath: string;
   private autoManagedGroups: Map<string, { jid: string; name: string; enabledAt: number }> = new Map();
+  private autoAddConfig: Map<string, AutoAddGroupConfig> = new Map();
   private readonly governor: GroupGovernorService = groupGovernorService;
   private readonly prayerTimes: PrayerTimesService = prayerTimesService;
   private autonomousLoopTimer?: NodeJS.Timeout;
@@ -95,6 +106,7 @@ export class WhatsAppManagerService {
     this.callRejectStoragePath = path.join(this.authDir, 'call-reject-config.json');
     this.botControlStoragePath = path.join(this.authDir, 'bot-control-config.json');
     this.autoGroupStoragePath = path.join(this.authDir, 'auto-managed-groups.json');
+    this.autoAddStoragePath = path.join(this.authDir, 'auto-add-members-config.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
@@ -103,6 +115,7 @@ export class WhatsAppManagerService {
     this.loadCallRejectConfig();
     this.loadBotControlConfig();
     this.loadAutoGroupConfig();
+    this.loadAutoAddConfig();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -1663,6 +1676,41 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     }
   }
 
+  private loadAutoAddConfig(): void {
+    try {
+      if (fs.existsSync(this.autoAddStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.autoAddStoragePath, 'utf8'));
+        if (Array.isArray(raw)) {
+          for (const item of raw) {
+            if (item?.groupJid) {
+              this.autoAddConfig.set(item.groupJid, {
+                groupJid: item.groupJid,
+                enabled: item.enabled !== false,
+                dailyLimit: typeof item.dailyLimit === 'number' ? item.dailyLimit : 5,
+                lastRunDate: item.lastRunDate,
+                totalAdded: item.totalAdded || 0,
+                attemptedJids: Array.isArray(item.attemptedJids) ? item.attemptedJids : [],
+              });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to load auto-add members config: ${e?.message}`);
+    }
+  }
+
+  private saveAutoAddConfig(): void {
+    try {
+      const dir = path.dirname(this.autoAddStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const list = Array.from(this.autoAddConfig.values());
+      fs.writeFileSync(this.autoAddStoragePath, JSON.stringify(list, null, 2), 'utf8');
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to save auto-add members config: ${e?.message}`);
+    }
+  }
+
   /**
    * Enables autonomous group takeover for a given group.
    * Cardoso AI will enforce Anti-Link, Auto-Welcome, and autonomous protection.
@@ -1695,6 +1743,11 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       enabledAt: Date.now(),
     });
     this.saveAutoGroupConfig();
+
+    // Enable daily member auto-add for this managed group
+    if (!this.autoAddConfig.has(groupJid)) {
+      this.setAutoAddConfig(groupJid, { enabled: true, dailyLimit: 5 });
+    }
 
     let announcement: string | undefined;
     let profile: any = null;
@@ -1880,6 +1933,18 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             }
           } catch (prayerErr: any) {
             console.warn(`[Autonomous Governor] Prayer notification error for ${groupJid}: ${prayerErr?.message}`);
+          }
+
+          // 7. Autonomous Daily Member Growth (Auto-Add Members to Group)
+          try {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const autoAddCfg = this.getAutoAddConfig(groupJid);
+            if (autoAddCfg.enabled && autoAddCfg.lastRunDate !== todayStr) {
+              console.log(`👥 [Autonomous Governor] Scheduled daily member growth running for ${groupJid}...`);
+              await this.autoAddDailyMembers(groupJid, autoAddCfg.dailyLimit || 5);
+            }
+          } catch (autoAddErr: any) {
+            console.warn(`[Autonomous Governor] Daily auto-add error for ${groupJid}: ${autoAddErr?.message}`);
           }
         }
       } catch (err: any) {
@@ -3082,6 +3147,184 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       console.warn(`[WhatsAppManager] Failed to send voice note to ${groupJid}:`, err);
       return { success: false, error: err?.message };
     }
+  }
+
+  // ─── 3.2. AUTONOMOUS DAILY MEMBER GROWTH (AUTO-ADD CONTACTS) ───────────────
+
+  public getAutoAddConfig(groupJid: string): AutoAddGroupConfig {
+    let cfg = this.autoAddConfig.get(groupJid);
+    if (!cfg) {
+      cfg = {
+        groupJid,
+        enabled: this.isAutoGroupManaged(groupJid),
+        dailyLimit: 5,
+        totalAdded: 0,
+        attemptedJids: [],
+      };
+      this.autoAddConfig.set(groupJid, cfg);
+    }
+    return cfg;
+  }
+
+  public setAutoAddConfig(groupJid: string, update: Partial<AutoAddGroupConfig>): AutoAddGroupConfig {
+    const existing = this.getAutoAddConfig(groupJid);
+    const updated: AutoAddGroupConfig = {
+      ...existing,
+      ...update,
+      groupJid,
+    };
+    this.autoAddConfig.set(groupJid, updated);
+    this.saveAutoAddConfig();
+    return updated;
+  }
+
+  public async getEligibleContactsCount(groupJid: string): Promise<{
+    totalContacts: number;
+    eligibleCount: number;
+    alreadyInGroupCount: number;
+    alreadyAttemptedCount: number;
+  }> {
+    const allContacts = this.broadcast.getContacts();
+    const totalContacts = allContacts.length;
+    const cfg = this.getAutoAddConfig(groupJid);
+    const attemptedSet = new Set(cfg.attemptedJids || []);
+
+    const existingMembers = new Set<string>();
+    if (this.socket) {
+      try {
+        const meta = await this.socket.groupMetadata(groupJid);
+        for (const p of meta?.participants || []) {
+          if (p?.id) {
+            existingMembers.add(p.id);
+            const num = p.id.split('@')[0];
+            existingMembers.add(`${num}@s.whatsapp.net`);
+          }
+        }
+      } catch {}
+    }
+
+    let eligibleCount = 0;
+    let alreadyInGroupCount = 0;
+    let alreadyAttemptedCount = 0;
+
+    for (const c of allContacts) {
+      if (!c.jid || !c.jid.endsWith('@s.whatsapp.net')) continue;
+      const num = c.jid.split('@')[0];
+      if (num.length < 7 || num.length > 15) continue;
+
+      if (existingMembers.has(c.jid)) {
+        alreadyInGroupCount++;
+        continue;
+      }
+      if (attemptedSet.has(c.jid)) {
+        alreadyAttemptedCount++;
+        continue;
+      }
+
+      if (this.socket?.user?.id && c.jid.startsWith(this.socket.user.id.split(':')[0].split('@')[0])) continue;
+      if ((this.configuredAdminPhones || []).some(a => a.replace(/[^0-9]/g, '') === num)) continue;
+
+      eligibleCount++;
+    }
+
+    return {
+      totalContacts,
+      eligibleCount,
+      alreadyInGroupCount,
+      alreadyAttemptedCount,
+    };
+  }
+
+  public async autoAddDailyMembers(
+    groupJid: string,
+    limit?: number
+  ): Promise<{ success: boolean; added: number; attempted: number; skippedPrivacy: number; message: string }> {
+    if (!this.socket) {
+      return { success: false, added: 0, attempted: 0, skippedPrivacy: 0, message: 'WhatsApp ma xirna hadda.' };
+    }
+
+    const cfg = this.getAutoAddConfig(groupJid);
+    const targetLimit = Math.min(Math.max(1, limit || cfg.dailyLimit || 5), 10);
+    const attemptedSet = new Set(cfg.attemptedJids || []);
+
+    const existingMembers = new Set<string>();
+    try {
+      const meta = await this.socket.groupMetadata(groupJid);
+      for (const p of meta?.participants || []) {
+        if (p?.id) {
+          existingMembers.add(p.id);
+          const num = p.id.split('@')[0];
+          existingMembers.add(`${num}@s.whatsapp.net`);
+        }
+      }
+    } catch (metaErr: any) {
+      return { success: false, added: 0, attempted: 0, skippedPrivacy: 0, message: `Lama heli karo xogta kooxda: ${metaErr?.message}` };
+    }
+
+    const allContacts = this.broadcast.getContacts();
+    const botNum = this.socket?.user?.id ? this.socket.user.id.split(':')[0].split('@')[0] : '';
+
+    const candidates = allContacts.filter(c => {
+      if (!c.jid || !c.jid.endsWith('@s.whatsapp.net')) return false;
+      const num = c.jid.split('@')[0];
+      if (num.length < 7 || num.length > 15) return false;
+      if (existingMembers.has(c.jid)) return false;
+      if (attemptedSet.has(c.jid)) return false;
+      if (botNum && c.jid.startsWith(botNum)) return false;
+      if ((this.configuredAdminPhones || []).some(a => a.replace(/[^0-9]/g, '') === num)) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) {
+      cfg.lastRunDate = new Date().toISOString().slice(0, 10);
+      this.saveAutoAddConfig();
+      return {
+        success: true,
+        added: 0,
+        attempted: 0,
+        skippedPrivacy: 0,
+        message: 'Ma jiraan xubno cusub oo hadda u diyaar ah ku-darista (dhammaan contacts-ka way ku jiraan kooxda ama horay ayaa la isugu dayay).',
+      };
+    }
+
+    const toAdd = candidates.slice(0, targetLimit);
+    let added = 0;
+    let attempted = 0;
+    let skippedPrivacy = 0;
+
+    for (const person of toAdd) {
+      attempted++;
+      attemptedSet.add(person.jid);
+      try {
+        const res = await this.addMember(groupJid, person.jid);
+        if (res.success) {
+          added++;
+        } else if (res.message && (res.message.includes('Privacy') || res.message.includes('403'))) {
+          skippedPrivacy++;
+        }
+      } catch (err: any) {
+        console.warn(`[AutoAdd] Error adding ${person.jid} to ${groupJid}:`, err?.message);
+      }
+
+      if (attempted < toAdd.length) {
+        await new Promise(r => setTimeout(r, 2500));
+      }
+    }
+
+    cfg.attemptedJids = Array.from(attemptedSet);
+    cfg.totalAdded = (cfg.totalAdded || 0) + added;
+    cfg.lastRunDate = new Date().toISOString().slice(0, 10);
+    this.saveAutoAddConfig();
+
+    const privacyNote = skippedPrivacy > 0 ? `, ${skippedPrivacy} qofna Privacy-ga ayaa u xirnaa` : '';
+    const msg = `✅ Waxaa kooxda si toos ah loogu daray ${added} xubnood oo cusub! (Isku dayo: ${attempted}${privacyNote})`;
+    return {
+      success: true,
+      added,
+      attempted,
+      skippedPrivacy,
+      message: msg,
+    };
   }
 }
 

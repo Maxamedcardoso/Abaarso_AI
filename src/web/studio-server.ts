@@ -1096,7 +1096,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/owner/send-voice-group', async (req: Request, res: Response) => {
     try {
-      const { groupJids, groupJid, title, audioBase64, text } = req.body || {};
+      const { groupJids, groupJid, title, audioBase64, text, audioUrl } = req.body || {};
       const targets: string[] = Array.isArray(groupJids) ? groupJids : (groupJid ? [groupJid] : []);
       if (targets.length === 0) {
         res.status(400).json({ status: 'error', message: 'Fadlan dooro ugu yaraan hal koox' });
@@ -1104,7 +1104,33 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
 
       let opusBuffer: Buffer | null = null;
-      if (audioBase64) {
+      if (audioUrl && String(audioUrl).trim()) {
+        const cleanUrl = String(audioUrl).trim();
+        try {
+          const fetchRes = await fetch(cleanUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+          });
+          if (!fetchRes.ok) {
+            res.status(400).json({ status: 'error', message: `Link-ga codka lama soo dejin karin (HTTP ${fetchRes.status}: ${fetchRes.statusText})` });
+            return;
+          }
+          const rawBuf = Buffer.from(await fetchRes.arrayBuffer());
+          if (rawBuf.length === 0) {
+            res.status(400).json({ status: 'error', message: 'Faylka laga soo dejiyay link-ga waa faaruq (0 bytes)' });
+            return;
+          }
+          if (rawBuf.slice(0, 4).toString() === 'OggS') {
+            opusBuffer = rawBuf;
+          } else {
+            opusBuffer = await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+          }
+        } catch (fetchErr: any) {
+          res.status(400).json({ status: 'error', message: `Cilad soo dejinta link-ga codka: ${fetchErr?.message}` });
+          return;
+        }
+      } else if (audioBase64) {
         const rawBuf = Buffer.from(audioBase64.replace(/^data:audio\/\w+;base64,/, ''), 'base64');
         if (rawBuf.slice(0, 4).toString() === 'OggS') {
           opusBuffer = rawBuf;
@@ -1117,7 +1143,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
 
       if (!opusBuffer || opusBuffer.length === 0) {
-        res.status(400).json({ status: 'error', message: 'Fadlan soo geli fayl cod ah ama qor qoraal cod loo rogo' });
+        res.status(400).json({ status: 'error', message: 'Fadlan soo geli link, fayl cod ah, ama qor qoraal cod loo rogo' });
         return;
       }
 
@@ -1135,6 +1161,59 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         sentCount,
         results,
       });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.get('/api/owner/auto-add/status', async (req: Request, res: Response) => {
+    try {
+      const groupJid = String(req.query.groupJid || '').trim();
+      const { whatsappManager } = getOwnerRefs();
+      if (!groupJid) {
+        res.status(400).json({ status: 'error', message: 'groupJid is required' });
+        return;
+      }
+      const config = whatsappManager.getAutoAddConfig(groupJid);
+      const counts = await whatsappManager.getEligibleContactsCount(groupJid);
+      res.json({ status: 'ok', config, counts });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/owner/auto-add/toggle', async (req: Request, res: Response) => {
+    try {
+      const { groupJid, enabled, dailyLimit } = req.body || {};
+      if (!groupJid) {
+        res.status(400).json({ status: 'error', message: 'groupJid is required' });
+        return;
+      }
+      const { whatsappManager } = getOwnerRefs();
+      const updated = whatsappManager.setAutoAddConfig(groupJid, {
+        enabled: Boolean(enabled),
+        ...(typeof dailyLimit === 'number' ? { dailyLimit } : {}),
+      });
+      res.json({
+        status: 'ok',
+        message: updated.enabled ? '🟢 Ku-darista tooska ah waa la shiday' : '🛑 Ku-darista tooska ah waa la damiyay',
+        config: updated,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/owner/auto-add/run', async (req: Request, res: Response) => {
+    try {
+      const { groupJid, limit } = req.body || {};
+      if (!groupJid) {
+        res.status(400).json({ status: 'error', message: 'groupJid is required' });
+        return;
+      }
+      const { whatsappManager } = getOwnerRefs();
+      const result = await whatsappManager.autoAddDailyMembers(groupJid, typeof limit === 'number' ? limit : 5);
+      res.json({ status: 'ok', ...result });
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
     }
