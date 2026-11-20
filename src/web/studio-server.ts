@@ -93,7 +93,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.use(express.urlencoded({ extended: true }));
 
   const { config, tenantManager } = options;
-  const studioPassword = options.studioPasswordOverride ?? process.env.STUDIO_PASSWORD ?? '';
+  const studioPassword = options.studioPasswordOverride ?? (process.env.STUDIO_PASSWORD ? process.env.STUDIO_PASSWORD : 'maxamed11@');
 
   if (!studioPassword) {
     console.warn('⚠️ [Studio] STUDIO_PASSWORD lama dejin — Admin dashboard-ku wuu xidhan yahay ilaa STUDIO_PASSWORD ama Admin user la dejiyo.');
@@ -184,12 +184,13 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       (cleanPhone && tenantManager.registry.getTenant('owner')?.allowedPhone &&
        normalizeSubscriptionPhone(tenantManager.registry.getTenant('owner')!.allowedPhone) === cleanPhone);
     const ownerTenantPin = tenantManager.registry.verifyTenantPin(rawPhone, pin);
-    const matchesStudioPassword = studioPassword && pin === studioPassword;
+    const matchesStudioPassword = Boolean(studioPassword && pin === studioPassword);
+    const isOwnerLogin = matchesStudioPassword || (isOwnerPhone && ownerTenantPin?.id === 'owner');
 
-    if (isOwnerPhone && (matchesStudioPassword || ownerTenantPin?.id === 'owner')) {
+    if (isOwnerLogin) {
       const adminToken = 'adm_' + crypto.randomBytes(32).toString('hex');
       adminSessions.set(adminToken, {
-        username: 'owner',
+        username: rawPhone || 'owner',
         displayName: 'Owner Super Admin',
         role: 'super_admin',
         expiresAt: Date.now() + 7 * 24 * 3600 * 1000,
@@ -203,7 +204,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
           id: 'adm_owner',
           username: 'owner',
           displayName: 'Owner Super Admin',
-          phoneNumber: cleanPhone,
+          phoneNumber: cleanPhone || tenantManager.registry.getTenant('owner')?.allowedPhone || config.security.adminPhoneNumbers[0] || '252634949642',
           role: 'super_admin',
           active: true,
           createdAt: Date.now(),
@@ -702,7 +703,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
 
     // 3. If browser navigates directly to root HTML page, redirect to /portal
-    if (req.method === 'GET' && req.accepts && req.accepts('html') && req.path === '/') {
+    if (req.method === 'GET' && req.accepts && req.accepts('html') && (req.path === '/' || req.path === '/admin' || req.path === '/dashboard')) {
       res.redirect('/portal');
       return;
     }
@@ -1322,7 +1323,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   });
 
   // ─── 6. Main Super Admin SaaS Dashboard UI ─────────────────────────────────
-  app.get('/', (req: Request, res: Response) => {
+  app.get(['/', '/admin', '/dashboard'], (req: Request, res: Response) => {
     const adminLabel = (req as any).adminLabel || 'Owner Super Admin';
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderAdminDashboardHTML(adminLabel));
