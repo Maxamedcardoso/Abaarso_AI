@@ -8,6 +8,7 @@ import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { BroadcastService, broadcastService } from '../services/broadcast.service.js';
 import { WhatsAppManagerService, whatsappManagerService } from '../services/whatsapp-manager.service.js';
 import { StatusReactorService, statusReactorService } from '../services/status-reactor.service.js';
+import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { AppConfig } from '../config/env.js';
 import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
 import { TenantManager } from '../tenants/tenant-manager.js';
@@ -1081,6 +1082,62 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const { memory } = getOwnerRefs();
     const leads = await memory.getLeads(150);
     res.json({ status: 'ok', leads });
+  });
+
+  app.get('/api/owner/groups', async (req: Request, res: Response) => {
+    try {
+      const { whatsappManager } = getOwnerRefs();
+      const groups = await whatsappManager.listParticipatingGroups();
+      res.json({ status: 'ok', groups });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message, groups: [] });
+    }
+  });
+
+  app.post('/api/owner/send-voice-group', async (req: Request, res: Response) => {
+    try {
+      const { groupJids, groupJid, title, audioBase64, text } = req.body || {};
+      const targets: string[] = Array.isArray(groupJids) ? groupJids : (groupJid ? [groupJid] : []);
+      if (targets.length === 0) {
+        res.status(400).json({ status: 'error', message: 'Fadlan dooro ugu yaraan hal koox' });
+        return;
+      }
+
+      let opusBuffer: Buffer | null = null;
+      if (audioBase64) {
+        const rawBuf = Buffer.from(audioBase64.replace(/^data:audio\/\w+;base64,/, ''), 'base64');
+        if (rawBuf.slice(0, 4).toString() === 'OggS') {
+          opusBuffer = rawBuf;
+        } else {
+          opusBuffer = await VoiceReplyService.convertMp3ToOggOpus(rawBuf);
+        }
+      } else if (text && String(text).trim()) {
+        const synth = await VoiceReplyService.synthesizeVoice(String(text).trim(), 'so');
+        if (synth) opusBuffer = synth.buffer;
+      }
+
+      if (!opusBuffer || opusBuffer.length === 0) {
+        res.status(400).json({ status: 'error', message: 'Fadlan soo geli fayl cod ah ama qor qoraal cod loo rogo' });
+        return;
+      }
+
+      const { whatsappManager, transport } = getOwnerRefs();
+      const results: Array<{ jid: string; success: boolean; error?: string }> = [];
+      for (const jid of targets) {
+        const sent = await whatsappManager.sendVoiceNoteToGroup(jid, opusBuffer, title, transport);
+        results.push({ jid, ...sent });
+      }
+
+      const sentCount = results.filter(r => r.success).length;
+      res.json({
+        status: 'ok',
+        message: `🎙️ Voice Note-kii si guul leh ayaa loogu diray ${sentCount} kooxood!`,
+        sentCount,
+        results,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
   });
 
   app.get('/api/config', async (req: Request, res: Response) => {

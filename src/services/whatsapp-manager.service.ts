@@ -1767,7 +1767,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             }
           }
 
-          // 4. Autonomous Daily Quiz (14:00 Somali Time)
+          // 4. Autonomous Daily Quiz (Single combined Poll as requested by user)
           if (this.governor.shouldPostDailyQuiz(groupJid)) {
             try {
               const groupInfo = this.autoManagedGroups.get(groupJid);
@@ -1777,26 +1777,78 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
                 try { const meta = await this.socket.groupMetadata(groupJid); desc = meta?.desc || ''; } catch {}
               }
               const quiz = await this.governor.generateDailyQuiz(groupJid, groupSubject, desc, this.aiOrchestrator);
-              // Post as WhatsApp native poll so members can tap to answer
-              const pollRes = await this.createPoll(groupJid, quiz.pollTitle, quiz.options, 1);
+              // Combined Poll Question: Call to action included directly in the question title without separate spam message
+              const combinedPollTitle = `${quiz.pollTitle} — (Ka dooro jawaabta saxda ah poll-ka hoose 👇)`;
+              const pollRes = await this.createPoll(groupJid, combinedPollTitle, quiz.options, 1);
               if (pollRes.success) {
                 this.governor.setActiveQuiz(groupJid, quiz.pollTitle, quiz.options, quiz.correctIndex, 15 * 60 * 1000);
                 this.governor.recordDailyQuizPosted(groupJid);
-                const notice =
-                  `🧠 *[CARDOSO AI — QUIZ MAALINTA]* 🏆\n\n` +
-                  `📊 Codbixinta kore ka dooro jawaabta saxda ah!\n` +
-                  `✅ Jawaabtii saxda ahayd waxaa ku jirto calaamadda ✅\n` +
-                  `🏅 Jawaabaha saxda ah waa lagu darsanayaa Leaderboard-ka!\n\n` +
-                  `_Waqtigu waa 15 daqiiqo — Degsoon oo jawaab!_ ⏰`;
-                if (transport?.sendMessage) {
-                  await transport.sendMessage(groupJid, notice);
-                } else if (this.socket) {
-                  await this.socket.sendMessage(groupJid, { text: notice });
-                }
               }
             } catch (quizErr: any) {
               console.warn(`[Autonomous Governor] Quiz error for ${groupJid}: ${quizErr?.message}`);
             }
+          }
+
+          // 4b. Check for Expired Active Quiz (15-Minute Expiration & Winner Announcement)
+          try {
+            const expiredQuizResult = this.governor.checkExpiredQuizToAnnounce(groupJid);
+            if (expiredQuizResult) {
+              const winnerLines = expiredQuizResult.winners.length > 0
+                ? expiredQuizResult.winners.map((w, idx) => {
+                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '⭐️';
+                    return `${medal} ${idx + 1}. *+${w.phone}* ${w.name && w.name !== w.phone ? `(${w.name})` : ''} ➔ *+10 Dhibcood* [Waqtiga: ${w.elapsedSeconds}s]`;
+                  }).join('\n')
+                : '_Waqtigii wuu dhacay mana jirin cid saxday markan. Nasiib wacan barrito!_ 🤝';
+
+              const announceText =
+                `⏰ *[CARDOSO AI — DHAMMAADKA QUIZ-KA (15 DAQIIQO)]* 🏁\n\n` +
+                `❓ *Su'aashii:* ${expiredQuizResult.question}\n` +
+                `✅ *Jawaabta Saxda ah:* *${expiredQuizResult.correctAnswer}*\n\n` +
+                `🏆 *Xiddigaha Saxay (${expiredQuizResult.winners.length} qof):*\n` +
+                `${winnerLines}\n\n` +
+                `📊 Si aad u aragto tartanka guud qor: \`!leaderboard\` (ama \`!xididka\`) 🚀`;
+
+              if (transport?.sendMessage) {
+                await transport.sendMessage(groupJid, announceText);
+              } else if (this.socket) {
+                await this.socket.sendMessage(groupJid, { text: announceText });
+              }
+            }
+          } catch (quizAnnErr: any) {
+            console.warn(`[Autonomous Governor] Error announcing quiz results for ${groupJid}: ${quizAnnErr?.message}`);
+          }
+
+          // 4c. Weekly Thursday (Khamiislaha) Top 3 Awards Ceremony (Every Thursday at 20:00 EAT)
+          try {
+            if (this.governor.shouldPostThursdayAwards(groupJid)) {
+              const top3 = this.governor.getLeaderboard(groupJid, 3);
+              if (top3.length > 0) {
+                const medals = ['🥇', '🥈', '🥉'];
+                const titles = ['👑 HORYAALKA TODOBAADKA', '🥈 XIDDIGA DHEH', '🥉 GEESIGA KOOXDA'];
+                const stars = ['⭐️⭐️⭐️⭐️⭐️', '⭐️⭐️⭐️⭐️', '⭐️⭐️⭐️'];
+
+                const topLines = top3.map((item, i) =>
+                  `${medals[i]} *KAALINTA ${i + 1}-AAD — ${titles[i]}:*\n` +
+                  `👤 *+${item.user}* ➔ *${item.score} Dhibcood* (${item.correct} sax, ${item.wrong} qalad) ${stars[i]}`
+                ).join('\n\n');
+
+                const awardsText =
+                  `🌟👑 *[XAFLADDA KHAMIISLAHA: 3-DA XIDDIG EE UGU SARREEYA KOOXDA]* 👑🌟\n\n` +
+                  `Kooxda sharafta leh, waxaa la gaadhay caawa oo Khamiis ah xilligii la abaalmarinaayey saddexda xubnood ee ugu dhibcaha badan toddobaadkan tartankii aqoonta! 🏆✨\n\n` +
+                  `${topLines}\n\n` +
+                  `👏 *Hambalyo dhammaan xiddigaha!* Dedaalkiina iyo aqoontiina waa mid lagu faano.\n` +
+                  `Tartanka waxbarashada iyo aqoonta guud wuu soconayaa. Qor \`!leaderboard\` si aad u aragto kaalintaada! 🚀`;
+
+                if (transport?.sendMessage) {
+                  await transport.sendMessage(groupJid, awardsText);
+                } else if (this.socket) {
+                  await this.socket.sendMessage(groupJid, { text: awardsText });
+                }
+                this.governor.recordThursdayAwardsPosted(groupJid);
+              }
+            }
+          } catch (thuErr: any) {
+            console.warn(`[Autonomous Governor] Thursday awards error for ${groupJid}: ${thuErr?.message}`);
           }
 
           // 5. Scheduled Announcements Check (minute precision)
@@ -1838,10 +1890,9 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
 
   /**
    * Broadcasts a complete prayer notification to a group:
-   * 1. Reverent text reminder with Quranic ayah and instructions.
+   * 1. Reverent title header only (as requested: "CIWAANKA SARE UUN UDAA").
    * 2. Authentic Voice Note Athan (Ogg Opus PTT).
-   * 3. Authentic Sunnah Du'a after Athan text.
-   * 4. Authentic Sunnah Du'a Voice Note.
+   * 3. Authentic Sunnah Du'a Voice Note (Ogg Opus PTT).
    */
   public async broadcastPrayerNotification(
     groupJid: string,
@@ -1850,7 +1901,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   ): Promise<void> {
     console.log(`🕌 [Autonomous Governor] Broadcasting Prayer Notification (${prayer.somaliName} / ${prayer.arabicName}) for ${groupJid}...`);
 
-    // 1. Text Reminder
+    // 1. Reverent Title Only (as requested by user: "CIWAANKA SARE UUN UDAA")
     const textReminder = this.prayerTimes.getPrayerReminderText(prayer);
     if (transport?.sendMessage) {
       await transport.sendMessage(groupJid, textReminder);
@@ -1858,7 +1909,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       await this.socket.sendMessage(groupJid, { text: textReminder });
     }
 
-    // 2. Authentic Voice Note Athan
+    // 2. Authentic Voice Note Athan (Ogg Opus PTT)
     try {
       const athan = await this.prayerTimes.getAthanAudio(prayer.isFajr);
       if (athan && athan.buffer.length > 0) {
@@ -1881,15 +1932,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       console.warn(`[WhatsAppManager] Athan audio delivery error: ${athanErr?.message}`);
     }
 
-    // 3. Sunnah Du'a after Athan (Text)
-    const duaText = this.prayerTimes.getDuaAfterAthanText();
-    if (transport?.sendMessage) {
-      await transport.sendMessage(groupJid, duaText);
-    } else if (this.socket) {
-      await this.socket.sendMessage(groupJid, { text: duaText });
-    }
-
-    // 4. Sunnah Du'a Voice Note
+    // 3. Sunnah Du'a Voice Note (Ogg Opus PTT) - No long text wall as requested
     try {
       const duaAudio = await this.prayerTimes.getDuaAudio();
       if (duaAudio && duaAudio.buffer.length > 0) {
@@ -1912,7 +1955,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       console.warn(`[WhatsAppManager] Du'a audio delivery error: ${duaErr?.message}`);
     }
 
-    // 5. Mark as successfully notified for today
+    // 4. Mark as successfully notified for today
     this.prayerTimes.markPrayerPosted(groupJid, prayer.key);
   }
 
@@ -1951,6 +1994,10 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   public isAutoGroupManaged(groupJid: string): boolean {
     if (!groupJid) return false;
     return this.autoManagedGroups.has(groupJid);
+  }
+
+  public isGroupAutoManaged(groupJid: string): boolean {
+    return this.isAutoGroupManaged(groupJid);
   }
 
   /**
@@ -2126,17 +2173,20 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     if (board.length === 0) {
       return (
         `🏆 *[CARDOSO AI — QUIZ LEADERBOARD]* 📊\n\n` +
-        `Wali qof isma diwaan-gelinin quiz-ka!\n` +
-        `🧠 Marka quiz-ka xiga soo galo, jawaab si aad xaasidkaaga u hormarso! 💪`
+        `Wali qof dhibco ma yeelanin tartanka maanta!\n` +
+        `🧠 Marka quiz-ka maalinlaha ah la soo dhigo, ka dooro jawaabta saxda ah si aad dhibco u hesho! 💪\n\n` +
+        `🗓️ _Xusuusin: Khamiis walba 20:00 waxaa la abaalmariyaa 3-da xiddig ee ugu sarreeya!_ 👑`
       );
     }
     const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
     let out = `🏆 *[CARDOSO AI — QUIZ LEADERBOARD TOP ${board.length}]* 📊\n\n`;
     board.forEach((entry, i) => {
       const medal = medals[i] || `${i + 1}.`;
-      out += `${medal} *@${entry.user}* — ${entry.score} pts ✅${entry.correct} ❌${entry.wrong}\n`;
+      const star = i === 0 ? '👑' : i === 1 ? '🥈' : i === 2 ? '🥉' : '⭐️';
+      out += `${medal} *+${entry.user}* ➔ *${entry.score} pts* ${star} (✅ ${entry.correct} sax | ❌ ${entry.wrong} qalad)\n`;
     });
-    out += `\n_🤖 Scoreboard-ka waxaa maamula Cardoso AI Quiz Engine._`;
+    out += `\n🗓️ _Xusuusin: Khamiis walba 20:00 waxaa la abaalmariyaa 3-da xiddig ee ugu sarreeya!_ 👑\n`;
+    out += `_🤖 Scoreboard-ka waxaa si toos ah u maamula Cardoso AI Quiz Engine._`;
     return out;
   }
 
@@ -2947,6 +2997,91 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
    */
   public getRecentGroupMessages(groupJid: string): { id: string; sender: string; text: string; timestamp: number }[] {
     return this.recentGroupMessages.get(groupJid) || [];
+  }
+
+  /**
+   * Lists all WhatsApp groups where the bot is currently participating.
+   */
+  public async listParticipatingGroups(): Promise<Array<{ id: string; name: string; participantsCount: number; isManaged: boolean }>> {
+    const list: Array<{ id: string; name: string; participantsCount: number; isManaged: boolean }> = [];
+    const seen = new Set<string>();
+
+    if (this.socket && typeof (this.socket as any).groupFetchAllParticipating === 'function') {
+      try {
+        const groups = await (this.socket as any).groupFetchAllParticipating();
+        for (const g of Object.values(groups) as any[]) {
+          if (g && g.id) {
+            seen.add(g.id);
+            list.push({
+              id: g.id,
+              name: g.subject || g.id,
+              participantsCount: Array.isArray(g.participants) ? g.participants.length : 0,
+              isManaged: this.isGroupAutoManaged(g.id),
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[WhatsAppManager] Error listing participating groups: ${err?.message}`);
+      }
+    }
+
+    // Add any from autoManagedGroups not already caught
+    for (const [jid, info] of this.autoManagedGroups.entries()) {
+      if (!seen.has(jid)) {
+        seen.add(jid);
+        list.push({
+          id: jid,
+          name: info.name,
+          participantsCount: 0,
+          isManaged: true,
+        });
+      }
+    }
+
+    return list;
+  }
+
+  /**
+   * Sends an authentic Ogg Opus Voice Note (PTT) with optional title caption to any WhatsApp group.
+   */
+  public async sendVoiceNoteToGroup(
+    groupJid: string,
+    audioBuffer: Buffer,
+    title?: string,
+    transport?: any
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      // 1. Send title header if specified
+      if (title && title.trim()) {
+        const captionText = `🎙️ *[${title.trim().toUpperCase()}]*`;
+        if (transport?.sendMessage) {
+          await transport.sendMessage(groupJid, captionText);
+        } else if (this.socket) {
+          await this.socket.sendMessage(groupJid, { text: captionText });
+        }
+      }
+
+      // 2. Deliver as authentic WhatsApp Voice Note (PTT)
+      if (transport?.sendMedia) {
+        await transport.sendMedia(groupJid, {
+          type: 'audio',
+          dataBuffer: audioBuffer,
+          mimeType: 'audio/ogg; codecs=opus',
+          ptt: true,
+        });
+      } else if (this.socket) {
+        await this.socket.sendMessage(groupJid, {
+          audio: audioBuffer,
+          mimetype: 'audio/ogg; codecs=opus',
+          ptt: true,
+        });
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.warn(`[WhatsAppManager] Failed to send voice note to ${groupJid}:`, err);
+      return { success: false, error: err?.message };
+    }
   }
 }
 

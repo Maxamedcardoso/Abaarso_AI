@@ -327,36 +327,78 @@ export class GroupGovernorService {
       };
     }
 
-    // 4. Islamic & Faith
-    if (/(?:diin|islaam|islam|quraan|xadiis|sunnah|culimo|dawa|khayr|akhlaaq)/i.test(combined)) {
+    // 4. Islamic, Faith & Hayaanka Nolosha (Diinta & Aqoonta Guud)
+    if (/(?:hayaan|hayaanka|nolosha|waano|tarbiyad|xikmad|wacdi|diin|islaam|islam|quraan|xadiis|sunnah|culimo|dawa|khayr|akhlaaq)/i.test(combined)) {
+      const isHayaan = /(?:hayaan|hayaanka|nolosha)/i.test(combined);
       return {
         category: 'islamic',
-        categoryLabel: 'Diinta & Akhlaaqda Islaamka 🌙',
-        tone: 'spiritual & noble',
+        categoryLabel: isHayaan ? 'Diinta, Aqoonta Guud & Hayaanka Nolosha 🌙📚' : 'Diinta & Akhlaaqda Islaamka 🌙',
+        tone: 'spiritual, inspiring & educational',
         suggestedSubject: subject.includes('🌙') ? subject : `${subject} 🌙✨`,
         customRules: [
-          '1. 🚫 *Anti-Link:* Link-yada aan khuseyn khayrka iyo diinta waa mamnuuc.',
-          '2. 🌙 *Edeb & Akhlaaq:* Qof kasta waa inuu ku hadlaa hadal wanaagsan.',
-          '3. 🛑 *Zero-Tolerance:* Aflagaadada iyo muranka xun isla markiiba waa la saarayaa.',
-          '4. 📖 *Cilmiga:* Soo xigashada Quraanka iyo Axaadiista saxiixa ah oo kaliya.',
-          '5. 🤖 *Auto-Guard:* Cardoso AI ayaa ilaalinaya xasiloonida kooxda.',
+          '1. 🚫 *Anti-Link:* Link-yada aan khuseyn khayrka, aqoonta iyo diinta waa mamnuuc.',
+          '2. 🌙 *Edeb & Akhlaaq:* Qof kasta waa inuu ku hadlaa hadal wanaagsan oo xikmad leh.',
+          '3. 🛑 *Zero-Tolerance:* Aflagaadada iyo muranka xun isla markiiba waa la saarayaa (3-Strike System).',
+          '4. 📖 *Cilmiga:* Wadaagista Quraanka, Axaadiista saxiixa ah iyo aqoonta guud.',
+          '5. 🤖 *Auto-Guard:* Cardoso AI ayaa ilaalinaya xasiloonida iyo nidaamka kooxda.',
+        ],
+        enhancedDescription: isHayaan
+          ? `🌙 *BARAHA HAYAANKA NOLOSHA — DIINTA, AQOONTA GUUD & AKHLAAQDA* ✨\n\n` +
+            `🎯 *Hadafka Kooxda:* Kobcinta garaadka iyo aqoonta guud, barashada diinta Islaamka, xikmadda nolosha, iyo dhisidda akhlaaq suubban iyo mustaqbal toosan.\n\n` +
+            `📌 *Xeerarka Kooxda:*\n` +
+            `• Wadaagista xogta diiniga ah, aqoonta guud iyo waayo-aragnimada nolosha\n` +
+            `• Ixtiraam, is-qadarin iyo hadal wanaagsan oo xikmad leh\n` +
+            `• Link-yada spam-ka, xayeysiisyada qalaad iyo buuqa waa mamnuuc (Auto-Kick)\n` +
+            `• Zero tolerance aflagaadada iyo cayda (3-Strike System)\n\n` +
+            `🤖 *Kormeeraha Kooxda:* Waxaa 24/7 ilaaliya oo nidaamiya Cardoso AI Autonomous Governor.`
+          : `🌙 *KOOXDA KHAYRKA — ${subject.toUpperCase()}* ✨\n\n` +
+            `🎯 *Hadafka:* Faafinta dacwada, barashada shareecada, iyo is-xusuusinta wanaagga iyo sabarka.\n\n` +
+            `📌 *Xeerarka:*\n` +
+            `• Hadal wanaagsan ama aamusnaan\n` +
+            `• Ka fogaanshaha muranka iyo kala fogaanshaha\n` +
+            `• Link-yada qalaad waa mamnuuc\n\n` +
+            `🤖 *Ilaalada:* Cardoso AI Islamic Community Governor.`,
+        logoPrompt:
+          `An exquisite Islamic calligraphy crescent moon and lantern logo for "${subject}", golden geometric Arabesque patterns, serene royal green and gold, 3D modern clean emblem, 8k resolution, peaceful divine aesthetic`,
+        engagingTopic:
+          `🌙 *[CARDOSO AI — XIKMADDA & HAYAANKA NOLOSHA EE MAANTA]* ✨\n\n` +
+          `Rasuulku (NNKH) wuxuu yidhi: "Qofka dadka ugu khayrka badan waa kan ugu anshaxa wanaagsan uguna faa'iidada badan dadka kale." 🤲\n\n` +
+          `Muxuu ahaa qodobkii ama waanadii ugu qiimaha badnayd ee noloshaada wax ka beddeshay oo aad jeceshahay inaad asxaabta la wadaagto? 💬📖`,
+        pollQuestion: '🌙 Codbixinta Hayaanka Nolosha: Qodobkee ugu muhiimsan xasiloonida nafta?',
+        pollOptions: ['Ducada & Xuska Alle', 'Dadaalka & Shaqada', 'Dulqaadka & Samirka', 'Akhriska & Cilmiga'],
+      };
+    }
+
+    // 5. Youth & Personal Development (Dhalinyarada & Jiilka Cusub)
+    if (/(?:dhalinyaro|dhalinyarada|youth|jiilka|horumar|yool|mustaqbal)/i.test(combined)) {
+      return {
+        category: 'community',
+        categoryLabel: 'Dhalinyarada, Yoolalka & Horumarka Jiilka 🌟',
+        tone: 'motivational, dynamic & ambitious',
+        suggestedSubject: subject.includes('🌟') ? subject : `${subject} 🌟`,
+        customRules: [
+          '1. 🚫 *Anti-Link & Anti-Spam:* Link-yada aan khuseyn dhalinyarada waa mamnuuc.',
+          '2. 💡 *Dhiirrigelin & Yoolal:* Wadaagista qorshayaasha guusha, waxbarashada iyo xirfadaha.',
+          '3. 🛑 *Zero-Tolerance:* Aflagaadada, qabyaaladda iyo cayda ciqaab toos ah ayay leeyihiin.',
+          '4. 🤝 *Saaxiibtinimo & Taageero:* Dhalinyaradu inay is-garabsadaan oo is-dhiirrigeliyaan.',
+          '5. 🤖 *Auto-Guard:* Cardoso AI ayaa nidaamka iyo dhiirrigelinta kooxda kormeera.',
         ],
         enhancedDescription:
-          `🌙 *KOOXDA KHAYRKA — ${subject.toUpperCase()}* ✨\n\n` +
-          `🎯 *Hadafka:* Faafinta dacwada, barashada shareecada, iyo is-xusuusinta wanaagga iyo sabarka.\n\n` +
+          `🌟 *BARAHA DHALINYARADA & HORUMARKA JIILKA — ${subject.toUpperCase()}* 🚀\n\n` +
+          `🎯 *Hadafka:* Dhiirrigelinta dhalinyarada, kobcinta xirfadaha nolosha, hoggaaminta mustaqbalka, iyo isku xirka jiilka cusub.\n\n` +
           `📌 *Xeerarka:*\n` +
-          `• Hadal wanaagsan ama aamusnaan\n` +
-          `• Ka fogaanshaha muranka iyo kala fogaanshaha\n` +
-          `• Link-yada qalaad waa mamnuuc\n\n` +
-          `🤖 *Ilaalada:* Cardoso AI Islamic Community Governor.`,
+          `• Dood cilmiyeed dhaxal-gal ah iyo hadafyo toosan\n` +
+          `• Link-yada spam-ka iyo xayeysiiska waa mamnuuc\n` +
+          `• Ixtiraam buuxa iyo wadajir dhalinyaro\n\n` +
+          `🤖 *Maamulaha Kooxda:* Cardoso AI Youth Governor.`,
         logoPrompt:
-          `An exquisite Islamic calligraphy crescent moon and lantern logo for "${subject}", golden geometric Arabesque patterns, serene royal green background, 3D modern clean emblem, 8k resolution, peaceful divine aesthetic`,
+          `An inspiring dynamic 3D youth leadership badge logo for "${subject}", rising sun and soaring eagle, vibrant emerald and electric blue, sleek modern icon, 8k resolution, motivational`,
         engagingTopic:
-          `🌙 *[CARDOSO AI — XIKMADDA & KHAYRKA MAANTA]* ✨\n\n` +
-          `Rasuulku (NNKH) wuxuu yidhi: "Qofka dadka ugu khayrka badan waa kan ugu anshaxa wanaagsan uguna faa'iidada badan dadka kale." 🤲\n\n` +
-          `Aan ku dedaalno wanaagga iyo u adeegidda bulshada maanta. Jimce Mubaarak/Maalin Wanaagsan dhammaantiin! 💫`,
-        pollQuestion: '🌙 Codbixinta Khayrka: Camalkee ugu fadliga badan ee maalin kasta la joogteeyo?',
-        pollOptions: ['Xuska Alle (Adkaar & Tasbiix)', 'Saliga Nabiga (NNKH)', 'Sadaqada joogtada ah', 'Akhrinta Quraanka'],
+          `🌟 *[CARDOSO AI — DHIIRRIGELINTA DHALINYARADA EE MAANTA]* 🚀\n\n` +
+          `"Guushu kuma timaaddo nasiib ee waxay ku timaaddaa go'aan adag iyo dadaal joogto ah oo maalinle ah." ✨\n\n` +
+          `Haddii aad hal caado oo xun beddeli lahayd sanadkan, maxay ahaan lahayd? Sideese isu beddelaysaa? 💬💪`,
+        pollQuestion: '🌟 Codbixinta Dhalinyarada: Muxuu yahay sirta ugu weyn ee guusha dhalinyarada?',
+        pollOptions: ['Dadaal & Joogtayn', 'Barashada Xirfad Cusub', 'Saaxiibo Wanaagsan', 'Qorshe & Samir'],
       };
     }
 
@@ -961,14 +1003,28 @@ export class GroupGovernorService {
 
   // ─── 11. DAILY QUIZ & GROUP LEADERBOARD ───────────────────────────────────
 
-  /** Quiz scores: Map<groupJid, Map<participantJid, { correct: number; wrong: number }>> */
-  private quizScores: Map<string, Map<string, { correct: number; wrong: number }>> = new Map();
+  /** Quiz scores: Map<groupJid, Map<participantJid, { correct: number; wrong: number; name?: string }>> */
+  private quizScores: Map<string, Map<string, { correct: number; wrong: number; name?: string }>> = new Map();
 
   /** Track the last daily quiz timestamp per group */
   private lastDailyQuizTimestamps: Map<string, number> = new Map();
 
-  /** Current live quiz state per group: question + correct answer index */
-  private activeQuizzes: Map<string, { question: string; options: string[]; correctIndex: number; expiresAt: number }> = new Map();
+  /** Current live quiz state per group: question + options + correctIndex + timer + winners tracking */
+  private activeQuizzes: Map<
+    string,
+    {
+      question: string;
+      options: string[];
+      correctIndex: number;
+      createdAt: number;
+      expiresAt: number;
+      announced: boolean;
+      correctParticipants: Map<string, { phone: string; name?: string; timestamp: number }>;
+    }
+  > = new Map();
+
+  /** Track weekly Thursday awards date per group */
+  private lastThursdayAwardsDates: Map<string, string> = new Map();
 
   public shouldPostDailyQuiz(groupJid: string): boolean {
     const now = Date.now();
@@ -982,6 +1038,7 @@ export class GroupGovernorService {
 
   /**
    * Generates a multiple-choice quiz question tuned to the group's niche.
+   * STRICT RULE: Never asks coding questions in non-coding groups!
    * Returns { pollTitle, options, correctIndex }.
    */
   public async generateDailyQuiz(
@@ -994,48 +1051,57 @@ export class GroupGovernorService {
 
     const nicheQuizBank: Record<string, { pollTitle: string; options: string[]; correctIndex: number }[]> = {
       tech: [
-        { pollTitle: '💻 Su\'aal Tech: Luuqadee JavaScript ayaa loo isticmaalo?', options: ['Dhinac Browser', 'Server (Node.js)', 'Labadaba ✅', 'AI Only'], correctIndex: 2 },
-        { pollTitle: '🧠 Yuu abuurtay Linux OS?', options: ['Bill Gates', 'Linus Torvalds ✅', 'Steve Jobs', 'Mark Zuckerberg'], correctIndex: 1 },
-        { pollTitle: '🔑 HTTP iyo HTTPS waxa kala aha?', options: ['Waxba kala ma ahan', 'HTTPS waa secured ✅', 'HTTP ayaa faster', 'HTTPS macno ma leh'], correctIndex: 1 },
+        { pollTitle: '💻 Su\'aal Tech: Luuqadee JavaScript ayaa loo isticmaalo?', options: ['Dhinac Browser kaliya', 'Server (Node.js)', 'Labadaba (Browser & Node.js)', 'AI Only'], correctIndex: 2 },
+        { pollTitle: '🧠 Yuu abuurtay Linux OS?', options: ['Bill Gates', 'Linus Torvalds', 'Steve Jobs', 'Mark Zuckerberg'], correctIndex: 1 },
+        { pollTitle: '🔑 HTTP iyo HTTPS waxa kala aha?', options: ['Waxba kala ma ahan', 'HTTPS waa xog sir ah oo secured ah', 'HTTP ayaa ka dhakhso badan', 'HTTPS wax qiimo ah ma leh'], correctIndex: 1 },
       ],
       education: [
-        { pollTitle: '📚 Meelma caalamka ugu badan ardayda jaamacadda ah?', options: ['USA', 'China ✅', 'India', 'Brazil'], correctIndex: 1 },
-        { pollTitle: '🎓 Jaamacadee adduunka ugu da-weyn?', options: ['Harvard', 'Oxford', 'Al-Azhar ✅', 'MIT'], correctIndex: 2 },
-        { pollTitle: '📖 Luuqaddee adduunka ugu badan loo hadlo?', options: ['English', 'Spanish', 'Mandarin Chinese ✅', 'Hindi'], correctIndex: 2 },
+        { pollTitle: '📚 Meelma caalamka ugu badan ardayda jaamacadda ah?', options: ['USA', 'China', 'India', 'Brazil'], correctIndex: 1 },
+        { pollTitle: '🎓 Jaamacadee adduunka ugu da-weyn ee wali furan?', options: ['Harvard', 'Oxford', 'Jaamacadda Al-Qarawiyyin / Al-Azhar', 'MIT'], correctIndex: 2 },
+        { pollTitle: '📖 Luuqaddee adduunka ugu badan ee dad u dhasheen ku hadlaan?', options: ['English', 'Spanish', 'Mandarin Chinese', 'Hindi'], correctIndex: 2 },
       ],
       business: [
-        { pollTitle: '💰 Shirkadee caalamka ugu qiimaha sarreeya?', options: ['Microsoft', 'Apple ✅', 'Google', 'Amazon'], correctIndex: 1 },
-        { pollTitle: '📈 Waa maxay "ROI"?', options: ['Rate Of Income', 'Return On Investment ✅', 'Risk Of Inflation', 'Revenue Over Index'], correctIndex: 1 },
-        { pollTitle: '🏦 Waa maxay "cryptocurrency"?', options: ['Digital currency ✅', 'Bank currency', 'Government coin', 'Physical gold'], correctIndex: 0 },
+        { pollTitle: '💰 Shirkadee caalamka ugu qiimaha sarreeya suuqa?', options: ['Microsoft', 'Apple', 'Google', 'Amazon'], correctIndex: 1 },
+        { pollTitle: '📈 Waa maxay macnaha "ROI" ee ganacsiga?', options: ['Rate Of Income', 'Return On Investment (Faa\'iidada Maalgashiga)', 'Risk Of Inflation', 'Revenue Over Index'], correctIndex: 1 },
+        { pollTitle: '🏦 Waa maxay hantida loo yaqaan "Digital Asset"?', options: ['Hanti elektaroonig ah sida Software ama Crypto', 'Lacag waraaq ah oo bangi ku jirta', 'Dahab dhab ah oo qasnada yaal', 'Dhul iyo guryo'], correctIndex: 0 },
       ],
       islamic: [
-        { pollTitle: '☪️ Meesha suugaaneed ee ugu weyn Islaamka?', options: ['Istanbul', 'Makkah ✅', 'Jerusalem', 'Madinah'], correctIndex: 1 },
-        { pollTitle: '📿 Quraanka kariimka suuraddee ugu dheer?', options: ['Al-Baqarah ✅', 'Al-Imran', 'An-Nisa', 'Al-Maidah'], correctIndex: 0 },
-        { pollTitle: '🕌 Masaajidkee caalamka ugu weyn?', options: ['Al-Aqsa', 'Al-Haram Makkah ✅', 'Prophet\'s Mosque', 'Blue Mosque'], correctIndex: 1 },
+        { pollTitle: '🌙 Suuradda ugu horreysay ee lagu soo dejiyay Nebiga (NNKH)?', options: ['Suuradda Al-Faatixa', 'Suuradda Al-Calaq (Iqra)', 'Suuradda Al-Baqarah', 'Suuradda Al-Mudathir'], correctIndex: 1 },
+        { pollTitle: '📿 Quraanka kariimka suuraddee ugu dheer?', options: ['Al-Baqarah', 'Aal-Cimraan', 'An-Nisaa', 'Al-Maa\'idah'], correctIndex: 0 },
+        { pollTitle: '🕌 Masaajidkee caalamka Islaamka ugu weyn uguna fadliga badan?', options: ['Masaajidka Al-Aqsa', 'Masaajidka Al-Xaram ee Makkah', 'Masaajidka Nabiga ee Madiina', 'Masaajidka Umawiyiinta'], correctIndex: 1 },
+        { pollTitle: '📖 Imisa suuradood ayaa ku jira Quraanka Kariimka ah?', options: ['114 Suuradood', '112 Suuradood', '110 Suuradood', '120 Suuradood'], correctIndex: 0 },
+        { pollTitle: '🌍 Buurta ugu dheer dalkeena Soomaaliya magaceeda?', options: ['Buur Hakaba', 'Buurta Shimbiris (Surud Cad)', 'Buuraha Daallo', 'Golis'], correctIndex: 1 },
       ],
       community: [
-        { pollTitle: '🌍 Soomaaliya xaruunteedu waa?', options: ['Hargeisa', 'Kismaayo', 'Mogadishu ✅', 'Garowe'], correctIndex: 2 },
-        { pollTitle: '🤝 Waxa dadka gacan-ka-siinta faa\'iideeya?', options: ['Dhaqaale iyo nolol ✅', 'Maalinta oo kaliya', 'Sumcad badan', 'Waxba faa\'iido kuma leh'], correctIndex: 0 },
-        { pollTitle: '🏆 Guusha ugu weyn ee kooxaha bulshada?', options: ['Lacagta', 'Is-kaashiga iyo midnimada ✅', 'Tirada xubnaha', 'Admin badan'], correctIndex: 1 },
+        { pollTitle: '🌍 Magaalada caasimadda ah ee Soomaaliya waa tee?', options: ['Hargeysa', 'Kismaayo', 'Muqdisho', 'Garoowe'], correctIndex: 2 },
+        { pollTitle: '🌟 Muxuu yahay habka ugu fiican ee loo maareeyo waqtiga?', options: ['Jadwal & Yoolal maalinle ah', 'In shaqada la dib dhigo', 'In habeenkii kaliya la shaqeeyo', 'In qof kale laga sugo'], correctIndex: 0 },
+        { pollTitle: '🏆 Guusha ugu weyn ee kooxaha bulshada iyo dhalinyarada?', options: ['Lacagta kaliya', 'Is-kaashiga, daacadnimada iyo midnimada', 'Tirada badan oo aan tayo lahayn', 'Admin badan'], correctIndex: 1 },
+        { pollTitle: '💪 Astaanta ugu muhiimsan ee dhalinyarada guusha gaarta?', options: ['Dulqaadka & Joogtaynta hawsha', 'Cabsi joogto ah', 'Kalsooni darro', 'In laga quusto fashilka'], correctIndex: 0 },
       ],
     };
 
-    const niche = profile.category in nicheQuizBank ? profile.category : 'community';
-    const quizBank = nicheQuizBank[niche];
+    const isTech = profile.category === 'tech';
+    const niche = isTech ? 'tech' : (profile.category in nicheQuizBank ? profile.category : 'community');
+    const quizBank = nicheQuizBank[niche] || nicheQuizBank['community'];
     const baseQuiz = quizBank[Math.floor(Math.random() * quizBank.length)];
 
-    // Try AI for a fresh dynamic question
+    // Try AI for a fresh dynamic question strictly respecting the group's niche
     if (aiOrchestrator && typeof aiOrchestrator.generateResponse === 'function') {
       try {
+        const strictTopicConstraint = isTech
+          ? 'Topic: Technical, computer science, software architecture or web programming.'
+          : `CRITICAL STRICT RULE: NEVER ask programming, coding, JavaScript, Python or IT developer questions. This group is "${profile.categoryLabel}". Ask strictly about ${profile.category === 'islamic' ? 'Islamic knowledge, Quran, Hadith, Prophets, or Somali cultural wisdom/geography' : 'youth self-development, leadership, habits, general knowledge, or Somali history'}.`;
+
         const prompt =
           `You are Cardoso AI for WhatsApp group "${groupSubject}" (${profile.categoryLabel}).\n` +
-          `Create ONE engaging multiple-choice quiz question relevant to this group's topic.\n` +
+          `${strictTopicConstraint}\n` +
+          `Create ONE engaging multiple-choice quiz question relevant to this group's members.\n` +
           `Format exactly as JSON:\n` +
           `{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "correctIndex": 0}\n` +
           `- correctIndex is 0-based index of the correct option\n` +
           `- Keep question short (max 80 chars), suitable for WhatsApp poll\n` +
-          `- Include ✅ at the end of the correct option text\n` +
-          `- Language: Somali preferred but can mix with English for technical terms`;
+          `- DO NOT include checkmarks (✅) in the options list so the answer is never spoiled before voting\n` +
+          `- Language: Somali`;
 
         const res = await aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 200, temperature: 0.7 });
         if (res?.text?.trim()) {
@@ -1043,9 +1109,10 @@ export class GroupGovernorService {
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
             if (parsed.question && Array.isArray(parsed.options) && parsed.options.length >= 2) {
+              const cleanedOptions = parsed.options.slice(0, 4).map((opt: string) => opt.replace(/[✅✔]/g, '').trim());
               return {
                 pollTitle: `🧠 ${parsed.question}`,
-                options: parsed.options.slice(0, 4),
+                options: cleanedOptions,
                 correctIndex: typeof parsed.correctIndex === 'number' ? parsed.correctIndex : 0,
               };
             }
@@ -1064,13 +1131,16 @@ export class GroupGovernorService {
     question: string,
     options: string[],
     correctIndex: number,
-    ttlMs: number = 5 * 60 * 1000
+    ttlMs: number = 15 * 60 * 1000
   ): void {
     this.activeQuizzes.set(groupJid, {
       question,
       options,
       correctIndex,
+      createdAt: Date.now(),
       expiresAt: Date.now() + ttlMs,
+      announced: false,
+      correctParticipants: new Map(),
     });
   }
 
@@ -1078,15 +1148,24 @@ export class GroupGovernorService {
     const quiz = this.activeQuizzes.get(groupJid);
     if (!quiz) return null;
     if (Date.now() > quiz.expiresAt) {
-      this.activeQuizzes.delete(groupJid);
-      return null;
+      // Don't auto-delete if not yet announced; checkExpiredQuizToAnnounce will handle it
+      if (quiz.announced) {
+        this.activeQuizzes.delete(groupJid);
+        return null;
+      }
     }
     return quiz;
   }
 
-  public recordQuizAnswer(groupJid: string, participantJid: string, selectedIndex: number): { correct: boolean; correctAnswer: string } | null {
-    const quiz = this.getActiveQuiz(groupJid);
+  public recordQuizAnswer(
+    groupJid: string,
+    participantJid: string,
+    selectedIndex: number,
+    participantName?: string
+  ): { correct: boolean; correctAnswer: string } | null {
+    const quiz = this.activeQuizzes.get(groupJid);
     if (!quiz) return null;
+    if (Date.now() > quiz.expiresAt && quiz.announced) return null;
 
     const correct = selectedIndex === quiz.correctIndex;
     const cleanUser = participantJid.split('@')[0].split(':')[0];
@@ -1096,12 +1175,79 @@ export class GroupGovernorService {
       groupMap = new Map();
       this.quizScores.set(groupJid, groupMap);
     }
-    const existing = groupMap.get(cleanUser) || { correct: 0, wrong: 0 };
-    if (correct) existing.correct += 1;
-    else existing.wrong += 1;
+    const existing = groupMap.get(cleanUser) || { correct: 0, wrong: 0, name: participantName || cleanUser };
+    if (participantName && !existing.name) existing.name = participantName;
+
+    if (correct) {
+      existing.correct += 1;
+      if (quiz.correctParticipants && !quiz.correctParticipants.has(cleanUser)) {
+        quiz.correctParticipants.set(cleanUser, {
+          phone: cleanUser,
+          name: participantName || cleanUser,
+          timestamp: Date.now(),
+        });
+      }
+    } else {
+      existing.wrong += 1;
+    }
     groupMap.set(cleanUser, existing);
 
     return { correct, correctAnswer: quiz.options[quiz.correctIndex] };
+  }
+
+  /**
+   * Checks if an active quiz reached its 15-minute expiration and needs its winners announced.
+   * Returns quiz details and the list of winners who answered correctly, or null.
+   */
+  public checkExpiredQuizToAnnounce(groupJid: string): {
+    question: string;
+    correctAnswer: string;
+    winners: Array<{ phone: string; name: string; elapsedSeconds: number }>;
+  } | null {
+    const quiz = this.activeQuizzes.get(groupJid);
+    if (!quiz || quiz.announced) return null;
+    if (Date.now() >= quiz.expiresAt) {
+      quiz.announced = true;
+      const winners: Array<{ phone: string; name: string; elapsedSeconds: number }> = [];
+      if (quiz.correctParticipants) {
+        for (const [phone, p] of quiz.correctParticipants.entries()) {
+          const elapsed = Math.max(1, Math.round((p.timestamp - (quiz.createdAt || (quiz.expiresAt - 15 * 60 * 1000))) / 1000));
+          winners.push({ phone, name: p.name || phone, elapsedSeconds: elapsed });
+        }
+      }
+      return {
+        question: quiz.question,
+        correctAnswer: quiz.options[quiz.correctIndex],
+        winners,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Checks if Thursday weekly awards should be posted for this group (Every Thursday at 20:00 EAT).
+   */
+  public shouldPostThursdayAwards(groupJid: string, customDate?: Date): boolean {
+    const now = customDate || new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const eat = new Date(utc + 3 * 3600000);
+
+    // Thursday is day 4 (Sunday=0, Thursday=4)
+    if (eat.getDay() !== 4) return false;
+    // Post at 20:00 (8:00 PM) or after
+    if (eat.getHours() < 20) return false;
+
+    const dateKey = `${eat.getFullYear()}-${eat.getMonth() + 1}-${eat.getDate()}`;
+    const lastDate = this.lastThursdayAwardsDates.get(groupJid);
+    return lastDate !== dateKey;
+  }
+
+  public recordThursdayAwardsPosted(groupJid: string, customDate?: Date): void {
+    const now = customDate || new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const eat = new Date(utc + 3 * 3600000);
+    const dateKey = `${eat.getFullYear()}-${eat.getMonth() + 1}-${eat.getDate()}`;
+    this.lastThursdayAwardsDates.set(groupJid, dateKey);
   }
 
   public getLeaderboard(groupJid: string, topN: number = 10): Array<{ user: string; correct: number; wrong: number; score: number }> {

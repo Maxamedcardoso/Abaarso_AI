@@ -57,6 +57,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       <button class="tab-btn" onclick="switchAdminTab('create', this)">➕ Diiwaangeli Macmiil Cusub</button>
       <button class="tab-btn" onclick="switchAdminTab('admins', this)">👥 Admins &amp; 🎟️ Promo Codes</button>
       <button class="tab-btn" onclick="switchAdminTab('owner', this)">🤖 Bot-kaaga (Owner Studio)</button>
+      <button class="tab-btn" onclick="switchAdminTab('voice', this)">🎙️ Voice Note to Groups</button>
     </nav>
 
     <!-- TAB 1: SUBSCRIBERS & PENDING REQUESTS -->
@@ -341,6 +342,70 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         </section>
       </div>
     </div>
+
+    <!-- TAB 5: VOICE NOTE TO GROUPS -->
+    <div id="admin-tab-voice" class="tab-pane">
+      <div class="grid-2">
+        <!-- Section 1: Choose Groups -->
+        <section class="glass-card">
+          <div class="card-title">
+            <span>👥 Dooro Kooxaha (WhatsApp Groups)</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="loadGroupsForVoice()">🔄 Refresh</button>
+          </div>
+          <div class="card-sub">Dooro hal ama dhowr kooxood oo aad rabto inaad codka tooska ah ugu dirto:</div>
+
+          <div style="margin-bottom:0.75rem;display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;background:rgba(6,182,212,0.1);border-radius:8px;">
+            <input type="checkbox" id="selectAllVoiceGroups" onchange="toggleSelectAllGroups(this)" style="cursor:pointer;width:18px;height:18px;" />
+            <label for="selectAllVoiceGroups" style="font-size:0.85rem;font-weight:700;cursor:pointer;margin:0;">Dooro Dhammaan Kooxaha (Select All)</label>
+          </div>
+
+          <div id="voiceGroupsListBox" style="max-height:360px;overflow-y:auto;background:rgba(8,13,25,0.7);border:1px solid var(--card-border);border-radius:10px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;">
+            <div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa kooxaha...</div>
+          </div>
+        </section>
+
+        <!-- Section 2: Audio File / Text & Title -->
+        <section class="glass-card">
+          <div class="card-title">🎙️ Codka &amp; Ciwaanka Voice Note-ka</div>
+          <div class="card-sub">Codku wuxuu ugu dhacayaa kooxda qaab Voice Note (PTT) ah oo mowjad dabiici ah leh:</div>
+
+          <div class="form-group">
+            <label class="field-label">Ciwaanka / Qoraalka Codka La Socda (Title Caption)</label>
+            <input class="field" id="voiceTitleInput" placeholder="Tusaale: XUSUUSIN MUHIIM AH AMA WACDI & WAANO" />
+          </div>
+
+          <div style="margin-bottom:1rem;">
+            <label class="field-label">Habka Codka (Dooro midkood):</label>
+            <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
+              <button type="button" class="btn btn-primary btn-sm" id="btnAudioModeFile" onclick="setAudioSourceMode('file')">📁 Soo Geli Fayl Cod ah (MP3/OGG)</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnAudioModeTTS" onclick="setAudioSourceMode('tts')">🗣️ Qor Qoraal AI Cod ka Dhigto</button>
+            </div>
+
+            <!-- Option A: File Upload -->
+            <div id="voiceBoxFile">
+              <input type="file" id="voiceFileInput" accept="audio/*,.mp3,.ogg,.wav,.m4a" onchange="handleVoiceFileSelected(this)" style="display:none;" />
+              <button type="button" class="btn btn-ghost" onclick="document.getElementById('voiceFileInput').click()" style="width:100%;padding:1.1rem;border:2px dashed var(--card-border);text-align:center;">
+                🎵 Riix Halkan si aad u soo doorato Faylka Codka (MP3 / OGG / WAV)
+              </button>
+              <div id="voiceFileSelectedName" style="margin-top:0.5rem;font-size:0.85rem;color:var(--primary);font-weight:700;"></div>
+              <audio id="voiceAudioPreview" controls style="display:none;width:100%;margin-top:0.6rem;"></audio>
+            </div>
+
+            <!-- Option B: TTS Text -->
+            <div id="voiceBoxTTS" style="display:none;">
+              <textarea class="field" id="voiceTextInput" placeholder="Qor qoraalka Soomaaliga ah ee aad rabto in AI cod macaan oo dabiici ah ku akhriyo..." style="min-height:110px;"></textarea>
+              <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem;">
+                Codka: Microsoft Edge Neural Voice (Soomaali Muuse / Dabiici ah)
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" id="sendVoiceToGroupBtn" onclick="dispatchVoiceNoteToGroups()" style="width:100%;padding:0.9rem;font-weight:700;font-size:1rem;background:linear-gradient(135deg,#06b6d4,#10b981);">
+            🚀 U Dir Kooxaha La Doortay (Send Voice Note PTT)
+          </button>
+        </section>
+      </div>
+    </div>
   </main>
 
   <!-- Edit Subscriber Limits / Tier Modal -->
@@ -415,6 +480,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       if (btn) btn.classList.add('active');
       if (name === 'owner') { loadOwnerConfig(); loadOwnerStatus(); loadOwnerLeads(); }
       if (name === 'admins') { loadAdminUsers(); loadPromos(); }
+      if (name === 'voice') { loadGroupsForVoice(); }
     }
 
     async function loadAdminOverview() {
@@ -894,6 +960,118 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       });
       const data = await res.json();
       showToast(data.message || 'Done');
+    }
+
+    // Voice Note to Groups Tab Functions
+    var _voiceFileBase64 = null;
+    var _voiceAudioMode = 'file'; // 'file' or 'tts'
+
+    function setAudioSourceMode(mode) {
+      _voiceAudioMode = mode;
+      var fileBox = document.getElementById('voiceBoxFile');
+      var ttsBox = document.getElementById('voiceBoxTTS');
+      var btnFile = document.getElementById('btnAudioModeFile');
+      var btnTts = document.getElementById('btnAudioModeTTS');
+      if (fileBox) fileBox.style.display = mode === 'file' ? 'block' : 'none';
+      if (ttsBox) ttsBox.style.display = mode === 'tts' ? 'block' : 'none';
+      if (btnFile) btnFile.className = mode === 'file' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+      if (btnTts) btnTts.className = mode === 'tts' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+    }
+
+    function handleVoiceFileSelected(input) {
+      if (!input.files || !input.files[0]) return;
+      const file = input.files[0];
+      const nameEl = document.getElementById('voiceFileSelectedName');
+      if (nameEl) nameEl.textContent = '✅ Faylka la doortay: ' + file.name;
+      const url = URL.createObjectURL(file);
+      const audio = document.getElementById('voiceAudioPreview');
+      if (audio) {
+        audio.src = url;
+        audio.style.display = 'block';
+      }
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        _voiceFileBase64 = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function toggleSelectAllGroups(cb) {
+      document.querySelectorAll('.voice-group-cb').forEach(function(el) {
+        el.checked = cb.checked;
+      });
+    }
+
+    async function loadGroupsForVoice() {
+      const box = document.getElementById('voiceGroupsListBox');
+      if (!box) return;
+      box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa kooxaha...</div>';
+      try {
+        const res = await fetch('/api/owner/groups');
+        const data = await res.json();
+        if (!data.groups || data.groups.length === 0) {
+          box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Koox la heli waayay. WhatsApp ma xiran yahay ama kooxo kuma jiro?</div>';
+          return;
+        }
+        box.innerHTML = data.groups.map(function(g) {
+          const checked = g.isManaged ? 'checked' : '';
+          const badge = g.isManaged
+            ? ' <span class="pill pill-green" style="font-size:0.7rem;padding:0.1rem 0.5rem;">Managed</span>'
+            : '';
+          return '<label style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:rgba(255,255,255,0.03);">' +
+            '<input type="checkbox" class="voice-group-cb" value="' + escapeAdminHtml(g.id) + '" style="cursor:pointer;width:16px;height:16px;" ' + checked + ' />' +
+            '<span style="flex:1;"><strong>' + escapeAdminHtml(g.name || g.id) + '</strong>' + badge +
+            '<br/><span style="font-size:0.75rem;color:var(--text-muted);">' + escapeAdminHtml(g.id) + ' · ' + (g.participantsCount || '?') + ' xubnood</span></span>' +
+            '</label>';
+        }).join('');
+      } catch (err) {
+        box.innerHTML = '<div style="color:#f87171;font-size:0.85rem;">Cilad ayaa dhacday: ' + err.message + '</div>';
+      }
+    }
+
+    async function dispatchVoiceNoteToGroups() {
+      const btn = document.getElementById('sendVoiceToGroupBtn');
+      const selected = Array.from(document.querySelectorAll('.voice-group-cb:checked')).map(function(el) {
+        return el.value;
+      });
+      if (selected.length === 0) {
+        showToast('❌ Fadlan dooro ugu yaraan hal koox oo codka loo diro', true);
+        return;
+      }
+      const title = document.getElementById('voiceTitleInput').value.trim();
+      var body = { groupJids: selected, title: title };
+
+      if (_voiceAudioMode === 'file') {
+        if (!_voiceFileBase64) {
+          showToast('❌ Fadlan dooro fayl cod ah (MP3 / OGG / WAV)', true);
+          return;
+        }
+        body.audioBase64 = _voiceFileBase64;
+      } else {
+        const text = document.getElementById('voiceTextInput').value.trim();
+        if (!text) {
+          showToast('❌ Fadlan qor qoraalka la doonayo in cod loo beddelo', true);
+          return;
+        }
+        body.text = text;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Waa la dirayaa codka...';
+      try {
+        const res = await fetch('/api/owner/send-voice-group', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        showToast(data.status === 'ok' ? '✅ ' + data.message : '❌ ' + (data.message || 'Cilad ayaa dhacday'), data.status !== 'ok');
+      } catch (err) {
+        showToast('❌ Cilad: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 U Dir Kooxaha La Doortay (Send Voice Note PTT)';
+      }
     }
 
     loadAdminOverview();

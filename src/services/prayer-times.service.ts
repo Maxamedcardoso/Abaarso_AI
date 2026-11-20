@@ -205,24 +205,13 @@ export class PrayerTimesService {
   }
 
   /**
-   * Generates the reverent Somali & Arabic text reminder for a prayer.
-   * Uses 100% verified authentic Uthmani Quranic script and authentic Hadith.
+   * Generates the reverent Somali & Arabic text reminder header for a prayer.
+   * Keeps strictly the reverent top title as requested by user ("CIWAANKA SARE UUN UDAA").
    */
   public getPrayerReminderText(prayer: PrayerDefinition): string {
     const timeFormatted = this.formatTime(prayer.hour, prayer.minute);
-    const fajrExtra = prayer.isFajr ? '\n🌙 *Sunnah:* «الصَّلَاةُ خَيْرٌ مِنَ النَّوْمِ» — _"Salaaddu waxay ka khayr badan tahay hurdada."_ [Sunan Abi Dawud: 501]\n' : '';
-
-    return (
-      `🕌✨ *[XUSUUSINTA SALAADDA: SALAADDA ${prayer.somaliName.toUpperCase()} / صَلَاةُ ${prayer.arabicName}]* ✨🕌\n\n` +
-      `🕐 *Waqtiga:* \`${timeFormatted}\` (Waqtiga Geeska Afrika / EAT)\n` +
-      `📢 *Ogeysiis:* Waxaa la gaadhay xilligii salaadda barakeysan ee *${prayer.somaliName}*.\n` +
-      fajrExtra +
-      `\n📖 *Aayadda Qur'aanka Kariimka ah:*` +
-      `\n_${prayer.quranAyahArabic}_` +
-      `\n_${prayer.quranAyahSomali}_ ${prayer.quranSurahRef}\n\n` +
-      `💡 Fadlan u kiciya weesada iyo gudashada salaadda adigoo jamaaco raadinaya.` +
-      `\n🎧 _Hoos ka dhageyso Eedanka tooska ah ee qaaliga ah iyo Ducada eedanka kaddib..._ 🤲`
-    );
+    const surahRef = prayer.quranSurahRef ? ` — _${prayer.quranSurahRef}_` : '';
+    return `🕌✨ *[XUSUUSINTA SALAADDA: SALAADDA ${prayer.somaliName.toUpperCase()} / صَلَاةُ ${prayer.arabicName} (${timeFormatted} EAT)]*${surahRef} ✨🕌`;
   }
 
   /**
