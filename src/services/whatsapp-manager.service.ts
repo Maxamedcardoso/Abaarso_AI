@@ -3067,9 +3067,35 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   /**
    * Lists all WhatsApp groups where the bot is currently participating.
    */
-  public async listParticipatingGroups(): Promise<Array<{ id: string; name: string; participantsCount: number; isManaged: boolean }>> {
-    const list: Array<{ id: string; name: string; participantsCount: number; isManaged: boolean }> = [];
+  public hasSocket(): boolean {
+    return this.socket !== null;
+  }
+
+  /**
+   * Lists all WhatsApp groups where the bot is currently participating,
+   * indicating whether the bot/owner is an Admin, superadmin, or regular member.
+   */
+  public async listParticipatingGroups(): Promise<Array<{
+    id: string;
+    name: string;
+    participantsCount: number;
+    isManaged: boolean;
+    isAdmin: boolean;
+    role: 'admin' | 'superadmin' | 'member';
+  }>> {
+    const list: Array<{
+      id: string;
+      name: string;
+      participantsCount: number;
+      isManaged: boolean;
+      isAdmin: boolean;
+      role: 'admin' | 'superadmin' | 'member';
+    }> = [];
     const seen = new Set<string>();
+
+    const botPhone = this.socket?.user?.id ? this.socket.user.id.split(':')[0].split('@')[0] : '';
+    const botLid = (this.socket?.user as any)?.lid ? String((this.socket?.user as any).lid).split(':')[0].split('@')[0] : '';
+    const adminPhones = (this.configuredAdminPhones || []).map(p => p.replace(/[^0-9]/g, ''));
 
     if (this.socket && typeof (this.socket as any).groupFetchAllParticipating === 'function') {
       try {
@@ -3077,11 +3103,30 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         for (const g of Object.values(groups) as any[]) {
           if (g && g.id) {
             seen.add(g.id);
+            let isAdmin = false;
+            let role: 'admin' | 'superadmin' | 'member' = 'member';
+
+            if (Array.isArray(g.participants)) {
+              for (const p of g.participants) {
+                const pNum = (p.id || '').split('@')[0].split(':')[0];
+                const isMatch = (botPhone && pNum === botPhone) || (botLid && pNum === botLid) || adminPhones.includes(pNum);
+                if (isMatch) {
+                  if (p.admin === 'admin' || p.admin === 'superadmin') {
+                    isAdmin = true;
+                    role = p.admin;
+                    break;
+                  }
+                }
+              }
+            }
+
             list.push({
               id: g.id,
               name: g.subject || g.id,
               participantsCount: Array.isArray(g.participants) ? g.participants.length : 0,
               isManaged: this.isGroupAutoManaged(g.id),
+              isAdmin,
+              role,
             });
           }
         }
@@ -3099,6 +3144,8 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           name: info.name,
           participantsCount: 0,
           isManaged: true,
+          isAdmin: false,
+          role: 'member',
         });
       }
     }

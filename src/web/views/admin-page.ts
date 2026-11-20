@@ -349,15 +349,24 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         <!-- Section 1: Choose Groups -->
         <section class="glass-card">
           <div class="card-title">
-            <span>👥 Dooro Kooxaha (WhatsApp Groups)</span>
+            <span>👥 Dooro Kooxaha (Dhammaan Groups-ka)</span>
             <button type="button" class="btn btn-ghost btn-sm" onclick="loadGroupsForVoice()">🔄 Refresh</button>
           </div>
-          <div class="card-sub">Dooro hal ama dhowr kooxood oo aad rabto inaad codka tooska ah ugu dirto:</div>
+          <div class="card-sub">Dooro kooxaha aad rabto (waxaa ku jira kooxaha aad Admin-ka ka tahay iyo kuwa aad Member ka tahayba):</div>
 
-          <div style="margin-bottom:0.75rem;display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;background:rgba(6,182,212,0.1);border-radius:8px;">
-            <input type="checkbox" id="selectAllVoiceGroups" onchange="toggleSelectAllGroups(this)" style="cursor:pointer;width:18px;height:18px;" />
-            <label for="selectAllVoiceGroups" style="font-size:0.85rem;font-weight:700;cursor:pointer;margin:0;">Dooro Dhammaan Kooxaha (Select All)</label>
+          <div style="margin-bottom:0.75rem;display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;background:rgba(6,182,212,0.1);border-radius:8px;flex-wrap:wrap;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <input type="checkbox" id="selectAllVoiceGroups" onchange="toggleSelectAllGroups(this)" style="cursor:pointer;width:18px;height:18px;" />
+              <label for="selectAllVoiceGroups" style="font-size:0.85rem;font-weight:700;cursor:pointer;margin:0;">Dhammaan (Select All)</label>
+            </div>
+            <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+              <button type="button" class="btn btn-primary btn-sm" id="btnFilterAll" onclick="filterGroupsList('all')" style="padding:0.2rem 0.55rem;font-size:0.75rem;">Dhammaan</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnFilterAdmin" onclick="filterGroupsList('admin')" style="padding:0.2rem 0.55rem;font-size:0.75rem;">👑 Admin Kaliya</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnFilterManaged" onclick="filterGroupsList('managed')" style="padding:0.2rem 0.55rem;font-size:0.75rem;">🤖 Managed</button>
+            </div>
           </div>
+
+          <input class="field" id="searchGroupInput" placeholder="🔍 Raadi koox magac ama lambar..." oninput="filterGroupsSearch(this.value)" style="margin-bottom:0.6rem;padding:0.45rem 0.65rem;font-size:0.82rem;" />
 
           <div id="voiceGroupsListBox" style="max-height:360px;overflow-y:auto;background:rgba(8,13,25,0.7);border:1px solid var(--card-border);border-radius:10px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;">
             <div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa kooxaha...</div>
@@ -530,6 +539,14 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
     ${COMMON_CLIENT_JS}
     window.lastCreatedSubUrl = '';
     window._tenantsCache = [];
+
+    function escapeAdminHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
 
     function switchAdminTab(name, btn) {
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
@@ -1081,16 +1098,91 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       reader.readAsDataURL(file);
     }
 
+    var _allGroupsCache = [];
+    var _currentGroupFilter = 'all'; // 'all', 'admin', 'managed'
+    var _searchGroupQuery = '';
+    var _checkedGroupJids = new Set();
+
     function toggleSelectAllGroups(cb) {
       document.querySelectorAll('.voice-group-cb').forEach(function(el) {
         el.checked = cb.checked;
+        if (cb.checked) {
+          _checkedGroupJids.add(el.value);
+        } else {
+          _checkedGroupJids.delete(el.value);
+        }
       });
+    }
+
+    function onGroupCheckboxChanged(cb) {
+      if (cb.checked) {
+        _checkedGroupJids.add(cb.value);
+      } else {
+        _checkedGroupJids.delete(cb.value);
+      }
+    }
+
+    function filterGroupsList(filter) {
+      _currentGroupFilter = filter;
+      const btnAll = document.getElementById('btnFilterAll');
+      const btnAdmin = document.getElementById('btnFilterAdmin');
+      const btnManaged = document.getElementById('btnFilterManaged');
+      if (btnAll) btnAll.className = filter === 'all' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+      if (btnAdmin) btnAdmin.className = filter === 'admin' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+      if (btnManaged) btnManaged.className = filter === 'managed' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm';
+      renderGroupsList();
+    }
+
+    function filterGroupsSearch(query) {
+      _searchGroupQuery = (query || '').toLowerCase().trim();
+      renderGroupsList();
+    }
+
+    function renderGroupsList() {
+      const box = document.getElementById('voiceGroupsListBox');
+      if (!box) return;
+
+      let filtered = _allGroupsCache.slice();
+      if (_currentGroupFilter === 'admin') {
+        filtered = filtered.filter(function(g) { return g.isAdmin; });
+      } else if (_currentGroupFilter === 'managed') {
+        filtered = filtered.filter(function(g) { return g.isManaged; });
+      }
+
+      if (_searchGroupQuery) {
+        filtered = filtered.filter(function(g) {
+          const name = (g.name || '').toLowerCase();
+          const id = (g.id || '').toLowerCase();
+          return name.includes(_searchGroupQuery) || id.includes(_searchGroupQuery);
+        });
+      }
+
+      if (filtered.length === 0) {
+        box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;padding:0.5rem;">Lama helin koox waafaqsan raadinta/filter-ka.</div>';
+        return;
+      }
+
+      box.innerHTML = filtered.map(function(g) {
+        const isChecked = _checkedGroupJids.has(g.id);
+        const adminBadge = g.isAdmin
+          ? '<span class="pill pill-green" style="font-size:0.7rem;padding:0.1rem 0.45rem;background:#10b981;color:#fff;">👑 Admin</span>'
+          : '<span class="pill pill-muted" style="font-size:0.7rem;padding:0.1rem 0.45rem;">👤 Member</span>';
+        const managedBadge = g.isManaged
+          ? '<span class="pill pill-primary" style="font-size:0.7rem;padding:0.1rem 0.45rem;background:#06b6d4;color:#fff;">🤖 Managed</span>'
+          : '';
+
+        return '<label style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:rgba(255,255,255,0.03);">' +
+          '<input type="checkbox" class="voice-group-cb" value="' + escapeAdminHtml(g.id) + '" onchange="onGroupCheckboxChanged(this)" style="cursor:pointer;width:17px;height:17px;" ' + (isChecked ? 'checked' : '') + ' />' +
+          '<span style="flex:1;"><strong>' + escapeAdminHtml(g.name || g.id) + '</strong> ' + adminBadge + ' ' + managedBadge +
+          '<br/><span style="font-size:0.75rem;color:var(--text-muted);">' + escapeAdminHtml(g.id) + ' · ' + (g.participantsCount || '?') + ' xubnood</span></span>' +
+          '</label>';
+      }).join('');
     }
 
     async function loadGroupsForVoice() {
       const box = document.getElementById('voiceGroupsListBox');
       if (!box) return;
-      box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa kooxaha...</div>';
+      box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa dhammaan kooxaha...</div>';
       try {
         const res = await fetch('/api/owner/groups');
         const data = await res.json();
@@ -1098,22 +1190,20 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Koox la heli waayay. WhatsApp ma xiran yahay ama kooxo kuma jiro?</div>';
           return;
         }
-        box.innerHTML = data.groups.map(function(g) {
-          const checked = g.isManaged ? 'checked' : '';
-          const badge = g.isManaged
-            ? ' <span class="pill pill-green" style="font-size:0.7rem;padding:0.1rem 0.5rem;">Managed</span>'
-            : '';
-          return '<label style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:rgba(255,255,255,0.03);">' +
-            '<input type="checkbox" class="voice-group-cb" value="' + escapeAdminHtml(g.id) + '" style="cursor:pointer;width:16px;height:16px;" ' + checked + ' />' +
-            '<span style="flex:1;"><strong>' + escapeAdminHtml(g.name || g.id) + '</strong>' + badge +
-            '<br/><span style="font-size:0.75rem;color:var(--text-muted);">' + escapeAdminHtml(g.id) + ' · ' + (g.participantsCount || '?') + ' xubnood</span></span>' +
-            '</label>';
-        }).join('');
+
+        _allGroupsCache = data.groups;
+        _allGroupsCache.forEach(function(g) {
+          if (g.isManaged) _checkedGroupJids.add(g.id);
+        });
+
+        renderGroupsList();
 
         const select = document.getElementById('autoAddGroupSelect');
         if (select) {
           select.innerHTML = data.groups.map(function(g) {
-            return '<option value="' + escapeAdminHtml(g.id) + '">' + escapeAdminHtml(g.name || g.id) + (g.isManaged ? ' (Managed)' : '') + '</option>';
+            const role = g.isAdmin ? ' [👑 Admin]' : ' [👤 Member]';
+            const mg = g.isManaged ? ' [🤖 Managed]' : '';
+            return '<option value="' + escapeAdminHtml(g.id) + '">' + escapeAdminHtml(g.name || g.id) + role + mg + '</option>';
           }).join('');
           if (select.value) {
             loadAutoAddStatusForGroup(select.value);

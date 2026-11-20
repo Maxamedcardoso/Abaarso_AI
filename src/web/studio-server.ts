@@ -1086,7 +1086,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.get('/api/owner/groups', async (req: Request, res: Response) => {
     try {
-      const { whatsappManager } = getOwnerRefs();
+      const { whatsappManager, transport } = getOwnerRefs();
+      if (!whatsappManager.hasSocket() && transport && typeof (transport as any).getSocket === 'function') {
+        const sock = (transport as any).getSocket();
+        if (sock) whatsappManager.setSocket(sock);
+      }
       const groups = await whatsappManager.listParticipatingGroups();
       res.json({ status: 'ok', groups });
     } catch (err: any) {
