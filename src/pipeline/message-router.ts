@@ -2123,6 +2123,7 @@ SHURUUCDA DUGSIIYA:
 
       if (action === 'on') {
         this.whatsappManager.setLinkCampaignMode(true);
+        this.whatsappManager.setAutoViewStatus(true);
         if (!this.whatsappManager.hasOwnerPromo()) {
           this.whatsappManager.setAwaitingOwnerPromoSetup(true);
           const promptMsg =

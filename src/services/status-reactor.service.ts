@@ -233,6 +233,42 @@ export class StatusReactorService {
   }
 
   /**
+   * Extracts all valid phone numbers from a text or status caption.
+   * Supports:
+   *  - wa.me/252634949642 or https://wa.me/0634949642
+   *  - api.whatsapp.com/send?phone=...
+   *  - Somali local formats: 063..., 061..., 062..., 065..., +252..., 252...
+   *  - International numbers with +
+   */
+  public extractPhoneNumbersFromText(text: string): string[] {
+    if (!text) return [];
+    const results = new Set<string>();
+
+    // 1. wa.me or api.whatsapp.com links with numbers
+    const waMatches = text.matchAll(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{7,15})/gi);
+    for (const m of waMatches) {
+      const clean = m[1].replace(/\D/g, '');
+      if (clean.length >= 7 && clean.length <= 15) {
+        results.add(clean.startsWith('0') ? '252' + clean.slice(1) : clean);
+      }
+    }
+
+    // 2. Somali local phone formats: (0|252|+252)(6x or 7x)xxxxxxx
+    const somaliMatches = text.matchAll(/(?:\+?252|0)?(6[1-9]\d{7}|7[1-9]\d{7})\b/g);
+    for (const m of somaliMatches) {
+      results.add('252' + m[1]);
+    }
+
+    // 3. Any standard international phone number with +
+    const intlMatches = text.matchAll(/\+([1-9][0-9]{8,14})\b/g);
+    for (const m of intlMatches) {
+      results.add(m[1]);
+    }
+
+    return Array.from(results);
+  }
+
+  /**
    * Checks whether a contact is currently in cooldown to prevent spamming.
    * If cooldownHours is 0, cooldown is disabled and returns false immediately.
    */
@@ -336,11 +372,8 @@ export class StatusReactorService {
 
     // 0b. Phone number & WhatsApp link detection (HIGHEST PRIORITY before generic URLs)
     // Supports: wa.me/25263..., https://wa.me/..., api.whatsapp.com/send?phone=..., or raw phone numbers (063..., +25263...)
-    const waPhoneMatch = clean.match(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{8,15})/i);
-    const digitsOnly = clean.replace(/[^0-9]/g, '');
-    const isDirectPhone = digitsOnly.length >= 8 && digitsOnly.length <= 15 && clean.length <= 30;
-
-    if (waPhoneMatch || isDirectPhone) {
+    const detectedPhones = this.extractPhoneNumbersFromText(clean);
+    if (detectedPhones.length > 0) {
       return {
         category: 'phone_number_status',
         suggestedEmojis: ['💚'],
@@ -913,17 +946,18 @@ Respond with ONLY valid JSON:
    * Handles an incoming WhatsApp status event from Baileys transport.
    */
   public async handleIncomingStatus(msg: proto.IWebMessageInfo, socket: any): Promise<boolean> {
-    if (!this.config.enabled || !socket) {
-      console.log(`⚠️ [StatusReactor] SKIPPED: enabled=${this.config.enabled}, socket=${!!socket}`);
-      return false;
-    }
-    if (!this.config.autoReact && !this.config.autoComment) {
-      console.log(`⚠️ [StatusReactor] SKIPPED: autoReact=${this.config.autoReact}, autoComment=${this.config.autoComment}`);
-      return false;
-    }
-    // Suppress status interactions during Link Campaign Mode (!link on)
-    if (whatsappManagerService.isLinkCampaignMode()) {
-      return false;
+    if (!socket) return false;
+    const isLinkMode = whatsappManagerService.isLinkCampaignMode();
+
+    if (!isLinkMode) {
+      if (!this.config.enabled) {
+        console.log(`⚠️ [StatusReactor] SKIPPED: enabled=${this.config.enabled}`);
+        return false;
+      }
+      if (!this.config.autoReact && !this.config.autoComment) {
+        console.log(`⚠️ [StatusReactor] SKIPPED: autoReact=${this.config.autoReact}, autoComment=${this.config.autoComment}`);
+        return false;
+      }
     }
 
     const senderJid = msg.key.participant || msg.participant || '';
@@ -1011,6 +1045,50 @@ Respond with ONLY valid JSON:
 
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
+
+    // ─── 6b. LINK CAMPAIGN MODE (!link on) ──────────────────────────────
+    // USER RULE: "!link on markuu yahay bot ha eego dhamaaan status yaanu jaawabin status reply u galin kaliya status link soo dhigo numbers hala hadlo number lasoo dhigo status link ooo kaliya"
+    // 1. All statuses are marked as seen (auto-viewed in transport).
+    // 2. Do NOT react or comment/reply to the status story itself.
+    // 3. ONLY if a status contains a link / phone number, talk to the extracted number(s) via private DM.
+    if (isLinkMode) {
+      const extractedNumbers = this.extractPhoneNumbersFromText(text);
+      if (extractedNumbers.length > 0) {
+        console.log(`🔍 [StatusLinkMode] Found ${extractedNumbers.length} number(s) in status from ${senderJid}: ${extractedNumbers.join(', ')}`);
+        for (const phone of extractedNumbers) {
+          if (this.isAdminOrSelf(`${phone}@s.whatsapp.net`, false, socket)) {
+            continue;
+          }
+          if (this.isPendingSaveMe(phone)) {
+            console.log(`ℹ️ [StatusLinkMode] Already messaged ${phone} recently. Skipping duplicate DM.`);
+            continue;
+          }
+
+          const targetJid = `${phone}@s.whatsapp.net`;
+          const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
+          try {
+            await socket.sendMessage(targetJid, { text: saveMsg });
+            this.markSaveMeSent(phone);
+            console.log(`📲 [StatusLinkMode] Sent DM "${saveMsg}" to extracted number ${phone} from status of ${senderName || senderJid}`);
+            this.recordInteraction({
+              id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              senderJid,
+              senderName,
+              type: 'comment',
+              content: `${saveMsg} (DM to extracted number ${phone} from status link)`,
+              category: 'phone_number_status',
+              statusText: text,
+              timestamp: Date.now(),
+            });
+          } catch (sendErr: any) {
+            console.warn(`[StatusLinkMode] Failed to send DM to ${phone}: ${sendErr?.message}`);
+          }
+        }
+      } else {
+        console.log(`ℹ️ [StatusLinkMode] Status from ${senderJid} viewed (seen). No link/number found; status reply/react suppressed per user rule.`);
+      }
+      return true;
+    }
 
     // ─── 7. INSTANT Love Cagaaran (💚) Reaction ──────────────────────────────
     // Dispatched within ~500ms so "Liked your status" appears immediately on WhatsApp!
@@ -1224,15 +1302,11 @@ Respond with ONLY valid JSON:
     // --- Handle phone_number_status: skip both react and comment, send DM directly to the phone owner ---
     if (analysis.category === 'phone_number_status') {
       try {
-        let targetPhone = '';
-        const waMatch = rawText.match(/(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:.*&)?phone=))(\+?[0-9]{8,15})/i);
-        if (waMatch && waMatch[1]) {
-          targetPhone = normalizePhoneNumber(waMatch[1]);
-        } else {
-          targetPhone = normalizePhoneNumber(rawText);
-        }
+        const extracted = this.extractPhoneNumbersFromText(rawText);
+        for (const targetPhone of extracted) {
+          if (this.isAdminOrSelf(`${targetPhone}@s.whatsapp.net`, false, socket)) continue;
+          if (this.isPendingSaveMe(targetPhone)) continue;
 
-        if (targetPhone.length >= 8 && targetPhone.length <= 15) {
           const phoneJid = `${targetPhone}@s.whatsapp.net`;
           const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
           await socket.sendMessage(phoneJid, { text: saveMsg });

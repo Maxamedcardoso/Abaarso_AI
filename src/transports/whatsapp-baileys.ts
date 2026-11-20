@@ -1141,8 +1141,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
 
       // 1. Auto View Status: automatically mark contacts' status seen in real-time
+      // USER RULE: in both normal view and link campaign mode (!link on), bot ALWAYS views every status!
       console.log(`📱 [Status Debug] incoming: sender=${statusSender}, fromMe=${msg.key?.fromMe}, id=${msg.key?.id}, viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}, reactorEnabled=${(this as any).statusReactor?.getConfig?.()?.enabled}`);
-      if (this.whatsappManager.isAutoViewStatusEnabled() && this.socket && statusSender && msg.key?.id) {
+      const shouldAutoView = this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
+      if (shouldAutoView && this.socket && statusSender && msg.key?.id) {
         try {
           const statusKey = {
             remoteJid: 'status@broadcast',
@@ -1155,7 +1157,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${e?.message}`);
         }
       } else {
-        console.log(`⚠️ [Auto-View Status] SKIPPED: viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, socket=${!!this.socket}, sender=${statusSender}, id=${msg.key?.id}`);
+        console.log(`⚠️ [Auto-View Status] SKIPPED: viewEnabled=${this.whatsappManager.isAutoViewStatusEnabled()}, linkMode=${this.whatsappManager?.isLinkCampaignMode()}, socket=${!!this.socket}, sender=${statusSender}, id=${msg.key?.id}`);
       }
 
       // 2. Record contact pushName and real phone number JID (participantPn) if present
@@ -1167,12 +1169,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.broadcast.recordContact(statusParticipantPn, msg.pushName, false, Boolean(msg.pushName));
       }
 
-      // 3. Status Reactor: Intelligently react and comment like a real human
-      // USER RULE: "status kale yaanu ka jaawib marka !link on yahay" (Suppress when Link Campaign Mode is ON)
+      // 3. Status Reactor: Intelligently react and comment like a real human,
+      // or when in Link Campaign Mode (!link on): view status, suppress story replies, and DM extracted phone numbers only.
       if (this.socket) {
-        if (this.whatsappManager?.isLinkCampaignMode()) {
-          console.log(`ℹ️ [WhatsAppBaileys] Link Campaign Mode is ON: Status reaction/reply suppressed.`);
-        } else if (statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
+        if (statusSender && this.whatsappManager?.isAIDisabledForNumber(statusSender)) {
           console.log(`ℹ️ [WhatsAppBaileys] Status from ${statusSender} ignored: AI disabled for this number (!off).`);
         } else {
           this.statusReactor.handleIncomingStatus(msg, this.socket).catch((err: any) => {
