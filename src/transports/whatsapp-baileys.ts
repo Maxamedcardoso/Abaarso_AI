@@ -656,11 +656,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       if (qr) {
         this.currentQR = qr;
-        console.log(`\n======================================================`);
-        console.log(`  SCAN THIS QR CODE IN WHATSAPP TO LINK (${this.tenantId}):`);
-        console.log('======================================================');
-        qrcode.generate(qr, { small: true });
-        console.log('Open WhatsApp > Linked Devices > Link a Device\n');
+        // ONLY print terminal QR code for the primary 'owner' tenant!
+        // Subscribers pair via the Web Studio dashboard, preventing overlapping QR codes in the terminal!
+        if (this.tenantId === 'owner') {
+          console.log(`\n======================================================`);
+          console.log(`  SCAN THIS QR CODE IN WHATSAPP TO LINK (OWNER BOT):`);
+          console.log('======================================================');
+          qrcode.generate(qr, { small: true });
+          console.log('Open WhatsApp > Linked Devices > Link a Device\n');
+        } else {
+          console.log(`🔑 [WhatsAppBaileys:${this.tenantId}] QR code generated (accessible in Web Studio).`);
+        }
       }
 
       if (connection === 'close') {
@@ -710,8 +716,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const botLid = (this.socket?.user as any)?.lid || '';
         const botPhone = botId.split(':')[0].split('@')[0].replace(/\D/g, '');
 
-        // Phone-Number Lock: if subscriber signed up with allowedPhone, enforce exact phone match
-        if (this.allowedPhone && botPhone && !WhatsAppBaileysTransport.phonesMatch(this.allowedPhone, botPhone)) {
+        // Phone-Number Lock: strictly applies to subscriber tenants with an assigned allowedPhone.
+        // The server owner is the primary administrator and must NEVER be locked out of their own bot!
+        if (this.tenantId !== 'owner' && this.allowedPhone && botPhone && !WhatsAppBaileysTransport.phonesMatch(this.allowedPhone, botPhone)) {
           console.error(`⛔ [Security Phone Lock:${this.tenantId}] Connected phone ${botPhone} does NOT match allowedPhone ${this.allowedPhone}! Disconnecting & purging auth.`);
           this.lastSecurityBlockReason = `Lambarka ku xidhmay (${botPhone}) kuma jiro diiwaanka akoonkan (${this.allowedPhone}).`;
           this.connected = false;

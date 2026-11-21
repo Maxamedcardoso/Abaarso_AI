@@ -456,7 +456,12 @@ export class TenantManager {
 
     this.contexts.set(tenant.id, ctx);
 
-    if (startSocket && (!tenant.id || tenant.id === 'owner' || this.registry.isTenantActive(tenant))) {
+    // Auto-start socket on boot ONLY for owner, or for subscribers who already have saved credentials.
+    // Unregistered subscribers pair via the Web Studio dashboard without spamming host terminal sockets.
+    const hasExistingCreds = fs.existsSync(path.join(paths.authDir, 'creds.json'));
+    const shouldStart = startSocket && (paths.isOwner || hasExistingCreds);
+
+    if (shouldStart && (!tenant.id || tenant.id === 'owner' || this.registry.isTenantActive(tenant))) {
       ctx.started = true;
       transport.start().catch((err) => {
         console.error(`⚠️ [TenantManager] Transport start failed for ${tenant.id}:`, err?.message || err);
