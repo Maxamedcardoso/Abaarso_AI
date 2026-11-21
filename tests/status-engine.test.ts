@@ -68,7 +68,7 @@ function buildHarness(opts: { seenDelayMs?: number; watchdogTimeoutMs?: number }
     sendReceipt: async (jid: string, participant: string, ids: string[], type: string) => {
       receipts.push({ jid, participant, ids, type });
     },
-    sendPresenceUpdate: async () => {},
+    sendPresenceUpdate: async () => { },
     sendMessage: async (jid: string, content: any, options?: any) => {
       sentMessages.push({ jid, content, options });
       return { key: { id: `out_${sentMessages.length}` } };
@@ -125,7 +125,7 @@ suite.test('PN status: sends clean explicit type=read receipt, reacts ONCE via s
   assertEqual(reactMsgs[0].jid, 'status@broadcast', 'PN reaction uses official status@broadcast');
   assertTrue(
     Array.isArray(reactMsgs[0].options?.statusJidList) &&
-      reactMsgs[0].options.statusJidList.includes('252618881111@s.whatsapp.net'),
+    reactMsgs[0].options.statusJidList.includes('252618881111@s.whatsapp.net'),
     'statusJidList must include author PN'
   );
 
@@ -304,28 +304,306 @@ suite.test('Own status (PN OR own @lid): recorded as posted status, NEVER marked
   assertEqual(engine.getTelemetry().skippedOwn, 1);
 });
 
-suite.test('phone_number_status skips react & comment cleanly (zero double reaction!) and sends DM', async () => {
-  const { engine, mockSocket, receipts, sentMessages } = buildHarness();
+suite.test('Normal mode (!link off, !view on): normal statuses get SEEN + React + Reply, while link/phone-number statuses skip reply and DM "save me" directly to the number', async () => {
+  const { engine, reactor, mockSocket, receipts, sentMessages } = buildHarness();
+  reactor.setOwnerName('Mohamed');
   const now = Math.floor(Date.now() / 1000);
+
+  const normalCases: Array<{ id: string; participant: string; pushName: string; message: any }> = [
+    {
+      id: 'ST_ALL_BIZ',
+      participant: '252631110001@s.whatsapp.net',
+      pushName: 'Xasan',
+      message: { conversation: 'Dhar cusub iyo kabo qiimo jaban ayaan haynaa, dalbo hadda!' },
+    },
+    {
+      id: 'ST_ALL_EMOJI',
+      participant: '252631110002@s.whatsapp.net',
+      pushName: 'Ayaan',
+      message: { conversation: '🔥🔥❤️' },
+    },
+    {
+      id: 'ST_ALL_LINK',
+      participant: '252631110003@s.whatsapp.net',
+      pushName: 'Farxaan',
+      message: { conversation: 'Daawo muuqaalkan cajiibka ah https://www.tiktok.com/@test/video/123456' },
+    },
+    {
+      id: 'ST_ALL_AUDIO',
+      participant: '252631110005@s.whatsapp.net',
+      pushName: 'Hodan',
+      message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } },
+    },
+    {
+      id: 'ST_ALL_PTV',
+      participant: '252631110006@s.whatsapp.net',
+      pushName: 'Cali',
+      message: { ptvMessage: { mimetype: 'video/mp4', caption: '🔥' } },
+    },
+    {
+      id: 'ST_ALL_WRAPPED',
+      participant: '252631110007@s.whatsapp.net',
+      pushName: 'Fadumo',
+      message: {
+        statusMentionMessage: {
+          message: {
+            imageMessage: { mimetype: 'image/jpeg', caption: '❤️' },
+          },
+        },
+      },
+    },
+  ];
+
+  // Link/phone-number status posted by Suleyman containing another person's wa.me number
+  const phoneLinkCase = {
+    id: 'ST_ALL_PHONE',
+    participant: '252631110004@s.whatsapp.net',
+    pushName: 'Suleyman',
+    message: { conversation: 'Fadlan i save garee: https://wa.me/252637654321' },
+  };
+
+  for (const c of [...normalCases, phoneLinkCase]) {
+    await engine.handleStatusUpsert(
+      {
+        key: { remoteJid: 'status@broadcast', id: c.id, participant: c.participant, fromMe: false },
+        pushName: c.pushName,
+        messageTimestamp: now,
+        message: c.message,
+      },
+      'notify',
+      mockSocket
+    );
+  }
+
+  await new Promise((r) => setTimeout(r, 1700));
+  engine.disposeTimers();
+
+  for (const c of normalCases) {
+    const readRecp = receipts.find((r) => r.ids.includes(c.id) && r.type === 'read');
+    assertTrue(Boolean(readRecp), `Status ${c.id} MUST be marked SEEN (read receipt)`);
+
+    const react = sentMessages.find((m) => m.content?.react?.key?.id === c.id);
+    assertTrue(Boolean(react), `Status ${c.id} MUST receive a reaction`);
+
+    const reply = sentMessages.find((m) => m.jid === c.participant && m.content?.text && m.options?.quoted?.key?.id === c.id);
+    assertTrue(Boolean(reply), `Status ${c.id} MUST receive a quoted reply`);
+    assertFalse(/\bqaali\b/i.test(reply!.content.text), `Reply for ${c.id} must never contain "qaali"`);
+  }
+
+  // Phone/WhatsApp-link status in !link off + !view on mode:
+  // 1. Marked SEEN
+  assertTrue(
+    receipts.some((r) => r.ids.includes('ST_ALL_PHONE') && r.type === 'read'),
+    'Link/phone status MUST be marked SEEN'
+  );
+  // 2. NO reaction and NO reply to the status poster (Suleyman)
+  assertFalse(
+    sentMessages.some((m) => m.content?.react?.key?.id === 'ST_ALL_PHONE'),
+    'Link/phone status must NOT receive a reaction to the status'
+  );
+  assertFalse(
+    sentMessages.some((m) => m.jid === '252631110004@s.whatsapp.net'),
+    'Link/phone status must NOT send a reply to the status poster'
+  );
+  // 3. Directly DM "save me Mohamed" to the extracted link phone number (252637654321)
+  const saveMeDm = sentMessages.find((m) => m.jid === '252637654321@s.whatsapp.net');
+  assertTrue(Boolean(saveMeDm), 'Link/phone status MUST directly DM the extracted link number');
+  assertTrue(
+    String(saveMeDm?.content?.text || '').toLowerCase().includes('save me'),
+    'Direct DM to extracted link number must say "save me"'
+  );
+
+  // Audio and PTV video statuses must also receive a `played` receipt
+  assertTrue(
+    receipts.some((r) => r.ids.includes('ST_ALL_AUDIO') && r.type === 'played'),
+    'Audio status must also emit played receipt'
+  );
+  assertTrue(
+    receipts.some((r) => r.ids.includes('ST_ALL_PTV') && r.type === 'played'),
+    'Video/PTV status must also emit played receipt'
+  );
+});
+
+suite.test('CB:status top-level stanza is acknowledged (<ack class="status">) and marked SEEN', async () => {
+  const { engine, mockSocket, receipts } = buildHarness();
+  const sentNodes: any[] = [];
+  mockSocket.sendNode = async (n: any) => {
+    sentNodes.push(n);
+  };
+
+  await engine.observeRawStatusNode(
+    {
+      tag: 'status',
+      attrs: {
+        id: 'ST_CB_STATUS_1',
+        from: 'status@broadcast',
+        participant: '252631112233@s.whatsapp.net',
+        notify: 'Abdirahman',
+        t: String(Math.floor(Date.now() / 1000)),
+      },
+    },
+    mockSocket
+  );
+  engine.disposeTimers();
+
+  const ack = sentNodes.find((n) => n.tag === 'ack' && n.attrs?.class === 'status' && n.attrs?.id === 'ST_CB_STATUS_1');
+  assertTrue(Boolean(ack), 'CB:status stanza MUST be acknowledged with <ack class="status">');
+  assertEqual(engine.getTelemetry().cbStatusAcked, 1, 'cbStatusAcked counter must increment');
+  assertTrue(
+    receipts.some((r) => r.ids.includes('ST_CB_STATUS_1') && r.type === 'read'),
+    'CB:status contact story must be marked SEEN'
+  );
+});
+
+suite.test('Encrypted CB:status stanza decrypts cleanly -> triggers SEEN + React + Reply (!link off) AND Link-DM (!link on)', async () => {
+  // 1. Normal mode (!link off): encrypted CB:status stanza must decrypt, mark SEEN, react, AND reply!
+  const h1 = buildHarness();
+  const now = Math.floor(Date.now() / 1000);
+  const plainStoryBytes = proto.Message.encode({
+    conversation: 'Alxamdulilah maanta guul weyn ayaan gaadhay!',
+  }).finish();
+
+  const ackNodes1: any[] = [];
+  h1.mockSocket.authState = { creds: { me: { id: '252634949642:16@s.whatsapp.net', lid: '999888777666:16@lid' } } };
+  h1.mockSocket.sendNode = async (n: any) => { ackNodes1.push(n); };
+  h1.mockSocket.signalRepository = {
+    decryptGroupMessage: async () => Buffer.concat([Buffer.from(plainStoryBytes), Buffer.from([1])]),
+  };
+
+  await h1.engine.observeRawStatusNode(
+    {
+      tag: 'status',
+      attrs: {
+        id: 'ST_ENC_NORMAL_1',
+        from: 'status@broadcast',
+        participant: '233156930183363@lid',
+        participant_pn: '252637340117@s.whatsapp.net',
+        notify: 'Farxaan',
+        t: String(now),
+      },
+      content: [
+        { tag: 'enc', attrs: { v: '2', type: 'skmsg' }, content: new Uint8Array([1, 2, 3, 4]) },
+      ],
+    },
+    h1.mockSocket
+  );
+
+  await new Promise((r) => setTimeout(r, 1700));
+  h1.engine.disposeTimers();
+
+  assertTrue(
+    ackNodes1.some((n) => n.tag === 'ack' && n.attrs?.class === 'status' && n.attrs?.id === 'ST_ENC_NORMAL_1'),
+    'Encrypted CB:status must be acknowledged'
+  );
+  assertTrue(
+    h1.receipts.some((r) => r.ids.includes('ST_ENC_NORMAL_1') && r.type === 'read'),
+    'Encrypted CB:status must be marked SEEN'
+  );
+  assertTrue(
+    h1.sentMessages.some((m) => m.content?.react?.key?.id === 'ST_ENC_NORMAL_1'),
+    'Encrypted CB:status must trigger reaction in normal mode'
+  );
+  assertTrue(
+    h1.sentMessages.some((m) => m.jid === '252637340117@s.whatsapp.net' && m.content?.text && m.options?.quoted?.key?.id === 'ST_ENC_NORMAL_1'),
+    'Encrypted CB:status must trigger quoted reply in normal mode'
+  );
+
+  // 2. Link Campaign Mode (!link on): encrypted CB:status with api.whatsapp.com/send/?phone=... must SEEN + DM ONLY extracted number!
+  const h2 = buildHarness();
+  h2.manager.setLinkCampaignMode(true);
+  h2.reactor.setOwnerName('Mohamed');
+
+  const linkStoryBytes = proto.Message.encode({
+    extendedTextMessage: {
+      text: 'Kala soo xidhiidh: https://api.whatsapp.com/send/?phone=%2B252615889900&text=hello',
+    },
+  }).finish();
+
+  h2.mockSocket.authState = { creds: { me: { id: '252634949642:16@s.whatsapp.net', lid: '999888777666:16@lid' } } };
+  h2.mockSocket.sendNode = async () => {};
+  h2.mockSocket.onWhatsApp = async (phone: string) => [{ exists: true, jid: `${phone}@s.whatsapp.net` }];
+  h2.mockSocket.signalRepository = {
+    decryptGroupMessage: async () => Buffer.concat([Buffer.from(linkStoryBytes), Buffer.from([1])]),
+  };
+
+  await h2.engine.observeRawStatusNode(
+    {
+      tag: 'status',
+      attrs: {
+        id: 'ST_ENC_LINK_1',
+        from: 'status@broadcast',
+        participant: '55564662997052@lid',
+        participant_pn: '252615210943@s.whatsapp.net',
+        notify: 'Jecelow',
+        t: String(now),
+      },
+      content: [
+        { tag: 'enc', attrs: { v: '2', type: 'skmsg' }, content: new Uint8Array([5, 6, 7, 8]) },
+      ],
+    },
+    h2.mockSocket
+  );
+
+  await new Promise((r) => setTimeout(r, 200));
+  h2.engine.disposeTimers();
+
+  assertTrue(
+    h2.receipts.some((r) => r.ids.includes('ST_ENC_LINK_1') && r.type === 'read'),
+    'Encrypted CB:status in !link on mode must be marked SEEN'
+  );
+  assertTrue(
+    h2.sentMessages.some((m) => m.jid === '252615889900@s.whatsapp.net' && m.content?.text?.includes('save me')),
+    'Encrypted CB:status in !link on mode MUST DM the extracted link phone number'
+  );
+  assertFalse(
+    h2.sentMessages.some((m) => m.jid === '252615210943@s.whatsapp.net' || m.content?.react),
+    'Encrypted CB:status in !link on mode must NOT react or reply to the status poster'
+  );
+});
+
+suite.test('Reply delivery resiliently falls back from failing PN to LID when primary target throws', async () => {
+  const { engine, mockSocket, sentMessages } = buildHarness();
+  const now = Math.floor(Date.now() / 1000);
+  const origSend = mockSocket.sendMessage;
+
+  mockSocket.sendMessage = async (jid: string, content: any, options?: any) => {
+    if (jid === '252635559999@s.whatsapp.net' && content?.text) {
+      throw new Error('No session record for PN');
+    }
+    return origSend(jid, content, options);
+  };
+
+  engine.observeRawStanza(
+    {
+      tag: 'message',
+      attrs: {
+        id: 'ST_FALLBACK_1',
+        from: 'status@broadcast',
+        participant: '127943418368299@lid',
+        participant_pn: '252635559999@s.whatsapp.net',
+        notify: 'Khadar',
+        t: String(now),
+      },
+    },
+    mockSocket
+  );
 
   await engine.handleStatusUpsert(
     {
-      key: { remoteJid: 'status@broadcast', id: 'ST_PHONE_1', participant: '252631234567@s.whatsapp.net', fromMe: false },
-      pushName: 'Suleyman',
+      key: { remoteJid: 'status@broadcast', id: 'ST_FALLBACK_1', participant: '127943418368299@lid', fromMe: false },
+      pushName: 'Khadar',
       messageTimestamp: now,
-      message: { conversation: 'Fadlan i save garee: https://wa.me/252637654321' },
+      message: { conversation: 'Jimco wanaagsan dhammaan asxaabta!' },
     },
     'notify',
     mockSocket
   );
 
-  await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, 1700));
   engine.disposeTimers();
 
-  assertEqual(receipts.length, 1, 'Status with phone number must still be marked SEEN');
-  assertEqual(sentMessages.filter((m) => m.content?.react).length, 0, 'Must NEVER send premature reaction to phone_number_status');
-  const dms = sentMessages.filter((m) => m.jid === '252637654321@s.whatsapp.net');
-  assertEqual(dms.length, 1, 'Must send save-me DM to extracted phone number');
+  const lidReply = sentMessages.find((m) => m.jid === '127943418368299@lid' && m.content?.text);
+  assertTrue(Boolean(lidReply), 'Status reply must fall back to @lid target when PN target fails');
 });
 
 suite.test('Detects Read Receipts privacy=none warning and flushes stuck offline event buffer', async () => {
@@ -349,6 +627,6 @@ suite.test('Detects Read Receipts privacy=none warning and flushes stuck offline
 const result = await suite.run();
 try {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-} catch {}
+} catch { }
 if (result.failed > 0) process.exit(1);
 process.exit(0);

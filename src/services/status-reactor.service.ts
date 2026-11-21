@@ -36,6 +36,7 @@ export type StatusCategory =
   | 'style_selfie'
   | 'general_quote'
   | 'video'
+  | 'audio'
   | 'media_only'
   | 'emoji_only'
   | 'link_status'
@@ -175,8 +176,8 @@ export class StatusReactorService {
       autoComment: true,
       mode: 'both',
       cooldownHours: 0, // Cooldown removed per user request (0 = disabled)
-      minDelaySeconds: 10,
-      maxDelaySeconds: 30,
+      minDelaySeconds: 2,
+      maxDelaySeconds: 6,
       aiEnhanced: true,
     };
 
@@ -291,10 +292,11 @@ export class StatusReactorService {
   public extractPhoneNumbersFromText(text: string): string[] {
     if (!text) return [];
     const results = new Set<string>();
+    const decodedText = text.replace(/%2B/gi, '+').replace(/%20/g, ' ');
 
-    // 1. wa.me or api.whatsapp.com links with digits (allows spaces/dashes/plus inside URL text)
-    const waMatches = text.matchAll(
-      /(?:(?:https?:\/\/)?(?:wa\.me\/|api\.whatsapp\.com\/send\?(?:[^\s"'<>]*&)?phone=))(\+?[0-9][0-9\s\-().]{6,19})/gi
+    // 1. wa.me or api.whatsapp.com/send(?|/?) or whatsapp://send links with digits
+    const waMatches = decodedText.matchAll(
+      /(?:(?:https?:\/\/)?(?:wa\.me\/|(?:api\.)?whatsapp\.com\/send\/?\?(?:[^\s"'<>]*&)?phone=)|whatsapp:\/\/send\/?\?(?:[^\s"'<>]*&)?phone=)(\+?[0-9][0-9\s\-().]{6,19})/gi
     );
     for (const m of waMatches) {
       const norm = this.normalizeExtractedPhone(m[1]);
@@ -302,7 +304,7 @@ export class StatusReactorService {
     }
 
     // 2. Somali phone numbers (with or without spaces, dashes, dots): +252 / 00252 / 252 / 0 / bare 6x, 7x, 90
-    const somaliMatches = text.matchAll(
+    const somaliMatches = decodedText.matchAll(
       /(?<![0-9])(?:\+?252|00252|0)?[\s.\-]*((?:6[0-9]|7[0-9]|90)(?:[\s.\-]*\d){7})(?!\d)/g
     );
     for (const m of somaliMatches) {
@@ -311,7 +313,7 @@ export class StatusReactorService {
     }
 
     // 3. International phone numbers starting with + or 00 (spaces/dashes/parentheses allowed)
-    const intlMatches = text.matchAll(/(?:\+|(?<![0-9])00)([1-9](?:[\s.\-()]*\d){7,14})(?!\d)/g);
+    const intlMatches = decodedText.matchAll(/(?:\+|(?<![0-9])00)([1-9](?:[\s.\-()]*\d){7,14})(?!\d)/g);
     for (const m of intlMatches) {
       const norm = this.normalizeExtractedPhone(m[1]);
       if (norm) results.add(norm);
@@ -460,14 +462,30 @@ export class StatusReactorService {
     const clean = (text || '').trim();
     const lower = clean.toLowerCase();
 
-    // 00. Strict Visual Business Override:
-    // If AI vision inspected image/video and found clothes (dhar), shoes (kabo), merchandise,
-    // or products for sale, immediately mark as 'business' with ZERO comments per user request!
+    const getBusinessComments = (g: 'male' | 'female' | 'unknown'): string[] => {
+      const maleBiz = [
+        "Masha'Allah alaab aad u qurux badan sxb, Allaha kuu barakeeyo ganacsiga! 💼🔥",
+        "Guul iyo barako sxb! Wax aad u tayo wanaagsan weeye 👏✨",
+        "Masha'Allah bro ganacsi barakaysan iyo risiq xalaal ah! 💼🌟",
+      ];
+      const femaleBiz = [
+        "Masha'Allah alaab aad u qurux badan abaayo, Allaha kuu barakeeyo ganacsiga! 🌸💼",
+        "Guul iyo barako abaayo macaan! Wax aad u bilic san weeye ✨👏",
+        "Masha'Allah abaayo ganacsi barakaysan iyo risiq xalaal ah! 💐✨",
+      ];
+      const neutralBiz = [
+        "Masha'Allah alaab aad u qurux badan walaal, Allaha kuu barakeeyo ganacsiga! 💼✨",
+        "Guul iyo barako walaal, wax aad u tayo leh weeye 👏🔥",
+      ];
+      return g === 'male' ? maleBiz : g === 'female' ? femaleBiz : neutralBiz;
+    };
+
+    // 00. Visual Business Category (always receives both Like 💚 AND a warm Somali reply!)
     if (visualCategory === 'business') {
       return {
         category: 'business',
         suggestedEmojis: ['💚', '💼'],
-        suggestedComments: [], // NO REPLY: Business status only gets official Status Like 💚
+        suggestedComments: getBusinessComments(gender),
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -477,12 +495,30 @@ export class StatusReactorService {
       };
     }
 
-    // 0a. Emoji-only detection — if text has ONLY emojis/whitespace, skip comment
-    if (clean.length > 0 && /^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}\s]+$/u.test(clean)) {
+    // 0a. Emoji-only text status (ONLY when no photo/video/audio media is attached;
+    //     if media is attached with an emoji caption like "🔥", fall through to media analysis!)
+    if (!hasMedia && clean.length > 0 && /^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}\s]+$/u.test(clean)) {
+      const isLaughEmoji = /(🤣|😂|😭|😹)/.test(clean);
+      const isPrayerEmoji = /(🤲|🕌|🤍)/.test(clean);
+      const maleEmoji = isLaughEmoji
+        ? ['Hahaha yaabka sxb 😂🤣', 'Hahaha maxaa dhacay bro 😂🔥']
+        : isPrayerEmoji
+        ? ['Aamiin yaa Rabbi sxb! 🤲✨', 'Rabi khayr ha inagu mannaysto bro 🤲🤍']
+        : ["Masha'Allah vibe aad u fiican sxb! 🔥✨", 'Aad baad u shidan tahay bro! 👏✨'];
+      const femaleEmoji = isLaughEmoji
+        ? ['Hahaha yaabka abaayo 😂🤣', 'Hahaha qosol badanaa abaayo 😂✨']
+        : isPrayerEmoji
+        ? ['Aamiin yaa Rabbi abaayo macaan! 🤲🌸', 'Rabi khayr iyo barako ha inagu siiyo abaayo 🤲🤍']
+        : ["Masha'Allah vibe aad u qurux badan abaayo! 🌸✨", 'Aad baad u shidan tahay abaayo macaan! ✨💖'];
+      const neutralEmoji = isLaughEmoji
+        ? ['Hahaha qosol badanaa walaal 😂🤣']
+        : isPrayerEmoji
+        ? ['Aamiin yaa Rabbi walaal 🤲🤍']
+        : ["Masha'Allah vibe aad u fiican walaal! ✨🔥"];
       return {
         category: 'emoji_only',
-        suggestedEmojis: ['💚'],
-        suggestedComments: [],
+        suggestedEmojis: isPrayerEmoji ? ['🤲'] : isLaughEmoji ? ['😂'] : ['💚'],
+        suggestedComments: gender === 'male' ? maleEmoji : gender === 'female' ? femaleEmoji : neutralEmoji,
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -491,14 +527,25 @@ export class StatusReactorService {
       };
     }
 
-    // 0b. Phone number & WhatsApp link detection (HIGHEST PRIORITY before generic URLs)
-    // Supports: wa.me/25263..., https://wa.me/..., api.whatsapp.com/send?phone=..., or raw phone numbers (063..., +25263...)
+    // 0b. Phone number & WhatsApp link detection (in normal mode STILL receives a warm reply!)
     const detectedPhones = this.extractPhoneNumbersFromText(clean);
     if (detectedPhones.length > 0) {
+      const malePhone = [
+        "Masha'Allah sxb, Allaha kuu fududeeyo wadaagista! 👏✨",
+        "Mahadsanid bro wadaagista iyo xogta wanaagsan! 🙌🔥",
+      ];
+      const femalePhone = [
+        "Masha'Allah abaayo, Allaha kuu fududeeyo wadaagista! 🌸✨",
+        "Mahadsanid abaayo macaan xogta aad soo wadaagtay! 💖✨",
+      ];
+      const neutralPhone = [
+        "Masha'Allah walaal, mahadsanid wadaagista! ✨👏",
+        "Allaha kuu fududeeyo walaal, xog wanaagsan weeye 🙌✨",
+      ];
       return {
         category: 'phone_number_status',
         suggestedEmojis: ['💚'],
-        suggestedComments: [],
+        suggestedComments: gender === 'male' ? malePhone : gender === 'female' ? femalePhone : neutralPhone,
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -507,12 +554,26 @@ export class StatusReactorService {
       };
     }
 
-    // 0c. URL / external link detection (TikTok, YouTube, IG, external websites) — skip comment (react only)
+    // 0c. URL / external link detection (TikTok, YouTube, IG, external websites) — also gets a warm reply!
     if (/https?:\/\/|tiktok\.com|youtube\.com|youtu\.be|instagram\.com|twitter\.com|facebook\.com|t\.me/i.test(clean)) {
+      const maleLink = [
+        "Masha'Allah wax xiiso leh ayaad soo wadaagtay sxb! 🔥👏",
+        "Mahadsanid wadaagista bro, waa mid aad u fiican! ✨👍",
+        "Waa link/muuqaal aad u wanaagsan ninyahow, mahadsanid! 🙌✨",
+      ];
+      const femaleLink = [
+        "Masha'Allah wax aad u xiiso badan ayaad soo wadaagtay abaayo! 🌸✨",
+        "Mahadsanid wadaagista abaayo macaan, waa mid aad u fiican! 💖👏",
+        "Waa wax aad u wanaagsan abaayo, mahadsanid! ✨💐",
+      ];
+      const neutralLink = [
+        "Masha'Allah wax xiiso leh ayaad soo wadaagtay walaal! ✨👏",
+        "Mahadsanid wadaagista walaal, waa mid wanaagsan! 🙌✨",
+      ];
       return {
         category: 'link_status',
         suggestedEmojis: ['💚'],
-        suggestedComments: [],
+        suggestedComments: gender === 'male' ? maleLink : gender === 'female' ? femaleLink : neutralLink,
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -765,7 +826,7 @@ export class StatusReactorService {
       return {
         category: 'business',
         suggestedEmojis: ['💚', '💼'],
-        suggestedComments: [], // STRICT: No reply/comment for business statuses per user request! Only official Status Like 💚
+        suggestedComments: getBusinessComments(gender),
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -858,6 +919,34 @@ export class StatusReactorService {
         category: 'video',
         suggestedEmojis: ['🔥', '🎥', '👏', '✨'],
         suggestedComments: gender === 'male' ? maleList : gender === 'female' ? femaleList : neutralList,
+        extractedText: clean,
+        hasMedia,
+        mediaKind,
+        gender,
+        confidence: 0.85,
+      };
+    }
+
+    // 11b. Audio / Voice Note Status
+    if (mediaKind === 'audio') {
+      const maleAudio = [
+        "Masha'Allah cod aad u macaan sxb! 🎙️✨",
+        "Aad baan u dhagaystay bro, cod iyo fariin aad u fiican! 🎧👏",
+        "Masha'Allah ninyahow cod aad u qurux badan! 🎙️🔥",
+      ];
+      const femaleAudio = [
+        "Masha'Allah cod aad u macaan abaayo macaan! 🎙️🌸",
+        "Fariin cod ah oo aad u wanaagsan abaayo! 🎧✨",
+        "Masha'Allah cod aad u bilic san abaayo! 🌸👏",
+      ];
+      const neutralAudio = [
+        "Masha'Allah cod aad u macaan walaal! 🎙️✨",
+        "Fariin cod ah oo aad u fiican walaal! 🎧👏",
+      ];
+      return {
+        category: 'audio',
+        suggestedEmojis: ['💚', '🎙️', '✨'],
+        suggestedComments: gender === 'male' ? maleAudio : gender === 'female' ? femaleAudio : neutralAudio,
         extractedText: clean,
         hasMedia,
         mediaKind,
@@ -977,7 +1066,18 @@ SHURUUCO ADAG (MAMNUUC):
 7. Haddii uu qofku soo dhigay tacsi ama xanuun, duco qiiro leh u dir.
 8. Luuqad Soomaali saafi ah oo dhalinyaronimo iyo xushmad leh.`;
 
-        const res = await this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 60 });
+        // Bound AI generation with a fast 5s timeout so Gemini 429 quota or slow network NEVER blocks status replies
+        const aiTimeoutMs = 5000;
+        let aiTimer: NodeJS.Timeout | undefined;
+        const res = await Promise.race([
+          this.aiOrchestrator.generateResponse(prompt, [], { maxOutputTokens: 60 }),
+          new Promise<null>((resolve) => {
+            aiTimer = setTimeout(() => resolve(null), aiTimeoutMs);
+            if (typeof aiTimer.unref === 'function') aiTimer.unref();
+          }),
+        ]).finally(() => {
+          if (aiTimer) clearTimeout(aiTimer);
+        });
         if (res && res.text && !res.text.includes('mashquulsan') && res.text.trim().length > 3) {
           let cleanComment = res.text.trim().replace(/^["']|["']$/g, '');
           // Enforce 100% ban on the word "qaali"
@@ -992,12 +1092,18 @@ SHURUUCO ADAG (MAMNUUC):
       }
     }
 
-    // Reliable non-repetitive fallback from rule-based suggested comments
-    const list = analysis.suggestedComments;
+    // Reliable non-repetitive fallback from rule-based suggested comments (with ironclad non-empty guarantee)
+    const emergencyPool =
+      effectiveGender === 'male'
+        ? ["Masha'Allah aad buu u qurux badan yahay sxb! 🔥✨", "Masha'Allah wax aad u wanaagsan bro! 👏✨"]
+        : effectiveGender === 'female'
+        ? ["Masha'Allah aad buu u qurux badan yahay abaayo macaan! 🌸✨", "Masha'Allah wax aad u bilic san abaayo! ✨💖"]
+        : ["Masha'Allah aad buu u qurux badan yahay walaal! ✨👏", "Masha'Allah wax aad u wanaagsan! 🔥✨"];
+    const list = analysis.suggestedComments && analysis.suggestedComments.length > 0 ? analysis.suggestedComments : emergencyPool;
     // Prefer comments not used in the last 15 interactions
     const unusedList = list.filter(c => !this.recentCommentHistory.includes(c));
     const finalList = unusedList.length > 0 ? unusedList : list;
-    let chosen = finalList[Math.floor(Math.random() * finalList.length)];
+    let chosen = finalList[Math.floor(Math.random() * finalList.length)] || emergencyPool[0];
     chosen = chosen.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
     this.recentCommentHistory.push(chosen);
     return chosen;
@@ -1126,11 +1232,15 @@ Respond with ONLY valid JSON:
       return false;
     }
 
-    // 2. Ignore protocol messages, revokes, edits, or reaction stanzas (not actual status posts!)
+    // 2. Ignore protocol messages, revokes, edits, reaction stanzas, or metadata-only SKDM packets
+    const nonMetaKeys = msg.message
+      ? Object.keys(msg.message).filter((k) => k !== 'senderKeyDistributionMessage' && k !== 'messageContextInfo' && (msg.message as any)[k] != null)
+      : [];
     if (
-      msg.message?.protocolMessage ||
-      msg.message?.reactionMessage ||
-      (msg.message?.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)
+      !msg.message ||
+      msg.message.protocolMessage ||
+      msg.message.reactionMessage ||
+      nonMetaKeys.length === 0
     ) {
       return false;
     }
@@ -1138,11 +1248,16 @@ Respond with ONLY valid JSON:
     // 3. Status Freshness Guard:
     // Status stories last up to 24 hours on WhatsApp.
     const nowSec = Math.floor(Date.now() / 1000);
-    const msgTimestamp = typeof msg.messageTimestamp === 'number'
+    let msgTimestamp = typeof msg.messageTimestamp === 'number'
       ? msg.messageTimestamp
       : typeof (msg.messageTimestamp as any)?.toNumber === 'function'
       ? (msg.messageTimestamp as any).toNumber()
+      : typeof (msg.messageTimestamp as any)?.low === 'number'
+      ? (msg.messageTimestamp as any).low
       : Number(msg.messageTimestamp) || 0;
+    if (msgTimestamp > 1e11) {
+      msgTimestamp = Math.floor(msgTimestamp / 1000);
+    }
 
     const maxAgeSec = 86400; // Status stories last 24h on WhatsApp; never discard fresh statuses within 24 hours!
     if (msgTimestamp > 0 && nowSec - msgTimestamp > maxAgeSec) {
@@ -1150,16 +1265,24 @@ Respond with ONLY valid JSON:
       return false;
     }
 
-    // Unwrap message and extract ALL text/link fields (including matchedText & canonicalUrl!)
+    // Unwrap message and extract ALL text/link fields (including matchedText, canonicalUrl, ptv, sticker, poll, event!)
     const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
     const innerMsg = unwrapped.message;
     const mediaKind = unwrapped.mediaKind || undefined;
     const hasMedia = Boolean(
-      (mediaKind && (innerMsg?.imageMessage || innerMsg?.videoMessage || innerMsg?.audioMessage || innerMsg?.documentMessage)) ||
+      mediaKind ||
+      innerMsg?.imageMessage ||
+      innerMsg?.videoMessage ||
+      innerMsg?.ptvMessage ||
+      innerMsg?.audioMessage ||
+      innerMsg?.documentMessage ||
+      innerMsg?.stickerMessage ||
       msg.message?.imageMessage ||
       msg.message?.videoMessage ||
+      msg.message?.ptvMessage ||
       msg.message?.audioMessage ||
-      msg.message?.documentMessage
+      msg.message?.documentMessage ||
+      msg.message?.stickerMessage
     );
     const textParts = [
       innerMsg.conversation,
@@ -1170,7 +1293,17 @@ Respond with ONLY valid JSON:
       innerMsg.extendedTextMessage?.description,
       innerMsg.imageMessage?.caption,
       innerMsg.videoMessage?.caption,
+      innerMsg.ptvMessage?.caption,
       innerMsg.documentMessage?.caption,
+      innerMsg.pollCreationMessage?.name,
+      innerMsg.pollCreationMessageV2?.name,
+      innerMsg.pollCreationMessageV3?.name,
+      innerMsg.eventMessage?.name,
+      innerMsg.locationMessage?.name,
+      innerMsg.contactMessage?.displayName,
+      innerMsg.buttonsMessage?.contentText,
+      innerMsg.hydratedContentText,
+      innerMsg.contentText,
     ].filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
     const combinedText = Array.from(new Set(textParts.map((s) => s.trim()))).join(' ');
     const text = (
@@ -1178,14 +1311,18 @@ Respond with ONLY valid JSON:
       innerMsg.extendedTextMessage?.text ||
       innerMsg.imageMessage?.caption ||
       innerMsg.videoMessage?.caption ||
+      innerMsg.ptvMessage?.caption ||
       innerMsg.documentMessage?.caption ||
       combinedText
     ).trim();
 
-    // 4. Strict Content Guard:
-    // Status MUST have actual content (either non-empty text or real media).
-    // Never interact with empty, ghost, or deleted stanzas!
-    if (!combinedText && !hasMedia) {
+    // 4. Content Guard: accept ANY genuine story payload (text, image, video, ptv, audio, sticker, poll, event, etc.)
+    const hasAnyRealPayload = Boolean(
+      combinedText ||
+      hasMedia ||
+      (unwrapped.msgType && !['protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage', 'messageContextInfo'].includes(unwrapped.msgType))
+    );
+    if (!hasAnyRealPayload) {
       console.log(`⚠️ [StatusReactor] Ignored empty status stanza from ${senderJid} (no text or media).`);
       return false;
     }
@@ -1283,6 +1420,7 @@ Respond with ONLY valid JSON:
           try {
             await socket.sendMessage(targetJid, { text: saveMsg });
             this.markSaveMeSent(phone);
+            this.stats.dmLinks++;
             sentAnyDm = true;
             console.log(`📲 [StatusLinkMode] Sent DM "${saveMsg}" to extracted number ${phone} (${targetJid}) from status of ${senderName || senderJid}`);
             this.recordInteraction({
@@ -1312,29 +1450,68 @@ Respond with ONLY valid JSON:
       return false;
     }
 
+    // ─── 6b. LINK / PHONE-NUMBER STATUS IN NORMAL MODE (!link off + !view on) ──
+    // USER RULE: "marka link off yahay view on yahay yaanu jawaabin qof link number soo dhigay
+    //             ee hala hadlo link number qoran is toos save me haku dhaho"
+    // Do NOT react or reply to the status poster — directly DM the extracted link/phone number(s) "save me <ownerName>"!
+    const normalNumberSet = new Set<string>(this.extractPhoneNumbersFromText(combinedText));
+    if (/wa\.me\/(?:message|qr)\//i.test(combinedText)) {
+      const resolvedShort = await this.resolveWaMeShortLinks(combinedText);
+      for (const n of resolvedShort) normalNumberSet.add(n);
+    }
+    if (normalNumberSet.size > 0) {
+      const extracted = Array.from(normalNumberSet);
+      await this.sendSaveMeDmsToExtractedNumbers(
+        extracted,
+        socket,
+        senderJid,
+        senderName,
+        combinedText || text,
+        'StatusReactor'
+      );
+      return true;
+    }
+
     // Cooldown check (only active if cooldownHours is configured > 0):
     if (this.config.cooldownHours > 0 && this.isCooldownActive(senderJid)) {
       console.log(`⏳ [StatusReactor] Skipped ${senderJid}: Cooldown active.`);
       return false;
     }
 
-    // ─── 7. Download status media & perform AI Vision inspection if media is present ──
+    // ─── 7. Fast Image Vision inspection (ONLY for images, bounded to 5s so videos/429s never stall replies!) ──
     let visualCategory: StatusCategory | null = null;
     let visualDescription: string | undefined = undefined;
-    if (hasMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && this.aiOrchestrator) {
+    if (
+      hasMedia &&
+      mediaKind === 'image' &&
+      unwrapped.mediaContent &&
+      unwrapped.baileysMediaType === 'image' &&
+      this.aiOrchestrator
+    ) {
       try {
-        const buf = await MediaProcessorService.downloadMediaBuffer(unwrapped.mediaContent, unwrapped.baileysMediaType);
-        if (buf && buf.length > 50) {
+        const buf = await MediaProcessorService.downloadMediaBuffer(unwrapped.mediaContent, unwrapped.baileysMediaType, 5000);
+        if (buf && buf.length > 50 && buf.length <= 4 * 1024 * 1024) {
           const rawMime = (unwrapped.mediaContent as any)?.mimetype || '';
           const mimeType = MediaProcessorService.getMimeType(unwrapped.msgType, rawMime);
-          const visionResult = await this.inspectStatusMediaWithAI(
-            { mimeType, dataBase64: buf.toString('base64') },
-            text,
-            mediaKind || 'image'
-          );
-          visualCategory = visionResult.category;
-          visualDescription = visionResult.description;
-          console.log(`👁️ [StatusReactor] Vision inspected ${mediaKind || 'media'} from ${senderName || senderJid}: category=${visualCategory}, isBusiness=${visionResult.isBusiness} ("${visualDescription}")`);
+          let visTimer: NodeJS.Timeout | undefined;
+          const visionResult = await Promise.race([
+            this.inspectStatusMediaWithAI(
+              { mimeType, dataBase64: buf.toString('base64') },
+              text,
+              'image'
+            ),
+            new Promise<null>((resolve) => {
+              visTimer = setTimeout(() => resolve(null), 5000);
+              if (typeof visTimer.unref === 'function') visTimer.unref();
+            }),
+          ]).finally(() => {
+            if (visTimer) clearTimeout(visTimer);
+          });
+          if (visionResult) {
+            visualCategory = visionResult.category;
+            visualDescription = visionResult.description;
+            console.log(`👁️ [StatusReactor] Vision inspected image from ${senderName || senderJid}: category=${visualCategory}, isBusiness=${visionResult.isBusiness} ("${visualDescription}")`);
+          }
         }
       } catch (err: any) {
         console.warn(`[StatusReactor] Media vision inspection failed: ${err?.message}`);
@@ -1343,7 +1520,7 @@ Respond with ONLY valid JSON:
 
     const analysis = this.analyzeStatus(text, hasMedia, mediaKind, gender, visualCategory, visualDescription);
 
-    // Calculate natural human delay (e.g. 10 to 30 seconds)
+    // Calculate natural human delay (fast default 2 to 6 seconds)
     const minDelay = Math.max(0, this.config.minDelaySeconds);
     const maxDelay = Math.max(minDelay, this.config.maxDelaySeconds);
     const delayMs = Math.floor(Math.random() * ((maxDelay - minDelay) * 1000 + 1)) + minDelay * 1000;
@@ -1354,10 +1531,10 @@ Respond with ONLY valid JSON:
       )}s...`
     );
 
-    // Schedule ONE clean interaction (react + comment, or link DM) — never duplicate reactions!
+    // Schedule ONE clean interaction (react + reply) — never duplicate reactions!
     const timer = setTimeout(async () => {
       try {
-        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind);
+        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind, resolvedIdentity);
       } catch (err: any) {
         this.stats.failed++;
         console.error(`[StatusReactor] Error executing interaction: ${err?.message}`);
@@ -1375,39 +1552,143 @@ Respond with ONLY valid JSON:
   }
 
   /**
+   * Builds a clean, Baileys-6.7-safe `quoted` status object so `generateWAMessageFromContent`
+   * ALWAYS encodes a valid `contextInfo` (`remoteJid: 'status@broadcast'`, `stanzaId`, `participant`, `quotedMessage`),
+   * even when the incoming status used modern wrappers like `statusMentionMessage`, `deviceSentMessage`, or `ptvMessage`.
+   */
+  private buildCleanQuotedStatus(
+    msg: proto.IWebMessageInfo,
+    rawText: string,
+    quoteParticipant: string
+  ): proto.IWebMessageInfo {
+    const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
+    const inner = unwrapped.message || {};
+    const primaryKey = unwrapped.msgType;
+
+    let cleanQuotedMessage: Record<string, any>;
+    if (primaryKey === 'conversation' && typeof inner.conversation === 'string') {
+      cleanQuotedMessage = { conversation: inner.conversation };
+    } else if (primaryKey && inner[primaryKey] && typeof inner[primaryKey] === 'object') {
+      // Shallow clone & drop nested contextInfo so Baileys' quote builder never chokes or mutates the original
+      const copy = { ...inner[primaryKey] };
+      if ('contextInfo' in copy) delete copy.contextInfo;
+      cleanQuotedMessage = { [primaryKey]: copy };
+    } else {
+      cleanQuotedMessage = { conversation: rawText || 'Status' };
+    }
+
+    return {
+      key: {
+        remoteJid: 'status@broadcast',
+        id: msg.key?.id || '',
+        fromMe: false,
+        participant: quoteParticipant,
+      },
+      message: cleanQuotedMessage as proto.IMessage,
+      messageTimestamp: msg.messageTimestamp,
+      pushName: msg.pushName,
+    };
+  }
+
+  /**
+   * Dispatches a status reply (comment) with multi-stage fallback across PN/LID and quote formats
+   * so EVERY status receives a reply reliably!
+   */
+  private async sendStatusComment(
+    msg: proto.IWebMessageInfo,
+    socket: any,
+    senderJid: string,
+    comment: string,
+    rawText: string,
+    resolvedIdentity?: ResolvedStatusIdentity
+  ): Promise<any> {
+    const cleanSender = jidNormalizedUser(senderJid) || senderJid;
+    const rawParticipant = String(
+      resolvedIdentity?.normalizedParticipant ||
+      msg.key?.participant ||
+      (msg as any).participant ||
+      cleanSender
+    ).trim();
+    const cleanParticipant = jidNormalizedUser(rawParticipant) || cleanSender;
+    const pnJid = resolvedIdentity?.pnJid || (cleanSender.endsWith('@s.whatsapp.net') ? cleanSender : '');
+    const lidJid = resolvedIdentity?.lidJid || (cleanParticipant.endsWith('@lid') ? cleanParticipant : '');
+
+    // Build ordered candidate targets (primary JID first, alternate PN/LID second)
+    const targetJids: string[] = [];
+    for (const candidate of [cleanSender, pnJid, cleanParticipant, lidJid]) {
+      if (candidate && !targetJids.includes(candidate)) {
+        targetJids.push(candidate);
+      }
+    }
+
+    const quoteParticipant = cleanParticipant || cleanSender;
+    const cleanQuoted = this.buildCleanQuotedStatus(msg, rawText, quoteParticipant);
+    const minimalQuoted: proto.IWebMessageInfo = {
+      key: cleanQuoted.key,
+      message: { conversation: rawText || 'Status' },
+    };
+
+    let lastErr: any = null;
+
+    // Attempt 1 & 2: Quoted reply to primary target (and alternate PN/LID target if different)
+    for (const target of targetJids) {
+      try {
+        return await socket.sendMessage(target, { text: comment }, { quoted: cleanQuoted });
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`⚠️ [StatusReactor] Quoted status reply failed for ${target} (${err?.message}), trying fallback...`);
+      }
+    }
+
+    // Attempt 3: Minimal text-quoted reply (in case media/exotic protobuf inside quotedMessage threw)
+    for (const target of targetJids) {
+      try {
+        return await socket.sendMessage(target, { text: comment }, { quoted: minimalQuoted });
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
+    // Attempt 4: Last-resort direct DM reply so the contact still receives the comment
+    if (targetJids[0]) {
+      try {
+        return await socket.sendMessage(targetJids[0], { text: comment });
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
+    throw lastErr || new Error('All status comment delivery attempts failed');
+  }
+
+  /**
    * Dispatches ONE clean WhatsApp Status Like (Love Cagaaran 💚).
-   *
-   * Protocol-accurate LID vs PN handling for Baileys 6.7.x:
-   *  - When a valid Phone-Number JID (`@s.whatsapp.net`) is known: sends the official WhatsApp
-   *    Status Reaction to `status@broadcast` with `statusJidList: [pnJid, myPnJid]` (with direct
-   *    peer fallback only if broadcast throws).
-   *  - When the contact is LID-only (`@lid` without resolved PN): sends a direct peer reaction to
-   *    the LID JID (because Baileys 6.7.x `messages-send.js:366` encodes `statusJidList` entries
-   *    as `@s.whatsapp.net` and would mangle `@lid`, whereas 1-to-1 peer sends support `@lid`).
    */
   public async sendStatusReaction(
     msg: proto.IWebMessageInfo,
     socket: any,
     senderJid: string,
-    emoji: string = '💚'
+    emoji: string = '💚',
+    resolvedIdentity?: ResolvedStatusIdentity
   ): Promise<boolean> {
     if (!socket || !msg?.key?.id) return false;
 
-    const rawParticipant = String(msg.key.participant || (msg as any).participant || senderJid || '').trim();
+    const rawParticipant = String(
+      resolvedIdentity?.normalizedParticipant ||
+      msg.key.participant ||
+      (msg as any).participant ||
+      senderJid ||
+      ''
+    ).trim();
     const cleanSender = jidNormalizedUser(senderJid) || senderJid;
     const cleanParticipant = jidNormalizedUser(rawParticipant) || cleanSender;
-    const rawPn = String((msg.key as any)?.participantPn || (msg.key as any)?.senderPn || '').trim();
+    const rawPn = String(
+      resolvedIdentity?.pnJid || (msg.key as any)?.participantPn || (msg.key as any)?.senderPn || ''
+    ).trim();
     const pnJid =
       (rawPn ? jidNormalizedUser(rawPn) : '') ||
       (cleanSender.endsWith('@s.whatsapp.net') ? cleanSender : '') ||
       (cleanParticipant.endsWith('@s.whatsapp.net') ? cleanParticipant : '');
-
-    const reactionKey: proto.IMessageKey = {
-      remoteJid: 'status@broadcast',
-      id: msg.key.id,
-      participant: cleanParticipant,
-      fromMe: Boolean(msg.key.fromMe),
-    };
 
     // Case A: Contact has a valid PN JID -> official `status@broadcast` status like with `statusJidList`
     if (pnJid && pnJid.endsWith('@s.whatsapp.net')) {
@@ -1419,10 +1700,17 @@ Respond with ONLY valid JSON:
         }
       }
 
+      const broadcastReactionKey: proto.IMessageKey = {
+        remoteJid: 'status@broadcast',
+        id: msg.key.id,
+        participant: cleanParticipant,
+        fromMe: Boolean(msg.key.fromMe),
+      };
+
       try {
         await socket.sendMessage(
           'status@broadcast',
-          { react: { text: emoji, key: reactionKey } },
+          { react: { text: emoji, key: broadcastReactionKey } },
           { statusJidList }
         );
         console.log(`💚 [StatusReactor] Official Status Like "${emoji}" delivered to status@broadcast for ${pnJid} (id: ${msg.key.id})`);
@@ -1435,9 +1723,15 @@ Respond with ONLY valid JSON:
     // Case B: LID-only contact OR broadcast fallback -> clean direct peer reaction
     const peerTarget = cleanSender || cleanParticipant;
     if (!peerTarget) return false;
+    const peerReactionKey: proto.IMessageKey = {
+      remoteJid: 'status@broadcast',
+      id: msg.key.id,
+      participant: cleanParticipant,
+      fromMe: Boolean(msg.key.fromMe),
+    };
     try {
       await socket.sendMessage(peerTarget, {
-        react: { text: emoji, key: reactionKey },
+        react: { text: emoji, key: peerReactionKey },
       });
       console.log(`💚 [StatusReactor] Direct peer reaction "${emoji}" sent to ${peerTarget} (id: ${msg.key.id})`);
       return true;
@@ -1449,7 +1743,80 @@ Respond with ONLY valid JSON:
   }
 
   /**
-   * Executes the actual reaction or comment
+   * Sends direct "save me <ownerName>" DMs to phone numbers extracted from a status link/number,
+   * skipping the bot's own number, admin numbers, recently messaged numbers, and non-WhatsApp numbers.
+   */
+  private async sendSaveMeDmsToExtractedNumbers(
+    extractedNumbers: string[],
+    socket: any,
+    senderJid: string,
+    senderName: string,
+    statusText: string,
+    logTag: string = 'StatusReactor'
+  ): Promise<boolean> {
+    if (!socket || extractedNumbers.length === 0) return false;
+    const socketOwnJid = socket?.user?.id
+      ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+      : '';
+    let sentAnyDm = false;
+
+    console.log(`🔍 [${logTag}] Found ${extractedNumbers.length} link/phone number(s) in status from ${senderJid}: ${extractedNumbers.join(', ')}`);
+
+    for (const phone of extractedNumbers) {
+      if ((socketOwnJid && phone === socketOwnJid) || this.isAdminOrSelf(`${phone}@s.whatsapp.net`, false, socket)) {
+        console.log(`ℹ️ [${logTag}] Skipping bot/admin number (${phone}).`);
+        continue;
+      }
+      if (this.isPendingSaveMe(phone)) {
+        console.log(`ℹ️ [${logTag}] Already sent save-me DM to ${phone} recently. Skipping duplicate.`);
+        continue;
+      }
+
+      let targetJid = `${phone}@s.whatsapp.net`;
+      if (typeof socket.onWhatsApp === 'function') {
+        try {
+          const checkRes = await socket.onWhatsApp(phone);
+          const first = Array.isArray(checkRes) ? checkRes[0] : null;
+          if (first && first.exists === false) {
+            console.log(`ℹ️ [${logTag}] Skipping ${phone}: not registered on WhatsApp.`);
+            continue;
+          }
+          if (first?.jid) {
+            targetJid = first.jid;
+          }
+        } catch {
+          // Fall back to standard JID if onWhatsApp query errors
+        }
+      }
+
+      const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
+      try {
+        await socket.sendMessage(targetJid, { text: saveMsg });
+        this.markSaveMeSent(phone);
+        this.stats.dmLinks++;
+        sentAnyDm = true;
+        console.log(`📲 [${logTag}] Sent DM "${saveMsg}" directly to ${phone} (${targetJid}) from status of ${senderName || senderJid}`);
+        this.recordInteraction({
+          id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          senderJid,
+          senderName,
+          type: 'comment',
+          content: `${saveMsg} (DM to extracted number ${phone} from status link)`,
+          category: 'phone_number_status',
+          statusText: statusText || '[Link Status]',
+          timestamp: Date.now(),
+        });
+      } catch (sendErr: any) {
+        console.warn(`[${logTag}] Failed to send save-me DM to ${phone}: ${sendErr?.message}`);
+      }
+    }
+
+    return sentAnyDm;
+  }
+
+  /**
+   * Executes the actual reaction and reply/comment for normal statuses,
+   * or sends direct "save me" DM (without replying/reacting to the poster) for phone_number_status.
    */
   public async executeInteraction(
     msg: proto.IWebMessageInfo,
@@ -1459,52 +1826,25 @@ Respond with ONLY valid JSON:
     analysis: StatusAnalysisResult,
     rawText: string,
     gender: 'male' | 'female' | 'unknown' = 'unknown',
-    mediaKind?: string | null
+    mediaKind?: string | null,
+    resolvedIdentity?: ResolvedStatusIdentity
   ): Promise<void> {
     if (!socket) return;
 
-    // --- Handle phone_number_status: skip both react and comment, send DM directly to the phone owner ---
+    // For phone/WhatsApp-link statuses in normal mode: do NOT react or reply to poster; DM extracted number(s) "save me"!
     if (analysis.category === 'phone_number_status') {
-      try {
-        const extracted = this.extractPhoneNumbersFromText(rawText);
-        for (const targetPhone of extracted) {
-          if (this.isAdminOrSelf(`${targetPhone}@s.whatsapp.net`, false, socket)) continue;
-          if (this.isPendingSaveMe(targetPhone)) continue;
-
-          const phoneJid = `${targetPhone}@s.whatsapp.net`;
-          const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
-          await socket.sendMessage(phoneJid, { text: saveMsg });
-          this.markSaveMeSent(targetPhone);
-          console.log(`📲 [StatusReactor] Sent DM "${saveMsg}" directly to contact ${targetPhone} (extracted from status of ${senderName || senderJid})`);
-          this.recordInteraction({
-            id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            senderJid,
-            senderName,
-            type: 'comment',
-            content: `${saveMsg} (DM sent directly to ${targetPhone})`,
-            category: analysis.category,
-            statusText: rawText,
-            timestamp: Date.now(),
-          });
-        }
-      } catch (err: any) {
-        console.warn(`[StatusReactor] Failed to send phone-number DM: ${err?.message}`);
+      const extracted = this.extractPhoneNumbersFromText(rawText);
+      if (extracted.length > 0) {
+        await this.sendSaveMeDmsToExtractedNumbers(extracted, socket, senderJid, senderName, rawText, 'StatusReactor');
       }
       return;
     }
 
-    // Decide whether to react, comment, or both
+    // Decide whether to react, comment, or both — NEVER block replies by category in normal mode!
     const shouldReact =
       this.config.autoReact &&
       (this.config.mode === 'reaction' || this.config.mode === 'both' || !this.config.autoComment);
-    // emoji_only, link_status, and business: react only (Love Cagaaran 💚), never comment per user requirement!
-    const skipComment =
-      analysis.category === 'emoji_only' ||
-      analysis.category === 'link_status' ||
-      analysis.category === 'business' ||
-      analysis.suggestedComments.length === 0;
     const shouldComment =
-      !skipComment &&
       this.config.autoComment &&
       (this.config.mode === 'comment' || this.config.mode === 'both' || !this.config.autoReact);
 
@@ -1523,7 +1863,7 @@ Respond with ONLY valid JSON:
       }
 
       try {
-        const ok = await this.sendStatusReaction(msg, socket, senderJid, emoji);
+        const ok = await this.sendStatusReaction(msg, socket, senderJid, emoji, resolvedIdentity);
         if (ok) {
           this.stats.reacted++;
           this.recordInteraction({
@@ -1547,7 +1887,7 @@ Respond with ONLY valid JSON:
       }
     }
 
-    // 2. Send Smart Comment / Reply
+    // 2. Send Smart Comment / Reply (ALWAYS fires for EVERY status when autoComment is ON!)
     if (shouldComment) {
       try {
         let comment = await this.generateComment(analysis, senderName, gender, mediaKind);
@@ -1555,16 +1895,12 @@ Respond with ONLY valid JSON:
         comment = comment.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
 
         // Natural short typing indicator before delivering comment
-        await socket.sendPresenceUpdate('composing', senderJid).catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 600));
-        await socket.sendPresenceUpdate('paused', senderJid).catch(() => {});
+        await socket.sendPresenceUpdate?.('composing', senderJid)?.catch?.(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 600 + Math.random() * 500));
+        await socket.sendPresenceUpdate?.('paused', senderJid)?.catch?.(() => {});
 
-        // Send direct reply quoting the status message
-        const sentMsg = await socket.sendMessage(
-          senderJid,
-          { text: comment },
-          { quoted: msg }
-        );
+        // Send resilient direct reply quoting the status message
+        const sentMsg = await this.sendStatusComment(msg, socket, senderJid, comment, rawText, resolvedIdentity);
 
         this.stats.commented++;
         const commentLog: StatusInteractionLog = {
@@ -1591,7 +1927,7 @@ Respond with ONLY valid JSON:
           messageId: sentMsg?.key?.id,
         });
 
-        console.log(`💬 [StatusReactor] Commented on status of ${senderName || senderJid} (${gender}): "${comment}"`);
+        console.log(`💬 [StatusReactor] Commented on status of ${senderName || senderJid} (${gender}, ${analysis.category}): "${comment}"`);
       } catch (err: any) {
         this.stats.failed++;
         console.warn(`[StatusReactor] Failed to send status comment: ${err?.message}`);

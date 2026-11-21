@@ -120,7 +120,7 @@ suite.test('Dispatches reaction and comment to mock WhatsApp socket', async () =
       sentMessages.push({ jid, content, options });
       return { key: { id: 'sent_res_1' } };
     },
-    sendPresenceUpdate: async () => {},
+    sendPresenceUpdate: async () => { },
   };
 
   const fakeStatusMsg: any = {
@@ -162,7 +162,7 @@ suite.test('Dispatches reaction and comment to mock WhatsApp socket', async () =
 suite.test('MessageRouter administrative commands control Status Reactor settings', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -310,13 +310,13 @@ suite.test('MessageRouter administrative commands control Status Reactor setting
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
     if (fs.existsSync('./data/test_sr_config.json')) fs.unlinkSync('./data/test_sr_config.json');
-  } catch {}
+  } catch { }
 });
 
 suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen, React, and Comment', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -360,7 +360,8 @@ suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen
   assertFalse(statusReactorService.getConfig().autoComment, 'Auto comment must be false');
   assertTrue(lastOutboundMessage.includes('DAMIDAY'), 'Confirmation should state all are disabled');
 
-  // 2. Admin turns everything ON using "!view on" (with exclamation)
+  // 2. Admin turns everything ON using "!view on" (with exclamation) — even if !link on was active
+  whatsappManagerService.setLinkCampaignMode(true);
   const resOn = await router.handleIncomingMessage(
     {
       id: 'msg_adm_view_on',
@@ -375,10 +376,30 @@ suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen
   );
   assertTrue(resOn.handled, '!view on should be handled');
   assertTrue(whatsappManagerService.isAutoViewStatusEnabled(), 'Auto view must be true');
+  assertFalse(whatsappManagerService.isLinkCampaignMode(), '!view on must disable linkCampaignMode so status replies work');
+  assertTrue(statusReactorService.getConfig().enabled, 'Status reactor enabled must be true');
   assertTrue(statusReactorService.getConfig().autoReact, 'Auto react must be true');
   assertTrue(statusReactorService.getConfig().autoComment, 'Auto comment must be true');
   assertEqual(statusReactorService.getConfig().mode, 'both', 'Mode must be set to both');
   assertTrue(lastOutboundMessage.includes('SHIDAY'), 'Confirmation should state all are enabled');
+
+  // 2b. Turning view off and then !statuscomment on must ALSO re-enable reactor.enabled
+  statusReactorService.setConfig({ enabled: false, autoComment: false });
+  const resCommentReenable = await router.handleIncomingMessage(
+    {
+      id: 'msg_adm_sc_reenable',
+      senderId: '252610000099',
+      chatId: 'direct_admin',
+      isGroup: false,
+      content: '!statuscomment on',
+      rawTimestamp: Date.now(),
+      isMentioned: true,
+    },
+    transport
+  );
+  assertTrue(resCommentReenable.handled, '!statuscomment on after view off should be handled');
+  assertTrue(statusReactorService.getConfig().enabled, '!statuscomment on must re-enable StatusReactor');
+  assertTrue(statusReactorService.getConfig().autoComment, '!statuscomment on must set autoComment=true');
 
   // 3. Admin asks for "view" status summary
   const resSummary = await router.handleIncomingMessage(
@@ -419,7 +440,7 @@ suite.test('All-in-One Master Command (view on/off) simultaneously controls Seen
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Ignores status posts from bot owner/admin and processes contacts with zero cooldown', async () => {
@@ -437,7 +458,7 @@ suite.test('Ignores status posts from bot owner/admin and processes contacts wit
   const mockSocket: any = {
     user: { id: '252634949642:0@s.whatsapp.net' },
     sendMessage: async () => ({ key: { id: 'mock_sent_id' } }),
-    sendPresenceUpdate: async () => {},
+    sendPresenceUpdate: async () => { },
   };
 
   // 1. Admin/Owner posts status -> MUST be ignored!
@@ -522,7 +543,7 @@ suite.test('Differentiates male vs female status comments with authentic Somali 
 suite.test('Responds to status reply gratitude and story replies warmly without "Maxaan kaa caawiyaa?"', async () => {
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 
   const memory = new SQLiteStudentMemory(testDb);
   await memory.initialize();
@@ -674,7 +695,7 @@ suite.test('Responds to status reply gratitude and story replies warmly without 
   await memory.close();
   try {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
-  } catch {}
+  } catch { }
 });
 
 suite.test('Strictly guarantees zero occurrences of "qaali" and zero generic "heer sarreeya" copy-paste', () => {
@@ -781,7 +802,7 @@ suite.test('!link on mode uses tenant WhatsAppManagerService, suppresses story r
     if (fs.existsSync('./data/test_sr_link_cfg.json')) fs.unlinkSync('./data/test_sr_link_cfg.json');
     if (fs.existsSync('./data/test_link_mode_statuses.json')) fs.unlinkSync('./data/test_link_mode_statuses.json');
     if (fs.existsSync(tenantAuthDir)) fs.rmSync(tenantAuthDir, { recursive: true, force: true });
-  } catch {}
+  } catch { }
 });
 
 suite.run().then(summary => {

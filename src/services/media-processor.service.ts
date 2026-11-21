@@ -90,6 +90,26 @@ export class MediaProcessorService {
         current = current.botInvokeMessage.message;
         continue;
       }
+      if (current.lottieStickerMessage?.message) {
+        current = current.lottieStickerMessage.message;
+        continue;
+      }
+      if (current.commentMessage?.message) {
+        current = current.commentMessage.message;
+        continue;
+      }
+      if (current.questionMessage?.message) {
+        current = current.questionMessage.message;
+        continue;
+      }
+      if (current.templateMessage?.hydratedFourRowTemplate) {
+        current = current.templateMessage.hydratedFourRowTemplate;
+        continue;
+      }
+      if (current.templateMessage?.hydratedTemplate) {
+        current = current.templateMessage.hydratedTemplate;
+        continue;
+      }
       break;
     }
 
@@ -179,21 +199,42 @@ export class MediaProcessorService {
   }
 
   /**
-   * Downloads media stream from Baileys and returns Buffer.
+   * Downloads media stream from Baileys and returns Buffer (with strict timeout so slow media never hangs).
    * Works on any WhatsApp message including status updates, photos, videos, stickers, etc.
    */
-  public static async downloadMediaBuffer(mediaContent: any, baileysMediaType: any): Promise<Buffer | null> {
+  public static async downloadMediaBuffer(
+    mediaContent: any,
+    baileysMediaType: any,
+    timeoutMs: number = 8000
+  ): Promise<Buffer | null> {
+    let timer: NodeJS.Timeout | undefined;
     try {
-      const { downloadContentFromMessage } = await import('@whiskeysockets/baileys');
-      const stream = await downloadContentFromMessage(mediaContent, baileysMediaType);
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const downloadPromise = (async () => {
+        const { downloadContentFromMessage } = await import('@whiskeysockets/baileys');
+        const stream = await downloadContentFromMessage(mediaContent, baileysMediaType);
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const finalBuf = Buffer.concat(chunks);
+        return finalBuf.length > 0 ? finalBuf : null;
+      })();
+
+      if (timeoutMs <= 0) {
+        return await downloadPromise;
       }
-      const finalBuf = Buffer.concat(chunks);
-      return finalBuf.length > 0 ? finalBuf : null;
-    } catch (e: any) {
+
+      return await Promise.race<Buffer | null>([
+        downloadPromise,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+          if (typeof timer.unref === 'function') timer.unref();
+        }),
+      ]);
+    } catch {
       return null;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

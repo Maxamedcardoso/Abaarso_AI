@@ -194,8 +194,8 @@ export class MessageRouter {
         gender === 'male'
           ? maleGratitudeReplies
           : gender === 'female'
-          ? femaleGratitudeReplies
-          : neutralGratitudeReplies;
+            ? femaleGratitudeReplies
+            : neutralGratitudeReplies;
       let reply = pool[Math.floor(Math.random() * pool.length)];
       reply = reply.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
 
@@ -238,8 +238,8 @@ SHURUUCO ADAG:
         gender === 'male'
           ? "Masha'Allah sxb! Waad ku mahadsantahay inaad status-ka soo booqatay 🙌"
           : gender === 'female'
-          ? "Masha'Allah abaayo macaan! Waad ku mahadsantahay inaad status-ka soo booqatay 🌸"
-          : "Masha'Allah walaal! Waad ku mahadsantahay inaad status-ka soo booqatay ✨";
+            ? "Masha'Allah abaayo macaan! Waad ku mahadsantahay inaad status-ka soo booqatay 🌸"
+            : "Masha'Allah walaal! Waad ku mahadsantahay inaad status-ka soo booqatay ✨";
       await transport.sendMessage(message.chatId, fallback, { replyToMessageId: message.id });
       return true;
     }
@@ -256,8 +256,8 @@ SHURUUCO ADAG:
             gender === 'male'
               ? 'QOFKU WAA WIIL / NIN: Ula hadal sidii saaxiib dhow oo rag ah adoo adeegsanaya ereyada: "sxb", "walaal", "bro", "geesi", "ninyahow". QOF NIN AH WELIGAA HA KU ODHAN "abaayo" ama "qaali"!'
               : gender === 'female'
-              ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno". Weligaa ha ku odhan "ninyahow" ama "qaali"!'
-              : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal". Weligaa ha isticmaalin "qaali".';
+                ? 'QOFKU WAA GABADH: Ula hadal si xushmad, asluub iyo qaddarin leh: "abaayo", "walaashay", "huuno". Weligaa ha ku odhan "ninyahow" ama "qaali"!'
+                : 'JINSIGA LAMA HUBO: U adeegso ereyo xushmad leh oo dhexdhexaad ah sida "walaal". Weligaa ha isticmaalin "qaali".';
 
           const prompt = `Waxaad tahay nin dhallinyaro ah oo Soomaali ah, caqli badan, asluub leh, furfuran (nin saaxiib dhow ah oo WhatsApp ku sheekaysanaya).
 Dhowaan waxaad faallo (comment) ku dhigtay status uu soo dhigay: "${quotedComment.commentText}" (Dulucda status-ka: "${quotedComment.statusText || quotedComment.category}").
@@ -289,8 +289,8 @@ SHURUUCDA DUGSIIYA:
         gender === 'male'
           ? 'Waa caadi sxb, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
           : gender === 'female'
-          ? 'Waa caadi abaayo macaan, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
-          : 'Waa caadi walaal, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?';
+            ? 'Waa caadi abaayo macaan, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?'
+            : 'Waa caadi walaal, mar kasta waan kula socdaa! See tahay adigu xaalkaaga?';
       await transport.sendMessage(message.chatId, fallback, { replyToMessageId: message.id });
       return true;
     }
@@ -349,11 +349,13 @@ SHURUUCDA DUGSIIYA:
       stStats?.readReceiptsPrivacy === 'none'
         ? `\n• ⚠️ *Read Receipts Privacy (Taleefanka)*: OFF! Fur Settings > Privacy > Read Receipts oo shid si dadku u arkaan View-gaaga!`
         : stStats?.readReceiptsPrivacy === 'all'
-        ? `\n• 🔒 Read Receipts Privacy: ✅ ON (all)`
-        : '';
+          ? `\n• 🔒 Read Receipts Privacy: ✅ ON (all)`
+          : '';
 
     const statusTelemetryLine = stStats
-      ? `\n• 👁️ Status Engine: Helay ${stStats.received} • Seen ✅ ${stStats.viewed} • React 💚 ${srStats.reacted} • Reply 💬 ${srStats.commented}${stStats.viewFailed > 0 ? ` • Failed ❌ ${stStats.viewFailed}` : ''}`
+      ? `\n• 👁️ Status Engine: Helay ${stStats.received} • Seen ✅ ${stStats.viewed} • React 💚 ${srStats.reacted} • Reply 💬 ${srStats.commented}` +
+      `${stStats.ciphertextRetries > 0 ? ` • Retry 🔄 ${stStats.ciphertextRetries}` : ''}` +
+      `${stStats.viewFailed > 0 ? ` • Failed ❌ ${stStats.viewFailed}` : ''}`
       : '';
 
     const health =
@@ -397,7 +399,7 @@ SHURUUCDA DUGSIIYA:
     const previousPromise = this.chatQueues.get(queueKey) || Promise.resolve();
 
     const task = previousPromise
-      .catch(() => {})
+      .catch(() => { })
       .then(() => this.processMessageInternal(message, transport))
       .catch((err) => {
         errorLogService.record(`MessageRouter${this.isOwnerTenant ? '' : ':' + this.tenantId}`, err, 'error');
@@ -830,7 +832,7 @@ SHURUUCDA DUGSIIYA:
           if (rawPhone && typeof transport.sendContactCard === 'function') {
             await transport.sendContactCard(message.chatId, contactName, rawPhone);
           }
-        } catch {}
+        } catch { }
 
         await transport.sendMessage(message.chatId, 'Waan ku save gareeyay walaalo! ✅📲');
         return { handled: true, reason: 'Auto-saved contact from save-me status flow' };
@@ -1596,7 +1598,11 @@ SHURUUCDA DUGSIIYA:
         }
         this.whatsappManager.setAutoViewStatus(true);
         // If user used "view on" (or !view on), activate ALL 3: Seen + Reaction + AI Comment!
+        // Also ensure Link Campaign Mode (which suppresses status replies) is turned OFF so replies actually fire.
         if (!isExplicitAutoviewOnly) {
+          if (this.whatsappManager.isLinkCampaignMode()) {
+            this.whatsappManager.setLinkCampaignMode(false);
+          }
           this.statusReactor.setConfig({ enabled: true, autoReact: true, autoComment: true, mode: 'both', cooldownHours: 0 });
           await transport.sendMessage(
             message.chatId,
@@ -1604,7 +1610,7 @@ SHURUUCDA DUGSIIYA:
             'Hadda bot-ku hal mar ayuu dhammaan si toos ah u wada qabanayaa:\n' +
             '✅ *Auto-View (Seen)*: Wuxuu daawanayaa dhammaan status-yada (views ayaad ka mid noqonaysaa).\n' +
             '✅ *Auto-React (Love Cagaaran 💚)*: Wuxuu status-ka si toos ah u saarayaa Love Cagaaran (💚) ama emoji ku habboon.\n' +
-            '✅ *Auto-Comment (AI)*: Wuxuu si dabiici ah ugu reply-garaynayaa faallo Soomaali ah oo diirran!\n\n' +
+            '✅ *Auto-Comment (AI)*: Wuxuu status *walba* si dabiici ah ugu reply-garaynayaa faallo Soomaali ah oo diirran!\n\n' +
             '_Bot-ku wuxuu u dhaqmayaa sida qof caadi ah oo kale!_ 😊'
           );
         } else {
@@ -1651,7 +1657,7 @@ SHURUUCDA DUGSIIYA:
             return { handled: true, reason: 'Status reactor gated by plan' };
           }
         }
-        this.statusReactor.setConfig({ autoReact: true });
+        this.statusReactor.setConfig({ enabled: true, autoReact: true });
         await transport.sendMessage(message.chatId, '❤️ *[Status Reactor]*: Falcelinta Emoji-ga (Auto-React) waa la *SHIDAY (ON)*! Bot-ku wuxuu status-yada ku dhufan doonaa emoji ku habboon (❤️, 😂, 👏, 🔥, 🤲). ✅');
       } else if (action === 'off') {
         this.statusReactor.setConfig({ autoReact: false });
@@ -1678,8 +1684,8 @@ SHURUUCDA DUGSIIYA:
             return { handled: true, reason: 'Status reactor gated by plan' };
           }
         }
-        this.statusReactor.setConfig({ autoComment: true });
-        await transport.sendMessage(message.chatId, '💬 *[Status Reactor]*: Faallada Tooska ah ee AI (Smart Human Comment) waa la *SHIDAY (ON)*! Bot-ku wuxuu status kasta oo ku habboon kaga bixin doonaa faallo diirran oo Soomaali ah. ✅');
+        this.statusReactor.setConfig({ enabled: true, autoComment: true });
+        await transport.sendMessage(message.chatId, '💬 *[Status Reactor]*: Faallada Tooska ah ee AI (Smart Human Comment) waa la *SHIDAY (ON)*! Bot-ku wuxuu status kasta kaga bixin doonaa faallo diirran oo Soomaali ah. ✅');
       } else if (action === 'off') {
         this.statusReactor.setConfig({ autoComment: false });
         await transport.sendMessage(message.chatId, '🛑 *[Status Reactor]*: Faallada Tooska ah ee AI (Status Comment) waa la *DAMIDAY (OFF)*.');
@@ -1770,17 +1776,17 @@ SHURUUCDA DUGSIIYA:
       const recentViewedBlock =
         stStats && stStats.recentViewed.length > 0
           ? `\n👁️ *STATUS-YADII UGU DAMBEEYAY EE BOT-KU DAAWADAY:*\n` +
-            stStats.recentViewed
-              .slice(0, 5)
-              .map((v: any) => `• ✅ ${v.name || v.sender} (${formatClock(v.timestamp)})`)
-              .join('\n') +
-            `\n`
+          stStats.recentViewed
+            .slice(0, 5)
+            .map((v: any) => `• ✅ ${v.name || v.sender} (${formatClock(v.timestamp)})`)
+            .join('\n') +
+          `\n`
           : '';
       const engineLine = stStats
         ? `• *Status Engine*: Helay *${stStats.received}* • Seen ✅ *${stStats.viewed}* • React 💚 *${srStats.reacted}* • Reply 💬 *${srStats.commented}*${stStats.viewFailed > 0 ? ` • Failed ❌ *${stStats.viewFailed}*` : ''}\n` +
-          (stStats.readReceiptsPrivacy === 'none'
-            ? `• ⚠️ *DIGNIIN*: Read Receipts Privacy taleefankaaga waa OFF — fur Settings > Privacy > Read Receipts!\n`
-            : '')
+        (stStats.readReceiptsPrivacy === 'none'
+          ? `• ⚠️ *DIGNIIN*: Read Receipts Privacy taleefankaaga waa OFF — fur Settings > Privacy > Read Receipts!\n`
+          : '')
         : '';
 
       const infoText =

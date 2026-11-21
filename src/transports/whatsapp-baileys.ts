@@ -83,6 +83,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private statusEngine: StatusEngineService;
   /** Keep-alive timer to maintain status@broadcast presence subscription. */
   private statusPresenceInterval: NodeJS.Timeout | null = null;
+  /** Tracks consecutive Bad MAC / decrypt errors per Signal address for rate-limited self-healing. */
+  private badMacCounts: Map<string, number> = new Map();
+  private lastSessionHealAt: Map<string, number> = new Map();
 
   constructor(authDirOrOptions: string | BaileysTransportOptions = './baileys_auth_info') {
     if (typeof authDirOrOptions === 'string') {
@@ -154,6 +157,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     try {
       this.contactsResyncAttempted = true;
       await this.socket.resyncAppState(['critical_unblock_low'], force);
+      // resyncAppState uses ev.createBufferedFunction -> ev.buffer() without auto-flush in Baileys 6.7.x
+      this.statusEngine.scheduleOfflineBufferFlush(this.socket);
       return { synced: true, total: this.broadcast.getContactsCount() };
     } catch (err: any) {
       console.warn(`⚠️ [Contacts Sync:${this.tenantId}] resyncAppState failed:`, err?.message || err);
@@ -485,6 +490,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false, // Do not dump hundreds of old historical chat messages on every connect
       shouldSyncHistoryMessage: () => false,
+      shouldIgnoreJid: () => false, // NEVER ignore status@broadcast or any contact JID
       markOnlineOnConnect: true, // Ensure WhatsApp marks companion available and streams status@broadcast events
       emitOwnEvents: false, // Prevents Baileys 6.7.x sendMessage -> upsertMessage -> ev.buffer() stuck-buffer trap
       getMessage: async (key) => this.getMessageForRetry(key),
@@ -560,6 +566,49 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       };
     }
 
+    // Auto-heal corrupted pairwise Signal sessions stuck in Bad MAC loops (e.g. LID/PN ratchet desync)
+    // so incoming status SKDM / messages decrypt on retry instead of failing 200+ times forever.
+    if ((this.socket as any)?.signalRepository?.decryptMessage) {
+      const sigRepo: any = (this.socket as any).signalRepository;
+      const origDecrypt = sigRepo.decryptMessage.bind(sigRepo);
+      sigRepo.decryptMessage = async (args: { jid: string; type: 'pkmsg' | 'msg'; ciphertext: Uint8Array }) => {
+        const signalId =
+          typeof sigRepo.jidToSignalProtocolAddress === 'function' && args?.jid
+            ? String(sigRepo.jidToSignalProtocolAddress(args.jid))
+            : String(args?.jid || '');
+        try {
+          const plain = await origDecrypt(args);
+          if (signalId) this.badMacCounts.delete(signalId);
+          return plain;
+        } catch (err: any) {
+          const msg = String(err?.message || err || '');
+          const isCorruptSession =
+            msg.includes('Bad MAC') ||
+            msg.includes('No matching sessions') ||
+            msg.includes('Failed to decrypt message with any known session');
+          if (isCorruptSession && signalId) {
+            const count = (this.badMacCounts.get(signalId) || 0) + 1;
+            this.badMacCounts.set(signalId, count);
+            const lastHeal = this.lastSessionHealAt.get(signalId) || 0;
+            const now = Date.now();
+            if (count >= 2 && now - lastHeal > 60_000) {
+              this.lastSessionHealAt.set(signalId, now);
+              this.badMacCounts.set(signalId, 0);
+              try {
+                await (this.socket as any)?.authState?.keys?.set?.({ session: { [signalId]: null } });
+                const safeFile = path.join(this.authDir, `session-${signalId.replace(/\//g, '__').replace(/:/g, '-')}.json`);
+                if (fs.existsSync(safeFile)) {
+                  fs.unlinkSync(safeFile);
+                }
+                console.warn(`🩹 [Signal Self-Heal:${this.tenantId}] Cleared corrupted Bad MAC session "${signalId}" so next retry establishes a fresh session.`);
+              } catch {}
+            }
+          }
+          throw err;
+        }
+      };
+    }
+
     // Guarantee addressing_mode="pn" on status@broadcast and strip 0-byte or malformed participant nodes
     if ((this.socket as any)?.sendNode) {
       const origSendNode = (this.socket as any).sendNode.bind(this.socket);
@@ -604,8 +653,20 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             console.error(`🚨 [WhatsApp Server Error ACK] Message ID ${node.attrs.id} was REJECTED by WhatsApp server with error code ${node.attrs.error}!`);
           } else if (node?.attrs?.class === 'message' && node?.attrs?.from === 'status@broadcast') {
             console.log(`✅ [WhatsApp Server ACK] Status broadcast ${node.attrs.id} was successfully accepted by WhatsApp server!`);
+          } else if (node?.attrs?.class === 'receipt' && node?.attrs?.error) {
+            this.statusEngine.recordReceiptAckError(
+              String(node.attrs.id || ''),
+              String(node.attrs.error),
+              String(node.attrs.from || '')
+            );
           }
         } catch {}
+      });
+
+      // Handle WhatsApp's newer top-level <status> stanzas (CB:status — WhiskeySockets/Baileys#2858)
+      // so WhatsApp never freezes the offline queue or drops the connection with Stream Errored (ack).
+      (this.socket.ws as any).on('CB:status', (node: any) => {
+        this.statusEngine.observeRawStatusNode(node, this.socket).catch(() => {});
       });
 
       // Passively observe raw status@broadcast stanzas (captures LID/PN wire metadata & arms fallback watchdog,
@@ -792,9 +853,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // Baileys multi-device emits 'messaging-history.set' with full initial sync of chats & contacts
     this.socket.ev.on('messaging-history.set', ({ chats, contacts, messages }: any) => {
-      // On-demand history may carry a View-Once message we are still waiting for
+      // On-demand history may carry a View-Once message we are still waiting for OR fresh (<24h) statuses
       if (Array.isArray(messages)) {
         for (const m of messages) {
+          if (m?.key?.remoteJid === 'status@broadcast') {
+            this.handleIncomingStatusMessage(m, 'history').catch(err =>
+              console.error('[WhatsAppBaileys] Error processing history status message:', err)
+            );
+            continue;
+          }
           if (m?.message && m?.key?.id && this.pendingViewOnce.has(m.key.id)) {
             this.processIncomingBaileysMessage(m, 'history').catch(err =>
               console.error('[WhatsAppBaileys] Error processing history View-Once message:', err)
@@ -804,6 +871,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
       if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
       if (Array.isArray(chats)) chats.forEach(syncContactEntry);
+      this.statusEngine.scheduleOfflineBufferFlush(this.socket);
       console.log(`📋 [Contacts Sync:${this.tenantId}] Synchronized ${this.broadcast.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
     });
 

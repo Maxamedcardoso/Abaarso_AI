@@ -1,4 +1,4 @@
-import { jidNormalizedUser, proto } from '@whiskeysockets/baileys';
+import { cleanMessage, decryptMessageNode, jidNormalizedUser, proto } from '@whiskeysockets/baileys';
 import { BroadcastService } from './broadcast.service.js';
 import { WhatsAppManagerService } from './whatsapp-manager.service.js';
 import { StatusReactorService } from './status-reactor.service.js';
@@ -26,10 +26,13 @@ export interface WireStatusMeta {
   participant: string;
   participantPn: string;
   participantLid: string;
+  addressingMode?: string;
+  mediaType?: string;
   notify: string;
   timestamp: number;
   isOffline: boolean;
   receivedAt: number;
+  rawNode?: any;
 }
 
 export interface ResolvedStatusIdentity {
@@ -47,7 +50,7 @@ export interface ViewedStatusRecord {
   id: string;
   sender: string;
   name: string;
-  via: 'upsert' | 'watchdog';
+  via: 'upsert' | 'watchdog' | 'cb_status';
   timestamp: number;
 }
 
@@ -57,6 +60,9 @@ export interface StatusEngineTelemetry {
   viewFailed: number;
   watchdogViews: number;
   ciphertextRetries: number;
+  fastRetriesSent: number;
+  cbStatusAcked: number;
+  receiptAckErrors: number;
   skippedOwn: number;
   skippedExpired: number;
   skippedDisabled: number;
@@ -101,6 +107,7 @@ export class StatusEngineService {
   private seenWatchdogs: Map<string, NodeJS.Timeout> = new Map();
   private seenTimers: Map<string, NodeJS.Timeout> = new Map();
   private viewedIds: Set<string> = new Set();
+  private fastRetriedIds: Set<string> = new Set();
   private countedReceivedIds: Set<string> = new Set();
   private offlineFlushTimer: NodeJS.Timeout | null = null;
 
@@ -110,6 +117,9 @@ export class StatusEngineService {
     viewFailed: 0,
     watchdogViews: 0,
     ciphertextRetries: 0,
+    fastRetriesSent: 0,
+    cbStatusAcked: 0,
+    receiptAckErrors: 0,
     skippedOwn: 0,
     skippedExpired: 0,
     skippedDisabled: 0,
@@ -123,7 +133,9 @@ export class StatusEngineService {
     this.statusReactor = options.statusReactor;
     this.broadcast = options.broadcast;
     this.seenDelayMs = options.seenDelayMs ?? 600;
-    this.watchdogTimeoutMs = options.watchdogTimeoutMs ?? 4500;
+    // Wait 15s (longer than Baileys' 5s placeholder-resend retry delay) so Signal retries decrypt cleanly
+    // before the fallback watchdog fires!
+    this.watchdogTimeoutMs = options.watchdogTimeoutMs ?? 15000;
   }
 
   /** Records a known LID -> Phone Number JID mapping for accurate receipt & reaction targeting. */
@@ -159,6 +171,7 @@ export class StatusEngineService {
       const val = String(settings?.readreceipts || '').toLowerCase();
       if (val === 'all') {
         this.telemetry.readReceiptsPrivacy = 'all';
+        console.log(`🔒 [StatusEngine:${this.tenantId}] WhatsApp Read Receipts Privacy: ✅ ON (all) — views will be visible to contacts.`);
       } else if (val === 'none') {
         this.telemetry.readReceiptsPrivacy = 'none';
         console.warn(
@@ -258,14 +271,14 @@ export class StatusEngineService {
     }
 
     // Deduplicated receipt targets: always include normalized stanza participant FIRST,
-    // plus resolved PN JID if it differs (ensures both LID & PN WhatsApp servers accept the view!).
+    // plus resolved PN JID and LID JID if distinct (ensures both LID & PN WhatsApp servers accept the view!).
     const receiptTargets: string[] = [];
     const addTarget = (jid: string) => {
       if (jid && !receiptTargets.includes(jid)) receiptTargets.push(jid);
     };
     if (normalizedParticipant) addTarget(normalizedParticipant);
     if (pnJid) addTarget(pnJid);
-    if (lidJid && !normalizedParticipant) addTarget(lidJid);
+    if (lidJid) addTarget(lidJid);
 
     const chatTargetJid = pnJid || normalizedParticipant || lidJid;
 
@@ -300,10 +313,13 @@ export class StatusEngineService {
         participant: String(attrs.participant || '').trim(),
         participantPn: String(attrs.participant_pn || attrs.sender_pn || '').trim(),
         participantLid: String(attrs.participant_lid || attrs.sender_lid || '').trim(),
+        addressingMode: String(attrs.addressing_mode || '').trim() || undefined,
+        mediaType: String(attrs.mediatype || attrs.type || '').trim() || undefined,
         notify: String(attrs.notify || '').trim(),
         timestamp: Number(attrs.t) || 0,
         isOffline: Boolean(attrs.offline),
         receivedAt: Date.now(),
+        rawNode: node,
       };
 
       this.wireMetaCache.set(id, meta);
@@ -337,35 +353,345 @@ export class StatusEngineService {
       };
       if (this.isOwnParticipant(quickIdentity, socket, false)) return;
 
+      console.log(
+        `📡 [StatusEngine:${this.tenantId}] Wire status stanza id=${id} participant=${meta.participant || '?'} ` +
+        `pn=${meta.participantPn || '-'} lid=${meta.participantLid || '-'} mode=${meta.addressingMode || '-'} ` +
+        `offline=${meta.isOffline}`
+      );
+
       if (this.viewedIds.has(id) || this.seenWatchdogs.has(id)) return;
-
-      // Fallback watchdog: if messages.upsert never delivers a decrypted status within watchdogTimeoutMs
-      // (e.g. SenderKey retry timed out), mark it SEEN anyway using the captured wire metadata.
-      const watchdog = setTimeout(() => {
-        this.seenWatchdogs.delete(id);
-        if (this.viewedIds.has(id)) return;
-        const shouldAutoView =
-          this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
-        if (!shouldAutoView) return;
-
-        this.resolveIdentity(
-          { key: { remoteJid: 'status@broadcast', id, participant: meta.participant } },
-          socket,
-          meta
-        )
-          .then((identity) => {
-            if (identity.receiptTargets.length === 0) return;
-            return this.dispatchSeenReceipt(id, identity, meta.notify, socket, 'watchdog');
-          })
-          .catch((err) => {
-            console.warn(`⚠️ [StatusEngine:${this.tenantId}] Watchdog seen error for ${id}: ${err?.message || err}`);
-          });
-      }, this.watchdogTimeoutMs);
-
-      if (typeof watchdog.unref === 'function') watchdog.unref();
-      this.seenWatchdogs.set(id, watchdog);
+      this.armSeenWatchdog(id, meta, socket);
     } catch (err: any) {
       console.warn(`⚠️ [StatusEngine:${this.tenantId}] observeRawStanza error: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Arms the bounded fallback watchdog so even if decryption/retry never succeeds within `watchdogTimeoutMs`,
+   * the status is STILL marked SEEN using the captured wire metadata.
+   */
+  private armSeenWatchdog(id: string, meta: WireStatusMeta, socket: any): void {
+    if (this.viewedIds.has(id) || this.seenWatchdogs.has(id)) return;
+    const watchdog = setTimeout(() => {
+      this.seenWatchdogs.delete(id);
+      if (this.viewedIds.has(id)) return;
+      const shouldAutoView =
+        this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
+      if (!shouldAutoView) return;
+
+      this.resolveIdentity(
+        { key: { remoteJid: 'status@broadcast', id, participant: meta.participant } },
+        socket,
+        meta
+      )
+        .then((identity) => {
+          if (identity.receiptTargets.length === 0) return;
+          return this.dispatchSeenReceipt(id, identity, meta.notify, socket, 'watchdog', meta.mediaType);
+        })
+        .catch((err) => {
+          console.warn(`⚠️ [StatusEngine:${this.tenantId}] Watchdog seen error for ${id}: ${err?.message || err}`);
+        });
+    }, this.watchdogTimeoutMs);
+
+    if (typeof watchdog.unref === 'function') watchdog.unref();
+    this.seenWatchdogs.set(id, watchdog);
+  }
+
+  /**
+   * Handles WhatsApp's top-level `<status>` stanzas (`CB:status`, WhiskeySockets/Baileys#2858 & whatsmeow).
+   *  1. Immediately acknowledges (`<ack class="status">`) so WhatsApp never freezes the offline queue
+   *     or drops the session with `Stream Errored (ack)`.
+   *  2. Decrypts embedded E2EE `<enc>` / `<plaintext>` payloads (identical to `<message from="status@broadcast">`)
+   *     inside `processingMutex` and routes the decrypted story into `handleStatusUpsert` so Auto-View,
+   *     Status Replies/Reactions (`!link off`), AND Link Campaign DMs (`!link on`) all execute cleanly!
+   *  3. Falls back to metadata-only SEEN if a `<status>` stanza carries no encrypted payload.
+   */
+  public async observeRawStatusNode(node: any, socket: any): Promise<void> {
+    try {
+      if (!node || node.tag !== 'status') return;
+      const attrs = node.attrs || {};
+      const id = String(attrs.id || '').trim();
+      const from = String(attrs.from || 'status@broadcast').trim();
+
+      // 1. Immediately send protocol <ack class="status"> so WhatsApp never stalls the stream
+      if (socket && id) {
+        try {
+          if (typeof socket.sendMessageAck === 'function') {
+            await socket.sendMessageAck(node);
+          } else if (typeof socket.sendNode === 'function') {
+            const ackAttrs: Record<string, string> = {
+              id,
+              to: from,
+              class: 'status',
+            };
+            if (attrs.participant) ackAttrs.participant = String(attrs.participant);
+            if (attrs.type) ackAttrs.type = String(attrs.type);
+            await socket.sendNode({ tag: 'ack', attrs: ackAttrs });
+          }
+          this.telemetry.cbStatusAcked++;
+        } catch (ackErr: any) {
+          console.warn(`⚠️ [StatusEngine:${this.tenantId}] Failed acking CB:status (${id}): ${ackErr?.message || ackErr}`);
+        }
+      }
+
+      // Group statuses (<status from="...@g.us">) are acknowledged above; keep personal status pipeline isolated
+      if (from.endsWith('@g.us')) return;
+
+      const participant = String(attrs.participant || (from !== 'status@broadcast' ? from : '') || '').trim();
+      const participantPn = String(attrs.participant_pn || attrs.sender_pn || '').trim();
+      const participantLid = String(attrs.participant_lid || attrs.sender_lid || '').trim();
+      const notify = String(attrs.notify || '').trim();
+
+      if (participant && participantPn) this.recordLidMapping(participant, participantPn);
+      if (participantLid && participantPn) this.recordLidMapping(participantLid, participantPn);
+
+      if (!id || !participant) return;
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const wireTs = Number(attrs.t) || 0;
+      if (wireTs > 0 && nowSec - wireTs > 86400) return;
+
+      const quickIdentity = {
+        rawParticipant: participant,
+        normalizedParticipant: normalizeStatusJid(participant),
+        pnJid: normalizeStatusJid(participantPn),
+        lidJid: normalizeStatusJid(participantLid),
+      };
+      if (this.isOwnParticipant(quickIdentity, socket, false)) return;
+
+      const meta: WireStatusMeta = {
+        id,
+        participant,
+        participantPn,
+        participantLid,
+        addressingMode: String(attrs.addressing_mode || '').trim() || undefined,
+        mediaType: String(attrs.mediatype || attrs.type || '').trim() || undefined,
+        notify,
+        timestamp: wireTs || nowSec,
+        isOffline: Boolean(attrs.offline),
+        receivedAt: Date.now(),
+        rawNode: node,
+      };
+      this.wireMetaCache.set(id, meta);
+      if (this.wireMetaCache.size > 2000) {
+        const oldest = this.wireMetaCache.keys().next().value;
+        if (oldest) this.wireMetaCache.delete(oldest);
+      }
+
+      // Locate encrypted/plaintext children (either directly under <status> or nested 1 level deep)
+      const topChildren: any[] = Array.isArray(node.content) ? node.content : [];
+      const isEncOrPlain = (c: any) =>
+        Boolean(c && (c.tag === 'enc' || c.tag === 'plaintext') && c.content instanceof Uint8Array);
+
+      let decryptContent: any[] | null = null;
+      if (topChildren.some(isEncOrPlain)) {
+        decryptContent = topChildren;
+      } else {
+        const nested = topChildren.find((c: any) => Array.isArray(c?.content) && c.content.some(isEncOrPlain));
+        if (nested) {
+          decryptContent = nested.content;
+        }
+      }
+
+      const canDecrypt = Boolean(
+        decryptContent &&
+        socket?.signalRepository &&
+        socket?.authState?.creds?.me?.id
+      );
+
+      if (canDecrypt && decryptContent) {
+        // Ensure pkmsg/msg (which may carry senderKeyDistributionMessage) ALWAYS decrypt BEFORE skmsg
+        const orderedContent = [...decryptContent].sort((a: any, b: any) => {
+          const rank = (x: any) => {
+            if (x?.tag !== 'enc') return 0;
+            const t = x?.attrs?.type;
+            if (t === 'pkmsg' || t === 'msg') return 1;
+            if (t === 'skmsg') return 2;
+            return 3;
+          };
+          return rank(a) - rank(b);
+        });
+
+        const decryptNode = {
+          tag: 'message',
+          attrs: {
+            ...attrs,
+            from: 'status@broadcast',
+            participant,
+            ...(participantPn && !attrs.participant_pn ? { participant_pn: participantPn } : {}),
+            ...(participantLid && !attrs.participant_lid ? { participant_lid: participantLid } : {}),
+          },
+          content: orderedContent,
+        };
+
+        this.armSeenWatchdog(id, meta, socket);
+
+        const meId = String(socket.authState.creds.me.id || '');
+        const meLid = String(socket.authState.creds.me.lid || '');
+        const silentLogger: any = {
+          level: 'silent',
+          trace() {},
+          debug() {},
+          info() {},
+          warn() {},
+          error() {},
+          fatal() {},
+          child() { return this; },
+        };
+
+        const runDecrypt = async () => {
+          const { fullMessage: msg, decrypt } = decryptMessageNode(
+            decryptNode,
+            meId,
+            meLid,
+            socket.signalRepository,
+            silentLogger
+          );
+          await decrypt();
+
+          const isCiphertext =
+            msg.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT || !msg.message;
+
+          if (!isCiphertext) {
+            // Send delivery receipt FIRST so WhatsApp accepts the subsequent `read` receipt cleanly
+            if (typeof socket.sendReceipt === 'function') {
+              await socket.sendReceipt('status@broadcast', participant, [id], undefined).catch(() => {});
+            }
+            cleanMessage(msg, meId);
+          }
+
+          // Hand decrypted story (or CIPHERTEXT stub for fast retry) into the unified StatusEngine pipeline
+          await this.handleStatusUpsert(msg, 'cb_status', socket);
+        };
+
+        if (typeof socket?.processingMutex?.mutex === 'function') {
+          await socket.processingMutex.mutex(runDecrypt);
+        } else {
+          await runDecrypt();
+        }
+        return;
+      }
+
+      // Fallback when <status> stanza has no <enc>/<plaintext> payload (or mock socket without signalRepository)
+      const shouldAutoView =
+        this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
+      if (!shouldAutoView || this.viewedIds.has(id)) return;
+
+      const childTags = topChildren.map((c: any) => c?.tag).filter(Boolean).join(',');
+      if (childTags && socket?.signalRepository) {
+        console.log(`ℹ️ [StatusEngine:${this.tenantId}] CB:status id=${id} had no <enc> payload (tags=[${childTags}]); marking SEEN only.`);
+      }
+
+      const identity = await this.resolveIdentity(
+        { key: { remoteJid: 'status@broadcast', id, participant } },
+        socket,
+        meta
+      );
+      if (identity.receiptTargets.length > 0) {
+        await this.dispatchSeenReceipt(id, identity, notify, socket, 'cb_status', meta.mediaType);
+      }
+    } catch (err: any) {
+      console.warn(`⚠️ [StatusEngine:${this.tenantId}] observeRawStatusNode error: ${err?.message || err}`);
+    }
+  }
+
+  /** Records a server-rejected `<ack class="receipt" error="...">` for transparent diagnostics. */
+  public recordReceiptAckError(id: string, errorCode: string, from?: string): void {
+    this.telemetry.receiptAckErrors++;
+    const msg = `WhatsApp rejected receipt ${id} (from=${from || '?'}, error=${errorCode})`;
+    console.warn(`🚨 [StatusEngine:${this.tenantId}] ${msg}`);
+    errorLogService.record(`StatusEngine:ReceiptAck:${this.tenantId}`, new Error(msg), 'warn');
+  }
+
+  /**
+   * Sends a direct `<receipt type="retry">` WITH fresh prekeys for an undecrypted `status@broadcast`
+   * stanza without blocking 5 seconds inside Baileys' `requestPlaceholderResend` phone-PDO sleep.
+   */
+  public async requestFastStatusRetry(rawNode: any, socket: any, reason?: string): Promise<boolean> {
+    const id = String(rawNode?.attrs?.id || '').trim();
+    if (!id || !socket || this.fastRetriedIds.has(id)) return false;
+
+    this.fastRetriedIds.add(id);
+    if (this.fastRetriedIds.size > 1000) {
+      const oldest = this.fastRetriedIds.values().next().value;
+      if (oldest) this.fastRetriedIds.delete(oldest);
+    }
+
+    try {
+      const creds = socket?.authState?.creds;
+      const keys = socket?.authState?.keys;
+      if (!creds?.signedPreKey || !creds?.signedIdentityKey || !creds?.account || !keys || typeof socket.sendNode !== 'function') {
+        return false;
+      }
+
+      // Dynamically import Baileys wire helpers to build an authentic prekey retry receipt
+      const baileysUtils: any = await import('@whiskeysockets/baileys/lib/Utils/index.js');
+      const baileysDefaults: any = await import('@whiskeysockets/baileys/lib/Defaults/index.js');
+      if (
+        typeof baileysUtils?.getNextPreKeys !== 'function' ||
+        typeof baileysUtils?.encodeSignedDeviceIdentity !== 'function' ||
+        typeof baileysUtils?.encodeBigEndian !== 'function'
+      ) {
+        return false;
+      }
+
+      const { update, preKeys } = await baileysUtils.getNextPreKeys(socket.authState, 1);
+      const [keyId] = Object.keys(preKeys || {});
+      if (!keyId) return false;
+      const preKey = preKeys[+keyId];
+      const deviceIdentity = baileysUtils.encodeSignedDeviceIdentity(creds.account, true);
+
+      const receiptAttrs: Record<string, string> = {
+        id,
+        type: 'retry',
+        to: String(rawNode.attrs.from || 'status@broadcast'),
+      };
+      if (rawNode.attrs.participant) receiptAttrs.participant = String(rawNode.attrs.participant);
+      if (rawNode.attrs.recipient) receiptAttrs.recipient = String(rawNode.attrs.recipient);
+
+      const receipt = {
+        tag: 'receipt',
+        attrs: receiptAttrs,
+        content: [
+          {
+            tag: 'retry',
+            attrs: {
+              count: '1',
+              id,
+              t: String(rawNode.attrs.t || Math.floor(Date.now() / 1000)),
+              v: '1',
+            },
+          },
+          {
+            tag: 'registration',
+            attrs: {},
+            content: baileysUtils.encodeBigEndian(creds.registrationId),
+          },
+          {
+            tag: 'keys',
+            attrs: {},
+            content: [
+              { tag: 'type', attrs: {}, content: Buffer.from(baileysDefaults.KEY_BUNDLE_TYPE) },
+              { tag: 'identity', attrs: {}, content: creds.signedIdentityKey.public },
+              baileysUtils.xmppPreKey(preKey, +keyId),
+              baileysUtils.xmppSignedPreKey(creds.signedPreKey),
+              { tag: 'device-identity', attrs: {}, content: deviceIdentity },
+            ],
+          },
+        ],
+      };
+
+      socket.ev?.emit?.('creds.update', update);
+      await socket.sendNode(receipt);
+      this.telemetry.fastRetriesSent++;
+      console.log(
+        `🔄 [StatusEngine:${this.tenantId}] Sent fast prekey retry for status ${id} ` +
+        `(participant=${receiptAttrs.participant || '?'}, reason=${reason || 'CIPHERTEXT'})`
+      );
+      return true;
+    } catch (err: any) {
+      console.warn(`⚠️ [StatusEngine:${this.tenantId}] Fast status retry failed for ${id}: ${err?.message || err}`);
+      return false;
     }
   }
 
@@ -447,26 +773,39 @@ export class StatusEngineService {
     }
 
     // 4. Undecrypted CIPHERTEXT stub waiting for Signal SenderKey retry:
-    //    Do NOT cancel the watchdog and do NOT poison viewedIds — wait for the retried decrypted stanza!
+    //    Do NOT cancel the watchdog and do NOT poison viewedIds — trigger a fast prekey retry
+    //    and wait for the retried decrypted stanza!
     const isCiphertextStub =
       msg.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT || !msg.message;
     if (isCiphertextStub) {
       this.telemetry.ciphertextRetries++;
+      const stubReason = Array.isArray(msg.messageStubParameters) ? msg.messageStubParameters.join('; ') : '';
       console.log(
-        `⏳ [StatusEngine:${this.tenantId}] Status ${id} from ${identity.chatTargetJid || identity.rawParticipant} awaiting Signal retry (CIPHERTEXT).`
+        `⏳ [StatusEngine:${this.tenantId}] Status ${id} from ${identity.chatTargetJid || identity.rawParticipant} ` +
+        `awaiting Signal retry (CIPHERTEXT${stubReason ? `: ${stubReason}` : ''}).`
       );
+      if (wireMeta?.rawNode && socket) {
+        this.requestFastStatusRetry(wireMeta.rawNode, socket, stubReason).catch(() => {});
+      }
       return;
     }
 
-    // 5. Ignore pure protocol / reaction / bare senderKeyDistribution stanzas (not actual stories)
-    if (
-      msg.message.protocolMessage ||
-      msg.message.reactionMessage ||
-      (msg.message.senderKeyDistributionMessage && Object.keys(msg.message).length === 1)
-    ) {
+    // 5. Ignore pure protocol / reaction / metadata-only senderKeyDistribution stanzas (not actual stories)
+    const realContentKeys = Object.keys(msg.message).filter(
+      (k) => k !== 'senderKeyDistributionMessage' && k !== 'messageContextInfo' && msg.message[k] != null
+    );
+    if (msg.message.protocolMessage || msg.message.reactionMessage) {
       this.cancelWatchdog(id);
       return;
     }
+    if (realContentKeys.length === 0) {
+      // Bare SKDM / metadata packet without story body yet — do not cancel watchdog or poison viewedIds
+      return;
+    }
+
+    // Detect media kind for video/audio played receipt support
+    const unwrapped = MediaProcessorService.unwrapMessage(msg.message);
+    const detectedMediaKind = unwrapped.mediaKind || wireMeta?.mediaType;
 
     // Attach resolved PN onto msg.key so downstream StatusReactor always has it even on LID statuses
     if (identity.pnJid && !(msg.key as any).participantPn) {
@@ -497,12 +836,12 @@ export class StatusEngineService {
 
     console.log(
       `📱 [StatusEngine:${this.tenantId}] Status arrived id=${id} from=${identity.chatTargetJid} ` +
-      `(raw=${identity.rawParticipant}, source=${source}, autoView=${shouldAutoView}, linkMode=${this.whatsappManager.isLinkCampaignMode()})`
+      `(raw=${identity.rawParticipant}, type=${unwrapped.msgType || '?'}, source=${source}, autoView=${shouldAutoView}, linkMode=${this.whatsappManager.isLinkCampaignMode()})`
     );
 
     if (shouldAutoView && socket && identity.receiptTargets.length > 0) {
       this.cancelWatchdog(id);
-      this.scheduleSeenReceipt(id, identity, pushName, socket);
+      this.scheduleSeenReceipt(id, identity, pushName, socket, detectedMediaKind);
     } else {
       this.cancelWatchdog(id);
       if (!shouldAutoView) this.telemetry.skippedDisabled++;
@@ -530,18 +869,19 @@ export class StatusEngineService {
     id: string,
     identity: ResolvedStatusIdentity,
     pushName: string,
-    socket: any
+    socket: any,
+    mediaKind?: string
   ): void {
     if (this.viewedIds.has(id) || this.seenTimers.has(id)) return;
 
     if (this.seenDelayMs <= 0) {
-      this.dispatchSeenReceipt(id, identity, pushName, socket, 'upsert').catch(() => {});
+      this.dispatchSeenReceipt(id, identity, pushName, socket, 'upsert', mediaKind).catch(() => {});
       return;
     }
 
     const timer = setTimeout(() => {
       this.seenTimers.delete(id);
-      this.dispatchSeenReceipt(id, identity, pushName, socket, 'upsert').catch(() => {});
+      this.dispatchSeenReceipt(id, identity, pushName, socket, 'upsert', mediaKind).catch(() => {});
     }, this.seenDelayMs);
     if (typeof timer.unref === 'function') timer.unref();
     this.seenTimers.set(id, timer);
@@ -549,14 +889,16 @@ export class StatusEngineService {
 
   /**
    * Dispatches explicit `<receipt to="status@broadcast" participant="..." type="read">` for all
-   * resolved participant JIDs (with 1 retry on transient socket failure and transparent telemetry).
+   * resolved participant JIDs (plus best-effort `type="played"` for video/audio statuses),
+   * with 1 retry on transient socket failure and transparent telemetry.
    */
   public async dispatchSeenReceipt(
     id: string,
     identity: ResolvedStatusIdentity,
     pushName: string,
     socket: any,
-    via: 'upsert' | 'watchdog'
+    via: 'upsert' | 'watchdog' | 'cb_status',
+    mediaKind?: string
   ): Promise<boolean> {
     if (!socket || !id || identity.receiptTargets.length === 0) return false;
     if (this.viewedIds.has(id)) return true;
@@ -569,11 +911,16 @@ export class StatusEngineService {
 
     let anySuccess = false;
     let lastError: any = null;
+    const isPlayableMedia = mediaKind === 'video' || mediaKind === 'audio' || mediaKind === 'ptt';
 
     for (const target of identity.receiptTargets) {
-      const ok = await this.sendSingleReadReceiptWithRetry(socket, target, id);
+      const ok = await this.sendSingleReadReceiptWithRetry(socket, target, id, 'read');
       if (ok.success) {
         anySuccess = true;
+        // For video/audio statuses, also send best-effort `played` receipt so media stories register viewed on all clients
+        if (isPlayableMedia && typeof socket.sendReceipt === 'function') {
+          socket.sendReceipt('status@broadcast', target, [id], 'played').catch(() => {});
+        }
       } else if (ok.error) {
         lastError = ok.error;
       }
@@ -593,7 +940,7 @@ export class StatusEngineService {
         this.telemetry.recentViewed.length = 20;
       }
       console.log(
-        `👁️✅ [StatusEngine:${this.tenantId}] Marked SEEN (${via}): ${pushName ? `${pushName} ` : ''}` +
+        `👁️✅ [StatusEngine:${this.tenantId}] Marked SEEN (${via}${isPlayableMedia ? '+played' : ''}): ${pushName ? `${pushName} ` : ''}` +
         `targets=[${identity.receiptTargets.join(', ')}] (id=${id})`
       );
       return true;
@@ -611,11 +958,12 @@ export class StatusEngineService {
   private async sendSingleReadReceiptWithRetry(
     socket: any,
     participant: string,
-    id: string
+    id: string,
+    receiptType: 'read' | 'played' = 'read'
   ): Promise<{ success: boolean; error?: any }> {
     const attempt = async () => {
       if (typeof socket.sendReceipt === 'function') {
-        await socket.sendReceipt('status@broadcast', participant, [id], 'read');
+        await socket.sendReceipt('status@broadcast', participant, [id], receiptType);
         return;
       }
       if (typeof socket.sendNode === 'function') {
@@ -623,7 +971,7 @@ export class StatusEngineService {
           tag: 'receipt',
           attrs: {
             id,
-            type: 'read',
+            type: receiptType,
             to: 'status@broadcast',
             participant,
             t: Math.floor(Date.now() / 1000).toString(),

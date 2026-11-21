@@ -4,7 +4,7 @@
   "autoComment": true,
   "mode": "both",
   "cooldownHours": 0,
-  "minDelaySeconds": 10,
-  "maxDelaySeconds": 30,
+  "minDelaySeconds": 2,
+  "maxDelaySeconds": 6,
   "aiEnhanced": true
 }
