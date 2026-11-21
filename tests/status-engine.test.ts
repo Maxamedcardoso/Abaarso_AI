@@ -624,6 +624,165 @@ suite.test('Detects Read Receipts privacy=none warning and flushes stuck offline
   assertTrue(getFlushCount() >= 1, 'Offline status stanza must trigger stuck Baileys event-buffer flush');
 });
 
+suite.test('Photo + link/number status automatically DMs owner promo PHOTO + LINK to the extracted number owner (both !link off & !link on)', async () => {
+  const promoImageBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+  const ownerPromoLink = 'https://api.whatsapp.com/send?phone=252634949642&text=maxamed';
+  const now = Math.floor(Date.now() / 1000);
+
+  // Case 1: !link off + !view on -> photo + link status DMs owner promo PHOTO + LINK + "save me"
+  const h1 = buildHarness();
+  h1.manager.setLinkCampaignMode(false);
+  h1.manager.setAutoViewStatus(true);
+  h1.manager.setOwnerPromo({
+    link: ownerPromoLink,
+    imageBuffer: promoImageBytes,
+    mimeType: 'image/jpeg',
+  });
+  h1.reactor.setOwnerName('Mohamed');
+
+  await h1.engine.handleStatusUpsert(
+    {
+      key: { remoteJid: 'status@broadcast', id: 'ST_PHOTO_LINK_1', participant: '252631119991@s.whatsapp.net', fromMe: false },
+      pushName: 'Khadra',
+      messageTimestamp: now,
+      message: {
+        imageMessage: {
+          mimetype: 'image/jpeg',
+          caption: 'Save garee sxb: https://wa.me/252638889900',
+        },
+      },
+    },
+    'notify',
+    h1.mockSocket
+  );
+  // Also test text-only link status right beside it -> must still send plain "save me Mohamed" (NO image)
+  await h1.engine.handleStatusUpsert(
+    {
+      key: { remoteJid: 'status@broadcast', id: 'ST_TEXT_LINK_ONLY', participant: '252631119992@s.whatsapp.net', fromMe: false },
+      pushName: 'Libaan',
+      messageTimestamp: now,
+      message: {
+        conversation: 'Fadlan save: https://wa.me/252631234567',
+      },
+    },
+    'notify',
+    h1.mockSocket
+  );
+  h1.engine.disposeTimers();
+
+  assertTrue(
+    h1.receipts.some((r) => r.ids.includes('ST_PHOTO_LINK_1') && r.type === 'read'),
+    'Photo+link status must be marked SEEN'
+  );
+  assertFalse(
+    h1.sentMessages.some((m) => m.jid === '252631119991@s.whatsapp.net' || m.content?.react?.key?.id === 'ST_PHOTO_LINK_1'),
+    'Photo+link status must NOT react or reply to the status poster'
+  );
+  const photoPromoDm = h1.sentMessages.find((m) => m.jid === '252638889900@s.whatsapp.net');
+  assertTrue(Boolean(photoPromoDm), 'Photo+link status must DM the owner of the extracted phone number');
+  assertTrue(Buffer.isBuffer(photoPromoDm?.content?.image), 'DM for photo+link status must attach owner promo image buffer');
+  assertEqual(
+    Buffer.compare(photoPromoDm!.content.image, promoImageBytes),
+    0,
+    'DM image must match saved owner promo photo'
+  );
+  assertTrue(
+    String(photoPromoDm?.content?.caption || '').includes(ownerPromoLink),
+    'DM image caption must include owner promo link'
+  );
+  assertTrue(
+    String(photoPromoDm?.content?.caption || '').toLowerCase().includes('save me mohamed'),
+    'DM image caption must include save me <ownerName>'
+  );
+  assertFalse(
+    /\bqaali\b/i.test(String(photoPromoDm?.content?.caption || '')),
+    'DM caption must never contain "qaali"'
+  );
+
+  const textOnlyDm = h1.sentMessages.find((m) => m.jid === '252631234567@s.whatsapp.net');
+  assertTrue(Boolean(textOnlyDm), 'Text-only link status must still DM extracted number');
+  assertFalse(Boolean(textOnlyDm?.content?.image), 'Text-only link status must NOT send promo image');
+  assertEqual(textOnlyDm?.content?.text, 'save me Mohamed', 'Text-only link status must send plain save me text');
+
+  // Case 2: !link on + wrapped image status (statusMentionMessage) -> ALSO sends owner promo PHOTO + LINK
+  const h2 = buildHarness();
+  h2.manager.setLinkCampaignMode(true);
+  h2.manager.setOwnerPromo({
+    link: ownerPromoLink,
+    imageBuffer: promoImageBytes,
+    mimeType: 'image/png',
+  });
+  h2.reactor.setOwnerName('Mohamed');
+
+  await h2.engine.handleStatusUpsert(
+    {
+      key: { remoteJid: 'status@broadcast', id: 'ST_PHOTO_LINK_2', participant: '252615000111@s.whatsapp.net', fromMe: false },
+      pushName: 'Nimco',
+      messageTimestamp: now,
+      message: {
+        statusMentionMessage: {
+          message: {
+            imageMessage: {
+              mimetype: 'image/jpeg',
+              caption: 'Link-ga saaxiibkay: https://api.whatsapp.com/send?phone=252617778899',
+            },
+          },
+        },
+      },
+    },
+    'notify',
+    h2.mockSocket
+  );
+  h2.engine.disposeTimers();
+
+  const linkModePromoDm = h2.sentMessages.find((m) => m.jid === '252617778899@s.whatsapp.net');
+  assertTrue(Boolean(linkModePromoDm), '!link on mode must DM extracted number owner for photo+link status');
+  assertTrue(Buffer.isBuffer(linkModePromoDm?.content?.image), '!link on mode must attach owner promo photo');
+  assertEqual(linkModePromoDm?.content?.mimetype, 'image/png', 'Promo image mimetype should match saved promo mimetype');
+  assertTrue(
+    String(linkModePromoDm?.content?.caption || '').includes(ownerPromoLink),
+    '!link on mode caption must include owner promo link'
+  );
+  assertFalse(
+    h2.sentMessages.some((m) => m.jid === '252615000111@s.whatsapp.net' || m.content?.react),
+    '!link on mode must NOT react or reply to poster'
+  );
+
+  // Case 3: Owner has promo LINK saved WITHOUT promo image -> falls back cleanly to text containing link + save me
+  const h3 = buildHarness();
+  h3.manager.setLinkCampaignMode(false);
+  h3.manager.setOwnerPromo({ link: ownerPromoLink });
+  h3.reactor.setOwnerName('Mohamed');
+
+  await h3.engine.handleStatusUpsert(
+    {
+      key: { remoteJid: 'status@broadcast', id: 'ST_PHOTO_LINK_3', participant: '252639991111@s.whatsapp.net', fromMe: false },
+      pushName: 'Guuleed',
+      messageTimestamp: now,
+      message: {
+        imageMessage: {
+          mimetype: 'image/jpeg',
+          caption: 'wa.me/252634443322',
+        },
+      },
+    },
+    'notify',
+    h3.mockSocket
+  );
+  h3.engine.disposeTimers();
+
+  const fallbackLinkDm = h3.sentMessages.find((m) => m.jid === '252634443322@s.whatsapp.net');
+  assertTrue(Boolean(fallbackLinkDm), 'Fallback photo+link DM must still deliver when owner has link without image');
+  assertTrue(
+    String(fallbackLinkDm?.content?.text || '').includes(ownerPromoLink),
+    'Fallback DM text must include owner promo link'
+  );
+  assertTrue(
+    String(fallbackLinkDm?.content?.text || '').toLowerCase().includes('save me mohamed'),
+    'Fallback DM text must include save me <ownerName>'
+  );
+});
+
 const result = await suite.run();
 try {
   fs.rmSync(tmpDir, { recursive: true, force: true });

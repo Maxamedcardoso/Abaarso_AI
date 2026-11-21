@@ -1337,13 +1337,19 @@ Respond with ONLY valid JSON:
 
     const senderName = msg.pushName || '';
     const gender = UserProfiler.detectGender(senderName);
+    const hasPhotoWithLink = Boolean(
+      mediaKind === 'image' ||
+      innerMsg?.imageMessage ||
+      msg.message?.imageMessage
+    );
 
     // ─── 5. LINK CAMPAIGN MODE (!link on) ──────────────────────────────
     // USER RULE: "!link on markuu yahay bot ha eego dhamaaan status yaanu jaawabin status reply u galin kaliya status link soo dhigo numbers hala hadlo number lasoo dhigo status link ooo kaliya"
     // 1. All statuses are marked as seen (auto-viewed in transport via sendReceipts('read')).
     // 2. Do NOT react or comment/reply to the status story itself.
     // 3. ONLY if a status contains a link / phone number (in text, caption, wa.me/message, or flyer image),
-    //    message ONLY the extracted number(s) directly via private DM.
+    //    message ONLY the extracted number(s) directly via private DM (sending owner promo photo + link
+    //    automatically when the status has BOTH a photo and a link/number together).
     if (isLinkMode) {
       const numberSet = new Set<string>(this.extractPhoneNumbersFromText(combinedText));
 
@@ -1384,59 +1390,15 @@ Respond with ONLY valid JSON:
       const extractedNumbers = Array.from(numberSet);
       let sentAnyDm = false;
       if (extractedNumbers.length > 0) {
-        console.log(`🔍 [StatusLinkMode] Found ${extractedNumbers.length} number(s) in status from ${senderJid}: ${extractedNumbers.join(', ')}`);
-        const socketOwnJid = socket?.user?.id ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') : '';
-
-        for (const phone of extractedNumbers) {
-          // Never message the bot's own connected WhatsApp session number (loop prevention)
-          if (socketOwnJid && phone === socketOwnJid) {
-            console.log(`ℹ️ [StatusLinkMode] Skipping bot's own number (${phone}).`);
-            continue;
-          }
-          if (this.isPendingSaveMe(phone)) {
-            console.log(`ℹ️ [StatusLinkMode] Already messaged ${phone} recently (within cooldown). Skipping duplicate DM.`);
-            continue;
-          }
-
-          let targetJid = `${phone}@s.whatsapp.net`;
-          // Verify number exists on WhatsApp and get exact official JID when onWhatsApp is available
-          if (typeof socket.onWhatsApp === 'function') {
-            try {
-              const checkRes = await socket.onWhatsApp(phone);
-              const first = Array.isArray(checkRes) ? checkRes[0] : null;
-              if (first && first.exists === false) {
-                console.log(`ℹ️ [StatusLinkMode] Skipping ${phone}: not registered on WhatsApp.`);
-                continue;
-              }
-              if (first?.jid) {
-                targetJid = first.jid;
-              }
-            } catch {
-              // Fall back to standard JID if onWhatsApp query errors
-            }
-          }
-
-          const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
-          try {
-            await socket.sendMessage(targetJid, { text: saveMsg });
-            this.markSaveMeSent(phone);
-            this.stats.dmLinks++;
-            sentAnyDm = true;
-            console.log(`📲 [StatusLinkMode] Sent DM "${saveMsg}" to extracted number ${phone} (${targetJid}) from status of ${senderName || senderJid}`);
-            this.recordInteraction({
-              id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              senderJid,
-              senderName,
-              type: 'comment',
-              content: `${saveMsg} (DM to extracted number ${phone} from status link)`,
-              category: 'phone_number_status',
-              statusText: combinedText || '[Image Flyer]',
-              timestamp: Date.now(),
-            });
-          } catch (sendErr: any) {
-            console.warn(`[StatusLinkMode] Failed to send DM to ${phone}: ${sendErr?.message}`);
-          }
-        }
+        sentAnyDm = await this.sendSaveMeDmsToExtractedNumbers(
+          extractedNumbers,
+          socket,
+          senderJid,
+          senderName,
+          combinedText || '[Image Flyer]',
+          'StatusLinkMode',
+          { hasPhotoWithLink, activeManager }
+        );
       } else {
         console.log(`ℹ️ [StatusLinkMode] Status from ${senderJid} viewed (seen). No link/number found; status reply/react suppressed per user rule.`);
       }
@@ -1453,7 +1415,9 @@ Respond with ONLY valid JSON:
     // ─── 6b. LINK / PHONE-NUMBER STATUS IN NORMAL MODE (!link off + !view on) ──
     // USER RULE: "marka link off yahay view on yahay yaanu jawaabin qof link number soo dhigay
     //             ee hala hadlo link number qoran is toos save me haku dhaho"
-    // Do NOT react or reply to the status poster — directly DM the extracted link/phone number(s) "save me <ownerName>"!
+    //            AND: "hadii link number iyo sawir wada socoda qofku soo dhigo inaad adiguna bot si autom
+    //                  u dirto link iyo sawirka qofka number leh"
+    // Do NOT react or reply to the status poster — directly DM the extracted link/phone number(s)!
     const normalNumberSet = new Set<string>(this.extractPhoneNumbersFromText(combinedText));
     if (/wa\.me\/(?:message|qr)\//i.test(combinedText)) {
       const resolvedShort = await this.resolveWaMeShortLinks(combinedText);
@@ -1467,7 +1431,8 @@ Respond with ONLY valid JSON:
         senderJid,
         senderName,
         combinedText || text,
-        'StatusReactor'
+        'StatusReactor',
+        { hasPhotoWithLink, activeManager }
       );
       return true;
     }
@@ -1534,7 +1499,7 @@ Respond with ONLY valid JSON:
     // Schedule ONE clean interaction (react + reply) — never duplicate reactions!
     const timer = setTimeout(async () => {
       try {
-        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind, resolvedIdentity);
+        await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind, resolvedIdentity, activeManager);
       } catch (err: any) {
         this.stats.failed++;
         console.error(`[StatusReactor] Error executing interaction: ${err?.message}`);
@@ -1743,8 +1708,13 @@ Respond with ONLY valid JSON:
   }
 
   /**
-   * Sends direct "save me <ownerName>" DMs to phone numbers extracted from a status link/number,
-   * skipping the bot's own number, admin numbers, recently messaged numbers, and non-WhatsApp numbers.
+   * Sends direct DMs to phone numbers extracted from a status link/number, skipping the bot's own number,
+   * admin numbers, recently messaged numbers, and non-WhatsApp numbers.
+   *
+   * - Text-only link/number status -> sends plain "save me <ownerName>".
+   * - Photo + link/number together (`hasPhotoWithLink: true`) -> automatically sends the owner's saved
+   *   promo photo + promo link (configured via `!link set`) along with "save me <ownerName>" directly
+   *   to the person who owns the extracted number!
    */
   private async sendSaveMeDmsToExtractedNumbers(
     extractedNumbers: string[],
@@ -1752,15 +1722,33 @@ Respond with ONLY valid JSON:
     senderJid: string,
     senderName: string,
     statusText: string,
-    logTag: string = 'StatusReactor'
+    logTag: string = 'StatusReactor',
+    options?: {
+      hasPhotoWithLink?: boolean;
+      activeManager?: WhatsAppManagerService;
+    }
   ): Promise<boolean> {
     if (!socket || extractedNumbers.length === 0) return false;
     const socketOwnJid = socket?.user?.id
       ? socket.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
       : '';
+    const hasPhotoWithLink = Boolean(options?.hasPhotoWithLink);
+    const mgr = options?.activeManager || this.whatsappManager;
+    const promo = hasPhotoWithLink && typeof mgr?.getOwnerPromo === 'function' ? mgr.getOwnerPromo() : {};
+    const ownerBotDigits =
+      hasPhotoWithLink && typeof mgr?.getBotNumber === 'function'
+        ? mgr.getBotNumber().replace(/\D/g, '')
+        : '';
+    const effectiveOwnerLink = hasPhotoWithLink
+      ? (promo?.link || '').trim() ||
+        (ownerBotDigits ? `https://wa.me/${ownerBotDigits}` : socketOwnJid ? `https://wa.me/${socketOwnJid}` : '')
+      : '';
+    const hasPromoImage = Boolean(hasPhotoWithLink && promo?.imageBuffer && promo.imageBuffer.length > 0);
     let sentAnyDm = false;
 
-    console.log(`🔍 [${logTag}] Found ${extractedNumbers.length} link/phone number(s) in status from ${senderJid}: ${extractedNumbers.join(', ')}`);
+    console.log(
+      `🔍 [${logTag}] Found ${extractedNumbers.length} link/phone number(s) in ${hasPhotoWithLink ? 'photo+link' : 'text-link'} status from ${senderJid}: ${extractedNumbers.join(', ')}`
+    );
 
     for (const phone of extractedNumbers) {
       if ((socketOwnJid && phone === socketOwnJid) || this.isAdminOrSelf(`${phone}@s.whatsapp.net`, false, socket)) {
@@ -1791,17 +1779,48 @@ Respond with ONLY valid JSON:
 
       const saveMsg = `save me ${this.ownerName || 'Mohamed'}`;
       try {
-        await socket.sendMessage(targetJid, { text: saveMsg });
+        let deliveredMode = 'text';
+        let loggedContent = saveMsg;
+
+        if (hasPhotoWithLink && (hasPromoImage || effectiveOwnerLink)) {
+          const promoCaption = effectiveOwnerLink
+            ? `${saveMsg}\n\nWaa kan anigana ${hasPromoImage ? 'sawirkayga iyo link-gayga' : 'link-gayga'} WhatsApp, fadlan adiguna status-kaaga iigu dhig! 📲✨\n🔗 ${effectiveOwnerLink}`
+            : saveMsg;
+          loggedContent = promoCaption;
+
+          if (hasPromoImage && promo.imageBuffer) {
+            try {
+              await socket.sendMessage(targetJid, {
+                image: promo.imageBuffer,
+                mimetype: promo.mimeType || 'image/jpeg',
+                caption: promoCaption,
+              });
+              deliveredMode = 'photo+link';
+            } catch (imgErr: any) {
+              console.warn(`[${logTag}] Promo photo DM failed for ${phone} (${imgErr?.message}), falling back to text link...`);
+              await socket.sendMessage(targetJid, { text: promoCaption });
+              deliveredMode = 'link-text-fallback';
+            }
+          } else {
+            await socket.sendMessage(targetJid, { text: promoCaption });
+            deliveredMode = 'link-text';
+          }
+        } else {
+          await socket.sendMessage(targetJid, { text: saveMsg });
+        }
+
         this.markSaveMeSent(phone);
         this.stats.dmLinks++;
         sentAnyDm = true;
-        console.log(`📲 [${logTag}] Sent DM "${saveMsg}" directly to ${phone} (${targetJid}) from status of ${senderName || senderJid}`);
+        console.log(
+          `📲 [${logTag}] Sent ${deliveredMode === 'photo+link' ? 'owner promo PHOTO + LINK' : `DM "${saveMsg}"`} (${deliveredMode}) directly to ${phone} (${targetJid}) from status of ${senderName || senderJid}`
+        );
         this.recordInteraction({
           id: `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           senderJid,
           senderName,
           type: 'comment',
-          content: `${saveMsg} (DM to extracted number ${phone} from status link)`,
+          content: `${loggedContent} (DM [${deliveredMode}] to extracted number ${phone} from status link)`,
           category: 'phone_number_status',
           statusText: statusText || '[Link Status]',
           timestamp: Date.now(),
@@ -1827,7 +1846,8 @@ Respond with ONLY valid JSON:
     rawText: string,
     gender: 'male' | 'female' | 'unknown' = 'unknown',
     mediaKind?: string | null,
-    resolvedIdentity?: ResolvedStatusIdentity
+    resolvedIdentity?: ResolvedStatusIdentity,
+    activeManager?: WhatsAppManagerService
   ): Promise<void> {
     if (!socket) return;
 
@@ -1835,7 +1855,10 @@ Respond with ONLY valid JSON:
     if (analysis.category === 'phone_number_status') {
       const extracted = this.extractPhoneNumbersFromText(rawText);
       if (extracted.length > 0) {
-        await this.sendSaveMeDmsToExtractedNumbers(extracted, socket, senderJid, senderName, rawText, 'StatusReactor');
+        await this.sendSaveMeDmsToExtractedNumbers(extracted, socket, senderJid, senderName, rawText, 'StatusReactor', {
+          hasPhotoWithLink: mediaKind === 'image',
+          activeManager: activeManager || this.whatsappManager,
+        });
       }
       return;
     }

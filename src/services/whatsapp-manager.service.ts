@@ -1090,6 +1090,7 @@ export class WhatsAppManagerService {
             'status@broadcast',
             {
               image: media.buffer,
+              mimetype: media.mimeType || 'image/jpeg',
               caption: media.caption || '',
             },
             sendOpts
@@ -1099,6 +1100,7 @@ export class WhatsAppManagerService {
             'status@broadcast',
             {
               video: media.buffer,
+              mimetype: media.mimeType || 'video/mp4',
               caption: media.caption || '',
             },
             sendOpts

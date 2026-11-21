@@ -1776,17 +1776,22 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         let sentMediaMsg: any = undefined;
 
         if (media.type === 'image') {
+          const imgPayload = {
+            image: media.dataBuffer,
+            mimetype: media.mimeType || 'image/jpeg',
+            caption: media.caption,
+          };
           try {
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
-              { image: media.dataBuffer, caption: media.caption },
+              imgPayload,
               sendOptions
             );
           } catch (quotedErr) {
             console.warn('[WhatsAppBaileys] Quoted image send failed, falling back to direct send:', quotedErr);
             sentMediaMsg = await this.socket!.sendMessage(
               chatId,
-              { image: media.dataBuffer, caption: media.caption }
+              imgPayload
             );
           }
         } else if (media.type === 'audio') {
