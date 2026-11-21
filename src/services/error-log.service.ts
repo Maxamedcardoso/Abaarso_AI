@@ -20,6 +20,7 @@ export interface ErrorLogEntry {
   message: string;
   origin: string;
   stack: string[];
+  hint?: string;
   count: number;
   firstSeen: number;
   lastSeen: number;
@@ -41,26 +42,69 @@ function stripEmoji(s: string): string {
   return s.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '').trim();
 }
 
-/** Parses an Error stack into compact "src/path/file.ts:line" frames (project frames first). */
+/** Parses an Error stack into compact frames: project frames ("src/x.ts:12") first, else library frames ("pkg/lib/x.js:12"). */
 export function parseStackFrames(stack: string | undefined, limit = 4): string[] {
   if (!stack) return [];
-  const frames: string[] = [];
-  const fallback: string[] = [];
+  const projectFrames: string[] = [];
+  const libFrames: string[] = [];
+  const otherFrames: string[] = [];
   for (const raw of stack.split('\n')) {
     const line = raw.trim();
     if (!line.startsWith('at ')) continue;
-    if (line.includes('error-log.service') || line.includes('node:internal') || line.includes('node_modules')) continue;
-    const m = line.match(/([^\s()]+?)[\\/](src[\\/][^\s():]+?):(\d+)(?::\d+)?\)?$/);
-    if (m) {
-      frames.push(`${m[2].replace(/\\/g, '/')}:${m[3]}`);
-      if (frames.length >= limit) break;
+    if (line.includes('error-log.service') || line.includes('node:')) continue;
+    const lib = line.match(/node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)[\\/](.+?):(\d+)(?::\d+)?\)?$/);
+    if (lib) {
+      libFrames.push(`${lib[1].replace(/\\/g, '/')}/${lib[2].replace(/\\/g, '/')}:${lib[3]}`);
       continue;
     }
-    const m2 = line.match(/([^\\/\s()]+):(\d+)(?::\d+)?\)?$/);
-    if (m2) fallback.push(`${m2[1]}:${m2[2]}`);
+    const m = line.match(/([^\s()]+?)[\\/](src[\\/][^\s():]+?):(\d+)(?::\d+)?\)?$/);
+    if (m) {
+      projectFrames.push(`${m[2].replace(/\\/g, '/')}:${m[3]}`);
+      continue;
+    }
+    const other = line.match(/([^\\/\s()]+):(\d+)(?::\d+)?\)?$/);
+    if (other) otherFrames.push(`${other[1]}:${other[2]}`);
   }
-  return frames.length > 0 ? frames : fallback.slice(0, limit);
+  // Project frames are the most actionable; when the failure happened purely inside a library
+  // (e.g. a Baileys crypto error), show the library frames so the origin is never "unknown".
+  const chosen = projectFrames.length > 0 ? projectFrames : libFrames.length > 0 ? libFrames : otherFrames;
+  return chosen.slice(0, limit);
 }
+
+/** Known error patterns → plain-Somali explanation + whether they are benign (downgraded to a warning). */
+const KNOWN_ERRORS: Array<{ re: RegExp; hint: string; benign: boolean }> = [
+  {
+    re: /Unsupported state or unable to authenticate data/i,
+    hint: 'Baileys ayaa fariin/frame crypto ah u furi waayay (key-yada session-ka ma is-waafaqin, caadi ahaan waxay dhacdaa isla markii la xidhiidhinayo ama socket dib u bilaabmayo). Waa la qabtay, bot-kuna wuu shaqaynayaa. Haddii ay soo noqnoqoto cabaar kadib: unlink oo dib u scan-garee.',
+    benign: true,
+  },
+  {
+    re: /SSL modes .* aliases/i,
+    hint: 'Digniin PostgreSQL (Neon) oo ku saabsan SSL mode — khatar ma aha.',
+    benign: true,
+  },
+  {
+    re: /fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i,
+    hint: 'Cilad shabakad (internet/API-ga dibadda). Hubi internet-ka ama API key-ga.',
+    benign: false,
+  },
+  {
+    re: /429|quota|RESOURCE_EXHAUSTED/i,
+    hint: 'Xaddiga API (Gemini quota) ayaa dhammaaday ama waa la xaddiday.',
+    benign: false,
+  },
+  {
+    re: /Connection Closed|Stream Errored|Connection Failure|status: 408/i,
+    hint: 'WhatsApp xidhiidhkii wuu go\'ay — bot-ku iskiis ayuu dib u xidhiidhinayaa.',
+    benign: false,
+  },
+];
+
+export function matchKnownError(message: string): { hint: string; benign: boolean } | undefined {
+  const hit = KNOWN_ERRORS.find((k) => k.re.test(message));
+  return hit ? { hint: hit.hint, benign: hit.benign } : undefined;
+}
+
 
 function normalizeForFingerprint(msg: string): string {
   return msg
@@ -98,6 +142,8 @@ export class ErrorLogService {
       const stack = parseStackFrames(stackSrc);
       const origin = stack[0] || 'unknown';
       const cleanSource = (source || 'App').slice(0, 60);
+      const known = matchKnownError(rawMsg);
+      if (known?.benign) level = 'warn';
       const fp = `${level}|${cleanSource}|${normalizeForFingerprint(rawMsg)}`;
       const now = Date.now();
       const existing = this.entries.get(fp);
@@ -116,6 +162,7 @@ export class ErrorLogService {
           message: rawMsg,
           origin,
           stack,
+          hint: known?.hint,
           count: 1,
           firstSeen: now,
           lastSeen: now,

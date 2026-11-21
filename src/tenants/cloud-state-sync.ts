@@ -25,12 +25,27 @@ function shouldUseSsl(connStr: string): boolean {
   return true;
 }
 
+/**
+ * pg treats `sslmode=require|prefer|verify-ca` as aliases of verify-full and prints a noisy SECURITY WARNING.
+ * SSL is configured explicitly via the `ssl` option below, so the sslmode query parameter is dropped.
+ */
+function stripSslMode(connStr: string): string {
+  try {
+    const u = new URL(connStr);
+    if (!u.searchParams.has('sslmode')) return connStr;
+    u.searchParams.delete('sslmode');
+    return u.toString();
+  } catch {
+    return connStr;
+  }
+}
+
 export class PostgresSnapshotStore implements ICloudSnapshotStore {
   private pool: Pool;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
-      connectionString,
+      connectionString: stripSslMode(connectionString),
       ssl: shouldUseSsl(connectionString) ? { rejectUnauthorized: false } : undefined,
       max: 3,
       idleTimeoutMillis: 15_000,

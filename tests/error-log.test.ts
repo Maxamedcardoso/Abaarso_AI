@@ -110,6 +110,25 @@ suite.test('!info shows health + errors with origin for admin; blocked for non-a
   assertTrue(r4.handled && r4.reason === 'Unauthorized admin command blocked', 'Non-admin !info is blocked');
 });
 
+suite.test('Library-only stacks (e.g. Baileys crypto) show the library file:line and known errors get a hint + warn level', () => {
+  const svc = new ErrorLogService(path.join(tmpDir, 'unit-4.json'));
+  const err: any = new Error('Unsupported state or unable to authenticate data');
+  err.stack =
+    'Error: Unsupported state or unable to authenticate data\n' +
+    '    at Decipheriv.final (node:internal/crypto/cipher:193:29)\n' +
+    '    at aesDecryptGCM (file:///C:/Users/mohamed/Desktop/BOT/node_modules/@whiskeysockets/baileys/lib/Utils/crypto.js:53:30)\n' +
+    '    at EventEmitter.emit (node:events:514:28)';
+  svc.record('Process Guard: unhandledRejection', err);
+  const e = svc.getEntries()[0];
+  assertEqual(e.origin, '@whiskeysockets/baileys/lib/Utils/crypto.js:53', 'Origin must point at the Baileys file, not node:events');
+  assertEqual(e.level, 'warn', 'Known benign Baileys crypto error is downgraded to a warning');
+  assertTrue(Boolean(e.hint && e.hint.includes('Baileys')), 'Known error carries an explanatory hint');
+
+  const ssl = new ErrorLogService(path.join(tmpDir, 'unit-5.json'));
+  ssl.record('node', "Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'");
+  assertEqual(ssl.getEntries()[0].level, 'warn', 'pg SSL alias notice is only a warning');
+});
+
 const result = await suite.run();
 try {
   fs.rmSync(tmpDir, { recursive: true, force: true });

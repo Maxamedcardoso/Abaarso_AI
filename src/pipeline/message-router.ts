@@ -328,6 +328,7 @@ SHURUUCDA DUGSIIYA:
           `*${i + 1}. ${e.level === 'error' ? '🔴' : '🟡'} [${e.source}]* ×${e.count}\n` +
           `   ❝${e.message.slice(0, 230)}❞\n` +
           `   📍 Halka uu ka yimid: \`${frames}\`\n` +
+          (e.hint ? `   💡 ${e.hint}\n` : '') +
           `   🕒 Ugu horeysay ${formatClock(e.firstSeen)} • Ugu dambeysay ${formatClock(e.lastSeen)}`
         );
       });
@@ -359,7 +360,8 @@ SHURUUCDA DUGSIIYA:
         return (
           `${i + 1}. ${e.level === 'error' ? '🔴' : '🟡'} *[${e.source}]* ×${e.count} — ${formatClock(e.lastSeen)}\n` +
           `   ${e.message.slice(0, 110)}\n` +
-          `   📍 \`${e.origin}\``
+          `   📍 \`${e.origin}\`` +
+          (e.hint ? `\n   💡 ${e.hint.slice(0, 140)}` : '')
         );
       });
       errBlock =
