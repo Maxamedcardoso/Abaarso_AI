@@ -196,7 +196,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const credsPath = path.join(this.authDir, 'creds.json');
       if (!fs.existsSync(credsPath)) return { exists: false, registered: false };
       const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-      return { exists: true, registered: Boolean(parsed?.registered || parsed?.account) };
+      // A session is ONLY valid and registered if registered === true and me.id is present.
+      // Leftover account details from unlinked/expired sessions must not prevent a clean pairing cycle.
+      const isRegistered = Boolean(parsed?.registered === true && parsed?.me?.id);
+      return { exists: true, registered: isRegistered };
     } catch {
       return { exists: false, registered: false };
     }
@@ -206,7 +209,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     const state = this.readDiskCredsState();
     if (state.exists && !state.registered) {
       try {
-        fs.rmSync(this.authDir, { recursive: true, force: true });
+        if (fs.existsSync(this.authDir)) {
+          const files = fs.readdirSync(this.authDir);
+          for (const f of files) {
+            // Preserve user and feature configuration files across session refreshes
+            if (f.endsWith('-config.json') || f.endsWith('_flyer.bin')) continue;
+            try {
+              fs.rmSync(path.join(this.authDir, f), { recursive: true, force: true });
+            } catch {}
+          }
+          console.log(`🧹 [WhatsAppBaileys:${this.tenantId}] Purged stale unregistered auth files to ensure a clean QR scan.`);
+        }
       } catch {}
     }
   }
