@@ -708,6 +708,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             this.currentPairingCode = null;
             this.pairingError = 'Waqtigii pairing code-ka wuu dhammaaday — fadlan mar kale guji Soo Saar.';
             this.purgeUnregisteredAuthDir();
+            // If an unregistered subscriber tenant times out on QR pairing, pause and wait for user action in Web Studio
+            // rather than spinning in an infinite 408 timeout loop in the background.
+            if (this.tenantId !== 'owner') {
+              console.log(`⏸️ [WhatsAppBaileys:${this.tenantId}] QR pairing timed out (408). Standing by for Web Studio user action.`);
+              return;
+            }
           }
           this.reconnectTimer = setTimeout(() => this.start(), 3000);
         }
@@ -2214,7 +2220,11 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     }
   }
 
+  private static safetyWarningPrinted = false;
+
   private printSafetyWarning(): void {
+    if (WhatsAppBaileysTransport.safetyWarningPrinted) return;
+    WhatsAppBaileysTransport.safetyWarningPrinted = true;
     console.log(`
 ⚠️  ==============================================================
 ⚠️  WHATSAPP WEB AUTOMATION BAN RISK NOTICE

@@ -456,10 +456,19 @@ export class TenantManager {
 
     this.contexts.set(tenant.id, ctx);
 
-    // Auto-start socket on boot ONLY for owner, or for subscribers who already have saved credentials.
-    // Unregistered subscribers pair via the Web Studio dashboard without spamming host terminal sockets.
-    const hasExistingCreds = fs.existsSync(path.join(paths.authDir, 'creds.json'));
-    const shouldStart = startSocket && (paths.isOwner || hasExistingCreds);
+    // Auto-start socket on boot ONLY for owner, or for subscribers who already have verified registered credentials.
+    // Unregistered subscribers pair via the Web Studio dashboard without spamming background sockets or terminal QR.
+    let hasRegisteredCreds = false;
+    try {
+      const credsPath = path.join(paths.authDir, 'creds.json');
+      if (fs.existsSync(credsPath)) {
+        const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+        hasRegisteredCreds = Boolean(parsed?.registered === true && parsed?.me?.id);
+      }
+    } catch {
+      hasRegisteredCreds = false;
+    }
+    const shouldStart = startSocket && (paths.isOwner || hasRegisteredCreds);
 
     if (shouldStart && (!tenant.id || tenant.id === 'owner' || this.registry.isTenantActive(tenant))) {
       ctx.started = true;
