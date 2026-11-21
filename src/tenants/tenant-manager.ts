@@ -384,6 +384,7 @@ export class TenantManager {
     };
 
     const router = new MessageRouter(engine, scopedConfig, undefined, undefined, memory, {
+      tenantId: tenant.id,
       broadcast,
       whatsappManager,
       statusReactor,
@@ -463,7 +464,8 @@ export class TenantManager {
       const credsPath = path.join(paths.authDir, 'creds.json');
       if (fs.existsSync(credsPath)) {
         const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-        hasRegisteredCreds = Boolean(parsed?.registered === true && parsed?.me?.id);
+        // Same rule as the transport: a paired session carries `account` (QR/pairing-code logins) or registered=true
+        hasRegisteredCreds = Boolean(parsed?.registered || parsed?.account);
       }
     } catch {
       hasRegisteredCreds = false;

@@ -7,6 +7,10 @@ import { TenantRegistry } from './tenants/tenant-registry.js';
 import { TenantManager } from './tenants/tenant-manager.js';
 import { CloudStateSync, PostgresSnapshotStore } from './tenants/cloud-state-sync.js';
 import { createStudioServer } from './web/studio-server.js';
+import { errorLogService } from './services/error-log.service.js';
+
+// Register process-level guards + console capture FIRST so even boot-time failures are recorded for `!info`.
+errorLogService.installConsoleCapture();
 
 async function bootstrap() {
   console.log(`\n======================================================`);
@@ -154,10 +158,12 @@ async function bootstrap() {
   process.on('SIGTERM', shutdown);
 
   process.on('uncaughtException', (err) => {
-    console.error('🛡️ [Process Guard] Uncaught Exception caught safely:', err?.message || err);
+    errorLogService.record('Process Guard: uncaughtException', err, 'error');
+    errorLogService.withoutCapture(() => console.error('🛡️ [Process Guard] Uncaught Exception caught safely:', err?.message || err));
   });
   process.on('unhandledRejection', (reason) => {
-    console.error('🛡️ [Process Guard] Unhandled Rejection caught safely:', (reason as any)?.message || reason);
+    errorLogService.record('Process Guard: unhandledRejection', reason instanceof Error ? reason : String((reason as any)?.message || reason), 'error', (reason as any)?.stack);
+    errorLogService.withoutCapture(() => console.error('🛡️ [Process Guard] Unhandled Rejection caught safely:', (reason as any)?.message || reason));
   });
 }
 

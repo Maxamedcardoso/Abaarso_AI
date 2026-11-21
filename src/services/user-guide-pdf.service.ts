@@ -350,6 +350,7 @@ export function generateSubscriberGuidePdfBuffer(input: SubscriberGuidePdfInput)
   doc.addCommandCard('!status <qoraal / media>', '[ADMIN ONLY]', 'Status cusub soo dhig WhatsApp (qoraal, ama sawir/video/cod wata caption !status).', '!status Maalin wanaagsan dhammaan!');
   doc.addCommandCard('!status-ai [mawduuc]', '[ADMIN ONLY]', 'Bot-ka ayaa qoraaya status cusub oo xikmad ama xayeysiis ah kadibna soo dhigaya.', '!status-ai ganacsi cusub');
   doc.addCommandCard('!statusviews', '[ADMIN ONLY]', 'Soo saar liiska dadka daawatay status-kaaga (magaca, lambarka, waqtiga).', '!statusviews');
+  doc.addCommandCard('!info / !info errors / !info clear', '[ADMIN ONLY]', 'Xaaladda bot-ka (WhatsApp, Auto-View, AI) iyo dhammaan khaladaadka la diiwaangeliyay oo ay la socdaan faylka iyo xariiqda ay ka yimaadeen.', '!info   /   !info errors');
   doc.addCommandCard('!deletestatus', '[ADMIN ONLY]', 'Tirtir status-kaagii ugu dambeeyay ee WhatsApp (Delete for everyone).', '!deletestatus');
   doc.addCommandCard('!reply <lambar> <fariin>', '[ADMIN ONLY]', 'U dir fariin toos ah qof kasta, ama qof fariintiisa quote ku qabo oo qor !reply <jawaab>.', '!reply 252634xxxxxx Dalabkaagii waa diyaar!');
   doc.addCommandCard('!cod <lambar> <fariin>', '[ADMIN ONLY]', 'Qoraalkaaga u rog Cod Soomaali dabiici ah (Voice Note) oo u dir lambarkaas.', '!cod 252634xxxxxx Asc walaal sidee tahay?');

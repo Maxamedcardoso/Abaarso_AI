@@ -11,8 +11,11 @@ import { IStudentMemory } from '../memory/memory.interface.js';
 import { UserProfiler } from '../services/user-profiler.service.js';
 import { PlanGuard } from '../tenants/plan-catalog.js';
 import { codeRunnerService } from '../services/code-runner.service.js';
+import { errorLogService, formatClock, formatDuration } from '../services/error-log.service.js';
 
 export interface MessageRouterOptions {
+  /** Tenant id (used to scope `!info` error output for subscribers). Defaults to 'owner'. */
+  tenantId?: string;
   broadcast?: BroadcastService;
   whatsappManager?: WhatsAppManagerService;
   statusReactor?: StatusReactorService;
@@ -43,6 +46,8 @@ export class MessageRouter {
   private getExtraAdmins?: () => string[];
   private onboardingHandler?: MessageRouterOptions['onboardingHandler'];
   private sendGuidePdfHandler?: MessageRouterOptions['sendGuidePdfHandler'];
+  private tenantId: string;
+  private isOwnerTenant: boolean;
 
   constructor(
     engine: StudentAdvisorEngine,
@@ -65,6 +70,8 @@ export class MessageRouter {
     this.getExtraAdmins = options?.getExtraAdmins;
     this.onboardingHandler = options?.onboardingHandler;
     this.sendGuidePdfHandler = options?.sendGuidePdfHandler;
+    this.tenantId = options?.tenantId || 'owner';
+    this.isOwnerTenant = this.tenantId === 'owner';
     if (this.engine?.getAIOrchestrator) {
       this.whatsappManager.setAIOrchestrator(this.engine.getAIOrchestrator());
     }
@@ -293,6 +300,78 @@ SHURUUCDA DUGSIIYA:
 
   private chatQueues: Map<string, Promise<any>> = new Map();
 
+  /**
+   * Builds the `!info` report: live bot health + registered errors with their origin (file:line).
+   * Subscriber tenants only see errors tagged with their own tenant id; the owner sees everything.
+   */
+  private buildInfoReport(sub: string, transport: IMessagingTransport): string {
+    const scope = this.isOwnerTenant ? undefined : this.tenantId;
+    const MAX = 3400;
+
+    if (sub === 'clear' || sub === 'tirtir' || sub === 'reset') {
+      const n = errorLogService.clear(scope);
+      return `🧹 *[CARDOSO AI — INFO]*: Diiwaanka khaladaadka waa la nadiifiyay (${n} nooc oo la tirtiray). ✅`;
+    }
+
+    const all = errorLogService.getEntries({ scopeText: scope });
+    const errors = all.filter((e) => e.level === 'error');
+    const warns = all.filter((e) => e.level === 'warn');
+
+    if (sub === 'errors' || sub === 'error' || sub === 'khalad' || sub === 'khaladaad' || sub === 'full') {
+      const list = (errors.length > 0 ? errors : all).slice(0, 8);
+      if (list.length === 0) {
+        return `✅ *[CARDOSO AI — INFO]*: Wax khalad ah lama diiwaangelin. Bot-ku waa nadiif!`;
+      }
+      const lines = list.map((e, i) => {
+        const frames = e.stack.length > 0 ? e.stack.slice(0, 3).join(' ← ') : e.origin;
+        return (
+          `*${i + 1}. ${e.level === 'error' ? '🔴' : '🟡'} [${e.source}]* ×${e.count}\n` +
+          `   ❝${e.message.slice(0, 230)}❞\n` +
+          `   📍 Halka uu ka yimid: \`${frames}\`\n` +
+          `   🕒 Ugu horeysay ${formatClock(e.firstSeen)} • Ugu dambeysay ${formatClock(e.lastSeen)}`
+        );
+      });
+      const out = `🔎 *[CARDOSO AI — INFO: KHALAADAADKA FAAHFAAHINTA]*\n\n${lines.join('\n\n')}\n\n_!info_ (guud) • _!info clear_ (nadiifi)`;
+      return out.length > MAX ? out.slice(0, MAX) + '…' : out;
+    }
+
+    // ── Default: health snapshot + top errors summary ──
+    const anyTransport: any = transport;
+    const connected = Boolean(transport.isConnected);
+    const botNumber = typeof anyTransport.getBotNumber === 'function' ? anyTransport.getBotNumber() : '';
+    const cfg = this.statusReactor.getConfig();
+    const memMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+
+    const health =
+      `⚙️ *XAALADDA BOT-KA*\n` +
+      `• WhatsApp: ${connected ? '✅ Waa ku xidhan yahay' : '🛑 Ma xidhna'}${botNumber ? ` (+${botNumber})` : ''}\n` +
+      `• Uptime: ${formatDuration(Date.now() - errorLogService.getStartedAt())} • RAM: ${memMb} MB\n` +
+      `• AI Jawaab: ${this.whatsappManager.isAIEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
+      `• Auto-View (Seen): ${this.whatsappManager.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
+      `• Auto-React: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'} • Auto-Comment: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'} • Mode: ${cfg.mode.toUpperCase()}\n` +
+      `• Link Campaign (!link on): ${this.whatsappManager.isLinkCampaignMode() ? '✅ ON' : '🛑 OFF'}`;
+
+    let errBlock: string;
+    if (all.length === 0) {
+      errBlock = `✅ *KHALAADAAD:* Wax khalad ah lama diiwaangelin — bot-ku waa nadiif!`;
+    } else {
+      const top = (errors.length > 0 ? errors : warns).slice(0, 5).map((e, i) => {
+        return (
+          `${i + 1}. ${e.level === 'error' ? '🔴' : '🟡'} *[${e.source}]* ×${e.count} — ${formatClock(e.lastSeen)}\n` +
+          `   ${e.message.slice(0, 110)}\n` +
+          `   📍 \`${e.origin}\``
+        );
+      });
+      errBlock =
+        `🚨 *KHALAADAAD:* ${errors.length} error 🔴 • ${warns.length} digniin 🟡\n` + top.join('\n');
+    }
+
+    const out =
+      `🩺 *[CARDOSO AI — INFO & BOT HEALTH]* 🩺\n\n${health}\n\n${errBlock}\n\n` +
+      `_Amarrada:_ \`!info errors\` (faahfaahin + halka uu ka yimid) • \`!info clear\` (nadiifi)`;
+    return out.length > MAX ? out.slice(0, MAX) + '…' : out;
+  }
+
   public async handleIncomingMessage(
     message: IncomingMessage,
     transport: IMessagingTransport
@@ -302,7 +381,11 @@ SHURUUCDA DUGSIIYA:
 
     const task = previousPromise
       .catch(() => {})
-      .then(() => this.processMessageInternal(message, transport));
+      .then(() => this.processMessageInternal(message, transport))
+      .catch((err) => {
+        errorLogService.record(`MessageRouter${this.isOwnerTenant ? '' : ':' + this.tenantId}`, err, 'error');
+        throw err;
+      });
 
     this.chatQueues.set(queueKey, task);
 
@@ -1636,6 +1719,16 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Status views displayed' };
     }
 
+    // ─── !info — Bot health + full error registry (what failed & where it came from) ───
+    if (/^[!./#](?:info|botinfo|errors?|khalad(?:aad)?|health)(?:\s+(.+))?$/i.test(lowerText.trim()) && isAdminUser) {
+      const infoMatch = text.trim().match(/^[!./#](?:info|botinfo|errors?|khalad(?:aad)?|health)(?:\s+(.+))?$/i);
+      const typedAlias = /^[!./#](?:errors?|khalad(?:aad)?)\b/i.test(text.trim());
+      const sub = typedAlias ? 'errors' : (infoMatch?.[1] || '').trim().toLowerCase();
+      const report = this.buildInfoReport(sub, transport);
+      await transport.sendMessage(message.chatId, report);
+      return { handled: true, reason: 'Bot info displayed' };
+    }
+
     // ─── Status AI Reactor: Status Info & Overview ──────────────────────────
     if (/^[!./#]?(?:statusinfo|statusreactor)\b/i.test(lowerText) && isAdminUser) {
       const cfg = this.statusReactor.getConfig();
@@ -2233,6 +2326,18 @@ SHURUUCDA DUGSIIYA:
         await transport.reactToMessage(message.chatId, message.quotedMessageId, emoji, message.quotedParticipant);
       }
       return { handled: true, reason: 'react executed' };
+    }
+
+    // ─── 1k-pre. `!info` / `!errors` are admin-only (explicit prefix required so normal "info" chat is untouched) ──
+    if (/^[!./#](?:info|botinfo|errors?|khalad(?:aad)?|health)\b/i.test(lowerText) && !isAdminUser) {
+      console.log(`⛔ [Security Block] Unauthorized user (${message.senderId}) tried to execute admin command "${text}" in ${message.chatId}`);
+      if (!message.isGroup) {
+        await transport.sendMessage(
+          message.chatId,
+          '⛔ *[CARDOSO AI — AMNI]*: Amarkan waxaa isticmaali kara oo kaliya Mulkiilaha WhatsApp-ka (Admin-ka). Fadlan adigu su\'aalahaaga caadiga ah i weydii! 😊'
+        );
+      }
+      return { handled: true, reason: 'Unauthorized admin command blocked' };
     }
 
     // ─── 1k. Security Guard: Reject any management/admin command from unauthorized users ──

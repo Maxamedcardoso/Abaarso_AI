@@ -14,6 +14,7 @@ const testFiles = [
   'tests/status-reactor.test.ts',
   'tests/e2e-master.test.ts',
   'tests/multi-tenant.test.ts',
+  'tests/error-log.test.ts',
 ];
 
 console.log(`\n================================================================`);

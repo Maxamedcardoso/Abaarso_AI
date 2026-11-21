@@ -196,9 +196,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       const credsPath = path.join(this.authDir, 'creds.json');
       if (!fs.existsSync(credsPath)) return { exists: false, registered: false };
       const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-      // A session is ONLY valid and registered if registered === true and me.id is present.
-      // Leftover account details from unlinked/expired sessions must not prevent a clean pairing cycle.
-      const isRegistered = Boolean(parsed?.registered === true && parsed?.me?.id);
+      // Baileys multi-device QR/pairing-code logins do NOT always flip `registered` to true; a successful pairing
+      // is recorded as `account` (+ `me`). Treating such a session as "unregistered" would wipe a freshly scanned
+      // device during the 515 restart ("Logging in..." then drops). Unlinked sessions are cleaned by the 401 path.
+      const isRegistered = Boolean(parsed?.registered || parsed?.account);
       return { exists: true, registered: isRegistered };
     } catch {
       return { exists: false, registered: false };
@@ -218,6 +219,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
               fs.rmSync(path.join(this.authDir, f), { recursive: true, force: true });
             } catch {}
           }
+          // Remove the directory too when nothing worth preserving remains
+          try {
+            if (fs.readdirSync(this.authDir).length === 0) fs.rmdirSync(this.authDir);
+          } catch {}
           console.log(`🧹 [WhatsAppBaileys:${this.tenantId}] Purged stale unregistered auth files to ensure a clean QR scan.`);
         }
       } catch {}
