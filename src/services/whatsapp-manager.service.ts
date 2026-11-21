@@ -572,7 +572,7 @@ export class WhatsAppManagerService {
             }
           }
         }
-      } catch {}
+      } catch { }
     }
     return Array.from(new Set(list));
   }
@@ -586,17 +586,17 @@ export class WhatsAppManagerService {
     const rawAdmins = this.configuredAdminPhones !== null
       ? this.configuredAdminPhones
       : [
-          process.env.ADMIN_PHONE_NUMBERS,
-          process.env.SUPER_ADMIN_PHONE,
-          process.env.ALLOWED_PHONE_NUMBERS,
-          '252634949642',
-          '252633171649',
-        ]
-          .filter(Boolean)
-          .join(',')
-          .split(',')
-          .map(n => n.trim())
-          .filter(Boolean);
+        process.env.ADMIN_PHONE_NUMBERS,
+        process.env.SUPER_ADMIN_PHONE,
+        process.env.ALLOWED_PHONE_NUMBERS,
+        '252634949642',
+        '252633171649',
+      ]
+        .filter(Boolean)
+        .join(',')
+        .split(',')
+        .map(n => n.trim())
+        .filter(Boolean);
 
     for (const a of rawAdmins) {
       const cleanAdmin = this.toCleanUserJid(a);
@@ -629,7 +629,7 @@ export class WhatsAppManagerService {
           }
         }
       }
-    } catch {}
+    } catch { }
     return Array.from(new Set(list));
   }
 
@@ -779,7 +779,7 @@ export class WhatsAppManagerService {
           if (file.startsWith('sender-key-memory-status@broadcast')) {
             try {
               fs.unlinkSync(path.join(authDir, file));
-            } catch {}
+            } catch { }
           }
         }
       }
@@ -893,7 +893,7 @@ export class WhatsAppManagerService {
           const storeResult = await (this.socket as any).authState.keys.get('session', [signalId]);
           rawRecord = storeResult?.[signalId] ?? null;
         }
-      } catch {}
+      } catch { }
 
       if (!rawRecord && fs.existsSync(sessionFile)) {
         try {
@@ -915,7 +915,7 @@ export class WhatsAppManagerService {
         if (fs.existsSync(sessionFile)) {
           fs.unlinkSync(sessionFile);
         }
-      } catch {}
+      } catch { }
 
       try {
         if ((this.socket as any)?.authState?.keys?.set) {
@@ -923,7 +923,7 @@ export class WhatsAppManagerService {
             session: { [signalId]: null },
           });
         }
-      } catch {}
+      } catch { }
 
       // Reset status sender-key memory so Baileys re-sends SKDM over the refreshed PN session
       await this.resetStatusSenderKeyMemory(authDirOverride);
@@ -1217,16 +1217,28 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
 
   /**
    * Marks incoming status update as read (Auto View Status / Mark Seen).
+   * Preserves both `@s.whatsapp.net` and `@lid` domains cleanly and acknowledges both
+   * the raw participant and resolved `participantPn` when they differ.
    */
   public async markStatusSeen(key: proto.IMessageKey): Promise<boolean> {
     if (!this.socket || !this.autoViewStatus) return false;
     try {
       const id = key.id;
-      const rawParticipant = key.participant || (key as any).participantPn || '';
-      if (id && rawParticipant) {
-        const cleanParticipant = jidNormalizedUser(rawParticipant);
+      const rawParticipant = key.participant || '';
+      const rawPn = (key as any).participantPn || (key as any).senderPn || '';
+      const targets: string[] = [];
+      for (const candidate of [rawParticipant, rawPn]) {
+        if (!candidate) continue;
+        const clean = jidNormalizedUser(candidate);
+        if (clean && !targets.includes(clean)) targets.push(clean);
+      }
+      if (!id || targets.length === 0) return false;
+
+      let sentAny = false;
+      for (const target of targets) {
         if (typeof (this.socket as any).sendReceipt === 'function') {
-          await (this.socket as any).sendReceipt('status@broadcast', cleanParticipant, [id], 'read').catch(() => {});
+          await (this.socket as any).sendReceipt('status@broadcast', target, [id], 'read');
+          sentAny = true;
         } else if (typeof (this.socket as any).sendNode === 'function') {
           await (this.socket as any).sendNode({
             tag: 'receipt',
@@ -1234,15 +1246,17 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
               id,
               type: 'read',
               to: 'status@broadcast',
-              participant: cleanParticipant,
+              participant: target,
               t: Math.floor(Date.now() / 1000).toString(),
             },
-          }).catch(() => {});
+          });
+          sentAny = true;
         } else if (typeof (this.socket as any).readMessages === 'function') {
-          await (this.socket as any).readMessages([key]);
+          await (this.socket as any).readMessages([{ ...key, remoteJid: 'status@broadcast', participant: target }]);
+          sentAny = true;
         }
       }
-      return true;
+      return sentAny;
     } catch (err: any) {
       console.warn(`[WhatsAppManager] Failed to mark status seen: ${err?.message}`);
       return false;
@@ -1848,7 +1862,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
               const groupSubject = groupInfo?.name || 'Kooxda';
               let desc = '';
               if (this.socket) {
-                try { const meta = await this.socket.groupMetadata(groupJid); desc = meta?.desc || ''; } catch {}
+                try { const meta = await this.socket.groupMetadata(groupJid); desc = meta?.desc || ''; } catch { }
               }
               const quiz = await this.governor.generateDailyQuiz(groupJid, groupSubject, desc, this.aiOrchestrator);
               // Combined Poll Question: Call to action included directly in the question title without separate spam message
@@ -1869,9 +1883,9 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             if (expiredQuizResult) {
               const winnerLines = expiredQuizResult.winners.length > 0
                 ? expiredQuizResult.winners.map((w, idx) => {
-                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '⭐️';
-                    return `${medal} ${idx + 1}. *+${w.phone}* ${w.name && w.name !== w.phone ? `(${w.name})` : ''} ➔ *+10 Dhibcood* [Waqtiga: ${w.elapsedSeconds}s]`;
-                  }).join('\n')
+                  const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '⭐️';
+                  return `${medal} ${idx + 1}. *+${w.phone}* ${w.name && w.name !== w.phone ? `(${w.name})` : ''} ➔ *+10 Dhibcood* [Waqtiga: ${w.elapsedSeconds}s]`;
+                }).join('\n')
                 : '_Waqtigii wuu dhacay mana jirin cid saxday markan. Nasiib wacan barrito!_ 🤝';
 
               const announceText =
@@ -2106,7 +2120,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         try {
           const meta = await this.socket.groupMetadata(clean);
           return { jid: clean, name: meta?.subject || clean };
-        } catch {}
+        } catch { }
       }
       const existing = this.autoManagedGroups.get(clean);
       return { jid: clean, name: existing?.name || clean };
@@ -2193,7 +2207,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           const meta = await this.socket.groupMetadata(groupJid);
           if (meta?.subject) groupSubject = meta.subject;
           if (meta?.desc) desc = meta.desc;
-        } catch {}
+        } catch { }
       }
 
       const profile = this.governor.analyzeGroup(groupSubject, desc);
@@ -2376,7 +2390,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           const meta = await this.socket.groupMetadata(groupJid);
           if (!subject && meta?.subject) subject = meta.subject;
           if (meta?.desc) desc = meta.desc;
-        } catch {}
+        } catch { }
       }
       if (!subject) subject = 'Kooxda';
 
@@ -2419,7 +2433,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         const meta = await this.socket.groupMetadata(groupJid);
         if (!subject && meta?.subject) subject = meta.subject;
         if (meta?.desc) desc = meta.desc;
-      } catch {}
+      } catch { }
     }
     if (!subject) subject = 'Kooxda';
 
@@ -2553,7 +2567,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           this.allowedCallNumbers = new Set(raw.allowedNumbers.map((n: string) => String(n).replace(/\D/g, '')).filter(Boolean));
         }
       }
-    } catch {}
+    } catch { }
   }
 
   private saveCallRejectConfig(): void {
@@ -2566,7 +2580,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         allowedNumbers: Array.from(this.allowedCallNumbers),
       };
       fs.writeFileSync(this.callRejectStoragePath, JSON.stringify(data, null, 2), 'utf8');
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -2693,7 +2707,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
           this.awaitingOwnerPromoSetup = Boolean(raw.awaitingOwnerPromoSetup);
         }
       }
-    } catch {}
+    } catch { }
   }
 
   private saveBotControlConfig(): void {
@@ -2711,7 +2725,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         awaitingOwnerPromoSetup: this.awaitingOwnerPromoSetup,
       };
       fs.writeFileSync(this.botControlStoragePath, JSON.stringify(data, null, 2), 'utf8');
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -2812,10 +2826,10 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       success: true,
       message: enabled
         ? '🔗 *[Status Link Campaign Mode]*: Waa la SHIDAY (ON)! ✅\n' +
-          '• Kaliya dadka status link soo dhiga ayaa lala hadlayaa.\n' +
-          '• Haddii sawir iyo link wada socdaan, labadaba si toos ah oo wada jir ah ayaa status loogu wada dhigayaa.\n' +
-          '• Qof hore link loogu dhigay mar labaad looma dhigayo.\n' +
-          '• Qofka hore contact-ka kuugu jiray lala hadli maayo, save-me-na laguma dhihi doono.'
+        '• Kaliya dadka status link soo dhiga ayaa lala hadlayaa.\n' +
+        '• Haddii sawir iyo link wada socdaan, labadaba si toos ah oo wada jir ah ayaa status loogu wada dhigayaa.\n' +
+        '• Qof hore link loogu dhigay mar labaad looma dhigayo.\n' +
+        '• Qofka hore contact-ka kuugu jiray lala hadli maayo, save-me-na laguma dhihi doono.'
         : '🔗 *[Status Link Campaign Mode]*: Waa la DAMIYAY (OFF)! Nidaamkii caadiga ahaa ayaa dib loogu noqday.',
     };
   }
@@ -2888,7 +2902,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     if (fs.existsSync(imgPath)) {
       try {
         imageBuffer = fs.readFileSync(imgPath);
-      } catch {}
+      } catch { }
     }
     return {
       link: this.ownerPromoLink,
@@ -3272,7 +3286,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
             existingMembers.add(`${num}@s.whatsapp.net`);
           }
         }
-      } catch {}
+      } catch { }
     }
 
     let eligibleCount = 0;

@@ -342,6 +342,19 @@ SHURUUCDA DUGSIIYA:
     const botNumber = typeof anyTransport.getBotNumber === 'function' ? anyTransport.getBotNumber() : '';
     const cfg = this.statusReactor.getConfig();
     const memMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    const stStats = typeof anyTransport.getStatusTelemetry === 'function' ? anyTransport.getStatusTelemetry() : null;
+    const srStats = this.statusReactor.getStats();
+
+    const privacyLine =
+      stStats?.readReceiptsPrivacy === 'none'
+        ? `\n• ⚠️ *Read Receipts Privacy (Taleefanka)*: OFF! Fur Settings > Privacy > Read Receipts oo shid si dadku u arkaan View-gaaga!`
+        : stStats?.readReceiptsPrivacy === 'all'
+        ? `\n• 🔒 Read Receipts Privacy: ✅ ON (all)`
+        : '';
+
+    const statusTelemetryLine = stStats
+      ? `\n• 👁️ Status Engine: Helay ${stStats.received} • Seen ✅ ${stStats.viewed} • React 💚 ${srStats.reacted} • Reply 💬 ${srStats.commented}${stStats.viewFailed > 0 ? ` • Failed ❌ ${stStats.viewFailed}` : ''}`
+      : '';
 
     const health =
       `⚙️ *XAALADDA BOT-KA*\n` +
@@ -350,7 +363,9 @@ SHURUUCDA DUGSIIYA:
       `• AI Jawaab: ${this.whatsappManager.isAIEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
       `• Auto-View (Seen): ${this.whatsappManager.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
       `• Auto-React: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'} • Auto-Comment: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'} • Mode: ${cfg.mode.toUpperCase()}\n` +
-      `• Link Campaign (!link on): ${this.whatsappManager.isLinkCampaignMode() ? '✅ ON' : '🛑 OFF'}`;
+      `• Link Campaign (!link on): ${this.whatsappManager.isLinkCampaignMode() ? '✅ ON' : '🛑 OFF'}` +
+      statusTelemetryLine +
+      privacyLine;
 
     let errBlock: string;
     if (all.length === 0) {
@@ -1698,10 +1713,15 @@ SHURUUCDA DUGSIIYA:
     // ─── Status AI Reactor: Cooldown Settings ──────────────────────────────
     if (/^[!./#]?(?:statuscooldown)(?:\s+(\d+))?$/i.test(lowerText) && isAdminUser) {
       const match = text.match(/^[!./#]?(?:statuscooldown)(?:\s+(\d+))?$/i);
-      const hours = match?.[1] ? parseInt(match[1], 10) : null;
-      if (hours && hours > 0 && hours <= 72) {
+      const hours = match?.[1] !== undefined ? parseInt(match[1], 10) : null;
+      if (hours !== null && hours >= 0 && hours <= 72) {
         this.statusReactor.setConfig({ cooldownHours: hours });
-        await transport.sendMessage(message.chatId, `⏳ *[Status Reactor]*: Cooldown-ka qofkiiba waxaa laga dhigay: *${hours} Saacadood* ✅ (Qofka looma celin doono wax ka badan 1 falcelin ${hours}-kaas saac gudahood).`);
+        await transport.sendMessage(
+          message.chatId,
+          hours === 0
+            ? `⏳ *[Status Reactor]*: Cooldown-ka waa la *DAMIDAY (0 Saacadood)* ✅ — bot-ku status kasta wuu la falgalayaa.`
+            : `⏳ *[Status Reactor]*: Cooldown-ka qofkiiba waxaa laga dhigay: *${hours} Saacadood* ✅ (Qofka looma celin doono wax ka badan 1 falcelin ${hours}-kaas saac gudahood).`
+        );
       } else {
         const cfg = this.statusReactor.getConfig();
         await transport.sendMessage(
@@ -1744,16 +1764,37 @@ SHURUUCDA DUGSIIYA:
         ? `• *Status-kaaga u dambeeyay*: ${viewsSummary.status.content ? `"${viewsSummary.status.content.slice(0, 32)}..."` : `[${viewsSummary.status.type}]`} (*${viewsSummary.totalViews} qof ayaa daawatay*)\n`
         : `• *Status-kaaga u dambeeyay*: _Wali ma jiro status cusub oo diiwaangashan_\n`;
 
+      const anyTr: any = transport;
+      const stStats = typeof anyTr.getStatusTelemetry === 'function' ? anyTr.getStatusTelemetry() : null;
+      const srStats = this.statusReactor.getStats();
+      const recentViewedBlock =
+        stStats && stStats.recentViewed.length > 0
+          ? `\n👁️ *STATUS-YADII UGU DAMBEEYAY EE BOT-KU DAAWADAY:*\n` +
+            stStats.recentViewed
+              .slice(0, 5)
+              .map((v: any) => `• ✅ ${v.name || v.sender} (${formatClock(v.timestamp)})`)
+              .join('\n') +
+            `\n`
+          : '';
+      const engineLine = stStats
+        ? `• *Status Engine*: Helay *${stStats.received}* • Seen ✅ *${stStats.viewed}* • React 💚 *${srStats.reacted}* • Reply 💬 *${srStats.commented}*${stStats.viewFailed > 0 ? ` • Failed ❌ *${stStats.viewFailed}*` : ''}\n` +
+          (stStats.readReceiptsPrivacy === 'none'
+            ? `• ⚠️ *DIGNIIN*: Read Receipts Privacy taleefankaaga waa OFF — fur Settings > Privacy > Read Receipts!\n`
+            : '')
+        : '';
+
       const infoText =
         `🌟 *[CARDOSO AI — STATUS AI REACTOR & VIEWS]* 🌟\n\n` +
         lastStatusLine +
+        engineLine +
         `• *Auto-View (Seen)*: ${this.whatsappManager.isAutoViewStatusEnabled() ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-React (Emoji)*: ${cfg.autoReact ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Auto-Comment (AI)*: ${cfg.autoComment ? '✅ ON' : '🛑 OFF'}\n` +
         `• *Mode*: *${cfg.mode.toUpperCase()}*\n` +
         `• *Cooldown*: *${cfg.cooldownHours} Saacadood* qofkiiba\n` +
-        `• *Delay Dabiici ah*: ${cfg.minDelaySeconds}s - ${cfg.maxDelaySeconds}s\n\n` +
-        `📋 *FALCELINNADII UGU DAMBEEYAY:*\n${recentSummary}\n\n` +
+        `• *Delay Dabiici ah*: ${cfg.minDelaySeconds}s - ${cfg.maxDelaySeconds}s\n` +
+        recentViewedBlock +
+        `\n📋 *FALCELINNADII UGU DAMBEEYAY:*\n${recentSummary}\n\n` +
         `👁️ *Eeg cidda daawatay status-kaaga:* Qor \`!statusviews\`\n` +
         `_Amarrada maamulka:_ \`!statusviews\`, \`!statusreact on/off\`, \`!statuscomment on/off\`, \`!statusmode both/reaction/comment\`, \`!statuscooldown <hours>\``;
 

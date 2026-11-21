@@ -15,6 +15,7 @@ const testFiles = [
   'tests/e2e-master.test.ts',
   'tests/multi-tenant.test.ts',
   'tests/error-log.test.ts',
+  'tests/status-engine.test.ts',
 ];
 
 console.log(`\n================================================================`);

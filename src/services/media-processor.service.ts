@@ -78,6 +78,14 @@ export class MediaProcessorService {
         current = current.groupMentionedMessage.message;
         continue;
       }
+      if (current.statusMentionMessage?.message) {
+        current = current.statusMentionMessage.message;
+        continue;
+      }
+      if (current.groupStatusMentionMessage?.message) {
+        current = current.groupStatusMentionMessage.message;
+        continue;
+      }
       if (current.botInvokeMessage?.message) {
         current = current.botInvokeMessage.message;
         continue;

@@ -1,12 +1,14 @@
 import fs from 'fs';
 import path from 'path';
-import { proto } from '@whiskeysockets/baileys';
+import { jidNormalizedUser, proto } from '@whiskeysockets/baileys';
 import { MediaProcessorService } from './media-processor.service.js';
 import { BroadcastService, broadcastService, normalizePhoneNumber } from './broadcast.service.js';
 import { WhatsAppManagerService, whatsappManagerService } from './whatsapp-manager.service.js';
 import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { config } from '../config/env.js';
 import { UserProfiler } from './user-profiler.service.js';
+import { errorLogService } from './error-log.service.js';
+import type { ResolvedStatusIdentity } from './status-engine.service.js';
 
 export type StatusReactorMode = 'reaction' | 'comment' | 'both';
 
@@ -92,6 +94,11 @@ export class StatusReactorService {
   private ownerName: string = 'Mohamed';
   private pendingSaveMeNumbers: Map<string, number> = new Map();
   private linkOcrTimestamps: number[] = [];
+  private stats = { reacted: 0, commented: 0, dmLinks: 0, failed: 0 };
+
+  public getStats(): { reacted: number; commented: number; dmLinks: number; failed: number } {
+    return { ...this.stats };
+  }
 
   constructor(
     customConfigPath?: string,
@@ -1057,12 +1064,13 @@ Respond with ONLY valid JSON:
   }
 
   /**
-   * Handles an incoming WhatsApp status event from Baileys transport.
+   * Handles an incoming WhatsApp status event from StatusEngine / Baileys transport.
    */
   public async handleIncomingStatus(
     msg: proto.IWebMessageInfo,
     socket: any,
-    manager?: WhatsAppManagerService
+    manager?: WhatsAppManagerService,
+    resolvedIdentity?: ResolvedStatusIdentity
   ): Promise<boolean> {
     if (!socket) return false;
     const activeManager = manager || this.whatsappManager;
@@ -1079,31 +1087,37 @@ Respond with ONLY valid JSON:
       }
     }
 
-    const rawParticipant =
-      (msg.key as any)?.participantPn ||
-      (msg.key as any)?.senderPn ||
+    // Properly normalize PN & LID identities without EVER stripping `@lid` or `@s.whatsapp.net`
+    const normalizeKeepDomain = (raw?: string): string => {
+      if (!raw || typeof raw !== 'string') return '';
+      const trimmed = raw.trim();
+      if (!trimmed.includes('@')) return '';
+      return jidNormalizedUser(trimmed) || '';
+    };
+
+    const rawParticipant = String(
+      resolvedIdentity?.rawParticipant ||
       msg.key.participant ||
       (msg as any).participant ||
-      '';
-    let cleanSender = '';
-    if (rawParticipant.includes('@lid')) {
-      const pn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
-      if (pn) {
-        cleanSender = pn.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-      } else {
-        cleanSender = rawParticipant.split(':')[0];
-      }
-    } else if (rawParticipant) {
-      cleanSender = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-    }
-    const senderJid = cleanSender || rawParticipant;
+      ''
+    ).trim();
+    const pnCandidate = normalizeKeepDomain(
+      resolvedIdentity?.pnJid || (msg.key as any)?.participantPn || (msg.key as any)?.senderPn
+    );
+    const normParticipant = normalizeKeepDomain(rawParticipant);
+    const senderJid =
+      resolvedIdentity?.chatTargetJid ||
+      (pnCandidate.endsWith('@s.whatsapp.net') ? pnCandidate : '') ||
+      normParticipant ||
+      rawParticipant;
+
     if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
-      console.log(`⚠️ [StatusReactor] SKIPPED: invalid senderJid="${senderJid}"`);
+      console.log(`⚠️ [StatusReactor] SKIPPED: invalid senderJid="${senderJid}" (raw="${rawParticipant}")`);
       return false;
     }
 
     // Suppress status interactions if AI is specifically disabled for this person (!off <number>)
-    if (activeManager.isAIDisabledForNumber(senderJid)) {
+    if (!isLinkMode && activeManager.isAIDisabledForNumber(senderJid)) {
       return false;
     }
 
@@ -1304,50 +1318,7 @@ Respond with ONLY valid JSON:
       return false;
     }
 
-    // ─── 7. INSTANT Love Cagaaran (💚) Reaction ──────────────────────────────
-    // Dispatched within ~500ms so "Liked your status" appears immediately on WhatsApp!
-    // Contacts will see the green heart on their story right away, without waiting
-    // for AI media vision download or 10-30s typing delay.
-    const shouldReact =
-      this.config.autoReact &&
-      (this.config.mode === 'reaction' || this.config.mode === 'both');
-
-    if (shouldReact) {
-      let instantEmoji = '💚';
-      const lower = text.toLowerCase();
-      if (
-        lower.includes('geeriyooday') ||
-        lower.includes('innaa lillaahi') ||
-        lower.includes('tacsi') ||
-        lower.includes('xanuun') ||
-        lower.includes('isbitaal')
-      ) {
-        instantEmoji = '🤲';
-      } else if (lower.includes('jimco') || lower.includes('duco') || lower.includes('aamiin')) {
-        instantEmoji = '✨';
-      }
-
-      setTimeout(async () => {
-        try {
-          await this.sendStatusReaction(msg, socket, senderJid, instantEmoji);
-          this.recordInteraction({
-            id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            senderJid,
-            senderName,
-            type: 'reaction',
-            content: instantEmoji,
-            category: 'media_only',
-            statusText: text,
-            timestamp: Date.now(),
-          });
-          console.log(`💚 [StatusReactor] Instant Love Cagaaran (${instantEmoji}) applied for ${senderName || senderJid}`);
-        } catch (rErr: any) {
-          console.warn(`[StatusReactor] Instant reaction error: ${rErr?.message}`);
-        }
-      }, 500);
-    }
-
-    // 8. Download status media & perform AI Vision inspection if media is present
+    // ─── 7. Download status media & perform AI Vision inspection if media is present ──
     let visualCategory: StatusCategory | null = null;
     let visualDescription: string | undefined = undefined;
     if (hasMedia && unwrapped.mediaContent && unwrapped.baileysMediaType && this.aiOrchestrator) {
@@ -1383,12 +1354,14 @@ Respond with ONLY valid JSON:
       )}s...`
     );
 
-    // Schedule the interaction
+    // Schedule ONE clean interaction (react + comment, or link DM) — never duplicate reactions!
     const timer = setTimeout(async () => {
       try {
         await this.executeInteraction(msg, socket, senderJid, senderName, analysis, text, gender, mediaKind);
       } catch (err: any) {
+        this.stats.failed++;
         console.error(`[StatusReactor] Error executing interaction: ${err?.message}`);
+        errorLogService.record('StatusReactor:Execute', err, 'error');
       } finally {
         this.pendingTimeouts.delete(msg.key.id || senderJid);
       }
@@ -1402,8 +1375,15 @@ Respond with ONLY valid JSON:
   }
 
   /**
-   * Dispatches the official WhatsApp Status Like (Love Cagaaran 💚).
-   * Uses multiple fail-safe parallel delivery paths so it reliably shows up in the contact's status viewers list.
+   * Dispatches ONE clean WhatsApp Status Like (Love Cagaaran 💚).
+   *
+   * Protocol-accurate LID vs PN handling for Baileys 6.7.x:
+   *  - When a valid Phone-Number JID (`@s.whatsapp.net`) is known: sends the official WhatsApp
+   *    Status Reaction to `status@broadcast` with `statusJidList: [pnJid, myPnJid]` (with direct
+   *    peer fallback only if broadcast throws).
+   *  - When the contact is LID-only (`@lid` without resolved PN): sends a direct peer reaction to
+   *    the LID JID (because Baileys 6.7.x `messages-send.js:366` encodes `statusJidList` entries
+   *    as `@s.whatsapp.net` and would mangle `@lid`, whereas 1-to-1 peer sends support `@lid`).
    */
   public async sendStatusReaction(
     msg: proto.IWebMessageInfo,
@@ -1413,11 +1393,15 @@ Respond with ONLY valid JSON:
   ): Promise<boolean> {
     if (!socket || !msg?.key?.id) return false;
 
-    const rawParticipant = msg.key.participant || (msg as any).participant || senderJid;
-    const cleanSender      = senderJid.split('@')[0].split(':')[0] + (senderJid.endsWith('@lid') ? '@lid' : '@s.whatsapp.net');
-    const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + (rawParticipant.endsWith('@lid') ? '@lid' : '@s.whatsapp.net');
+    const rawParticipant = String(msg.key.participant || (msg as any).participant || senderJid || '').trim();
+    const cleanSender = jidNormalizedUser(senderJid) || senderJid;
+    const cleanParticipant = jidNormalizedUser(rawParticipant) || cleanSender;
+    const rawPn = String((msg.key as any)?.participantPn || (msg.key as any)?.senderPn || '').trim();
+    const pnJid =
+      (rawPn ? jidNormalizedUser(rawPn) : '') ||
+      (cleanSender.endsWith('@s.whatsapp.net') ? cleanSender : '') ||
+      (cleanParticipant.endsWith('@s.whatsapp.net') ? cleanParticipant : '');
 
-    // The reaction key targeting the status update
     const reactionKey: proto.IMessageKey = {
       remoteJid: 'status@broadcast',
       id: msg.key.id,
@@ -1425,77 +1409,43 @@ Respond with ONLY valid JSON:
       fromMe: Boolean(msg.key.fromMe),
     };
 
-    const statusJidList: string[] = [cleanParticipant];
-    if (socket.user?.id) {
-      const myClean = socket.user.id.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-      if (myClean !== cleanParticipant) statusJidList.push(myClean);
-    }
-
-    let delivered = false;
-
-    // Pathway 1: Direct peer sendMessage to cleanSender (Standard mechanism for WhatsApp mobile "liked your status")
-    try {
-      await socket.sendMessage(cleanSender, {
-        react: {
-          text: emoji,
-          key: reactionKey,
-        },
-      });
-      delivered = true;
-      console.log(`💚 [StatusReactor] Direct peer reaction "${emoji}" sent to ${cleanSender} (id: ${msg.key.id})`);
-    } catch (err: any) {
-      console.warn(`[StatusReactor] Peer reaction attempt 1 error: ${err?.message}`);
-    }
-
-    // Pathway 2: Send to status@broadcast with statusJidList (WhatsApp server-side status like registration)
-    try {
-      await socket.sendMessage(
-        'status@broadcast',
-        {
-          react: {
-            text: emoji,
-            key: reactionKey,
-          },
-        },
-        {
-          statusJidList,
+    // Case A: Contact has a valid PN JID -> official `status@broadcast` status like with `statusJidList`
+    if (pnJid && pnJid.endsWith('@s.whatsapp.net')) {
+      const statusJidList: string[] = [pnJid];
+      if (socket.user?.id) {
+        const myClean = jidNormalizedUser(socket.user.id);
+        if (myClean && myClean.endsWith('@s.whatsapp.net') && myClean !== pnJid) {
+          statusJidList.push(myClean);
         }
-      );
-      delivered = true;
-      console.log(`💚 [StatusReactor] Broadcast reaction "${emoji}" delivered to status@broadcast`);
-    } catch (err: any) {
-      console.warn(`[StatusReactor] Broadcast reaction attempt 2 notice: ${err?.message}`);
-    }
+      }
 
-    // Pathway 3: Fallback using original msg.key to cleanSender if different
-    if (!delivered) {
       try {
-        await socket.sendMessage(cleanSender, {
-          react: {
-            text: emoji,
-            key: msg.key,
-          },
-        });
-        delivered = true;
-        console.log(`💚 [StatusReactor] Fallback msg.key peer reaction delivered to ${cleanSender}`);
+        await socket.sendMessage(
+          'status@broadcast',
+          { react: { text: emoji, key: reactionKey } },
+          { statusJidList }
+        );
+        console.log(`💚 [StatusReactor] Official Status Like "${emoji}" delivered to status@broadcast for ${pnJid} (id: ${msg.key.id})`);
+        return true;
       } catch (err: any) {
-        console.warn(`[StatusReactor] Fallback reaction attempt 3 error: ${err?.message}`);
+        console.warn(`[StatusReactor] Broadcast reaction failed for ${pnJid}, falling back to peer: ${err?.message}`);
       }
     }
 
-    // Pathway 4: If senderJid differs from cleanSender (e.g. LID variant), notify senderJid directly
-    if (senderJid && senderJid !== cleanSender) {
-      try {
-        await socket.sendMessage(senderJid, {
-          react: {
-            text: emoji,
-            key: reactionKey,
-          },
-        });
-      } catch {}
+    // Case B: LID-only contact OR broadcast fallback -> clean direct peer reaction
+    const peerTarget = cleanSender || cleanParticipant;
+    if (!peerTarget) return false;
+    try {
+      await socket.sendMessage(peerTarget, {
+        react: { text: emoji, key: reactionKey },
+      });
+      console.log(`💚 [StatusReactor] Direct peer reaction "${emoji}" sent to ${peerTarget} (id: ${msg.key.id})`);
+      return true;
+    } catch (err: any) {
+      console.warn(`[StatusReactor] Direct peer reaction failed for ${peerTarget}: ${err?.message}`);
+      errorLogService.record('StatusReactor:React', err, 'warn');
+      return false;
     }
-
-    return delivered;
   }
 
   /**
@@ -1573,20 +1523,27 @@ Respond with ONLY valid JSON:
       }
 
       try {
-        await this.sendStatusReaction(msg, socket, senderJid, emoji);
-        this.recordInteraction({
-          id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          senderJid,
-          senderName,
-          type: 'reaction',
-          content: emoji,
-          category: analysis.category,
-          statusText: rawText,
-          timestamp: Date.now(),
-        });
-        console.log(`💚 [StatusReactor] Reacted "${emoji}" (Love Cagaaran) to status of ${senderName || senderJid} (${gender})`);
+        const ok = await this.sendStatusReaction(msg, socket, senderJid, emoji);
+        if (ok) {
+          this.stats.reacted++;
+          this.recordInteraction({
+            id: `react_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            senderJid,
+            senderName,
+            type: 'reaction',
+            content: emoji,
+            category: analysis.category,
+            statusText: rawText,
+            timestamp: Date.now(),
+          });
+          console.log(`💚 [StatusReactor] Reacted "${emoji}" to status of ${senderName || senderJid} (${gender})`);
+        } else {
+          this.stats.failed++;
+        }
       } catch (err: any) {
+        this.stats.failed++;
         console.warn(`[StatusReactor] Failed to react to status: ${err?.message}`);
+        errorLogService.record('StatusReactor:React', err, 'warn');
       }
     }
 
@@ -1609,6 +1566,7 @@ Respond with ONLY valid JSON:
           { quoted: msg }
         );
 
+        this.stats.commented++;
         const commentLog: StatusInteractionLog = {
           id: `comment_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           senderJid,
@@ -1635,7 +1593,9 @@ Respond with ONLY valid JSON:
 
         console.log(`💬 [StatusReactor] Commented on status of ${senderName || senderJid} (${gender}): "${comment}"`);
       } catch (err: any) {
+        this.stats.failed++;
         console.warn(`[StatusReactor] Failed to send status comment: ${err?.message}`);
+        errorLogService.record('StatusReactor:Comment', err, 'warn');
       }
     }
   }
