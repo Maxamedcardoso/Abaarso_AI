@@ -1,4 +1,4 @@
-import { WASocket, proto } from '@whiskeysockets/baileys';
+import { WASocket, proto, jidNormalizedUser } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1221,7 +1221,27 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   public async markStatusSeen(key: proto.IMessageKey): Promise<boolean> {
     if (!this.socket || !this.autoViewStatus) return false;
     try {
-      await this.socket.readMessages([key]);
+      const id = key.id;
+      const rawParticipant = key.participant || (key as any).participantPn || '';
+      if (id && rawParticipant) {
+        const cleanParticipant = jidNormalizedUser(rawParticipant);
+        if (typeof (this.socket as any).sendReceipt === 'function') {
+          await (this.socket as any).sendReceipt('status@broadcast', cleanParticipant, [id], 'read').catch(() => {});
+        } else if (typeof (this.socket as any).sendNode === 'function') {
+          await (this.socket as any).sendNode({
+            tag: 'receipt',
+            attrs: {
+              id,
+              type: 'read',
+              to: 'status@broadcast',
+              participant: cleanParticipant,
+              t: Math.floor(Date.now() / 1000).toString(),
+            },
+          }).catch(() => {});
+        } else if (typeof (this.socket as any).readMessages === 'function') {
+          await (this.socket as any).readMessages([key]);
+        }
+      }
       return true;
     } catch (err: any) {
       console.warn(`[WhatsAppManager] Failed to mark status seen: ${err?.message}`);

@@ -78,6 +78,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private sentStatusMessages: Map<string, { message: any; statusJidList: string[] }> = new Map();
   /** Maps status@broadcast message IDs to the participant JID that requested a retry. */
   private statusRetryParticipants: Map<string, string> = new Map();
+  /** Tracked status IDs already viewed to prevent duplicate seen stanzas. */
+  private viewedStatusIds: Set<string> = new Set();
+  /** Keep-alive timer to maintain status@broadcast presence subscription. */
+  private statusPresenceInterval: NodeJS.Timeout | null = null;
 
   constructor(authDirOrOptions: string | BaileysTransportOptions = './baileys_auth_info') {
     if (typeof authDirOrOptions === 'string') {
@@ -574,6 +578,53 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           }
         } catch {}
       });
+
+      // Raw WebSocket listener: Instantly mark incoming WhatsApp Status updates as SEEN the exact millisecond
+      // the raw XML stanza reaches the socket, before any Baileys decryption queue delays or SenderKey retries!
+      (this.socket.ws as any).on('CB:message', async (node: any) => {
+        try {
+          if (node?.tag === 'message' && node?.attrs?.from === 'status@broadcast') {
+            const id = node.attrs?.id;
+            const rawPart = node.attrs?.participant || '';
+            const cleanPart = rawPart ? jidNormalizedUser(rawPart) : '';
+            if (!id || !cleanPart) return;
+
+            // Skip bot's own status posts
+            const botNum = this.getBotNumber();
+            if (botNum && cleanPart.replace(/\D/g, '') === botNum.replace(/\D/g, '')) return;
+
+            const shouldAutoView = this.whatsappManager.isAutoViewStatusEnabled() || this.whatsappManager.isLinkCampaignMode();
+            if (!shouldAutoView) return;
+
+            if (this.viewedStatusIds.has(id)) return;
+            this.viewedStatusIds.add(id);
+            if (this.viewedStatusIds.size > 3000) {
+              const first = this.viewedStatusIds.values().next().value;
+              if (first) this.viewedStatusIds.delete(first);
+            }
+
+            const nowSec = Math.floor(Date.now() / 1000);
+            console.log(`👁️⚡ [Instant WS Auto-View] Marking status seen: ${cleanPart} (id=${id})`);
+
+            if (typeof (this.socket as any).sendReceipt === 'function') {
+              await (this.socket as any).sendReceipt('status@broadcast', cleanPart, [id], 'read').catch(() => {});
+            } else if (typeof (this.socket as any).sendNode === 'function') {
+              await (this.socket as any).sendNode({
+                tag: 'receipt',
+                attrs: {
+                  id,
+                  type: 'read',
+                  to: 'status@broadcast',
+                  participant: cleanPart,
+                  t: nowSec.toString(),
+                },
+              }).catch(() => {});
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[WhatsAppBaileys] Error in raw status receipt handler: ${err?.message}`);
+        }
+      });
     }
 
     // Install status@broadcast cache/retry hooks and CB:receipt listener
@@ -601,6 +652,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       if (connection === 'close') {
         this.connected = false;
+        if (this.statusPresenceInterval) {
+          clearInterval(this.statusPresenceInterval);
+          this.statusPresenceInterval = null;
+        }
         this.whatsappManager.setSocket(null);
         if (this.manualStopped || this.suppressCloseReconnect) {
           this.suppressCloseReconnect = false;
@@ -688,6 +743,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         console.log(`\n✅ [WhatsAppBaileys:${this.tenantId}] Successfully connected to WhatsApp Multi-Device network!`);
         // Notify WhatsApp network that companion is active/available so live status updates stream reliably
         this.socket?.sendPresenceUpdate?.('available').catch(() => {});
+        // Explicitly subscribe to status@broadcast presence so WhatsApp server keeps routing status updates to companion
+        this.socket?.presenceSubscribe?.('status@broadcast').catch(() => {});
+
+        // Keep status presence subscription refreshed every 10 minutes
+        if (this.statusPresenceInterval) clearInterval(this.statusPresenceInterval);
+        this.statusPresenceInterval = setInterval(() => {
+          if (this.connected && this.socket) {
+            this.socket?.presenceSubscribe?.('status@broadcast').catch(() => {});
+            this.socket?.sendPresenceUpdate?.('available').catch(() => {});
+          }
+        }, 10 * 60 * 1000);
       }
     });
 
@@ -932,10 +998,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   /** Converts number / Long / string timestamps to a plain number (seconds). */
   private static toNumber(value: any): number {
     if (value == null) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value?.toNumber === 'function') return value.toNumber();
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
+    let n = 0;
+    if (typeof value === 'number') n = value;
+    else if (typeof value?.toNumber === 'function') n = value.toNumber();
+    else {
+      const parsed = Number(value);
+      n = Number.isFinite(parsed) ? parsed : 0;
+    }
+    // If timestamp was provided in milliseconds (e.g. > 1e11), normalize down to seconds
+    if (n > 1e11) n = Math.floor(n / 1000);
+    return n;
   }
 
   /** Decodes PEER_DATA_OPERATION placeholder-resend responses into full WebMessageInfo objects. */
@@ -1052,8 +1124,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     const id = msg.key.id;
     if (!id) return;
 
-    const rawParticipant = msg.key.participant || msg.participant || '';
+    const rawParticipant =
+      msg.key.participant ||
+      msg.participant ||
+      (msg.key as any)?.participantPn ||
+      (msg.key as any)?.senderPn ||
+      '';
     const cleanSender = rawParticipant ? jidNormalizedUser(rawParticipant) : '';
+    const rawPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
+    const cleanPn = rawPn ? jidNormalizedUser(rawPn) : '';
     const nowSec = Math.floor(Date.now() / 1000);
     const ts = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
 
@@ -1075,8 +1154,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       return;
     }
 
-    // 3. Bot's own status broadcast posted from linked primary phone (fromMe === true)
-    if (msg.key.fromMe) {
+    // 3. Bot's own status broadcast posted from linked primary phone (fromMe === true or botNumber match)
+    const botNum = this.getBotNumber();
+    const isOwnStatus = Boolean(msg.key.fromMe || (botNum && cleanSender.replace(/\D/g, '') === botNum.replace(/\D/g, '')));
+    if (isOwnStatus) {
       if (!this.whatsappManager.hasPostedStatus(id)) {
         let contentType: 'text' | 'image' | 'video' | 'audio' = 'text';
         let content = '';
@@ -1107,37 +1188,49 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     if (shouldAutoView && this.socket && cleanSender) {
       try {
-        const statusKey = {
-          remoteJid: 'status@broadcast',
-          id,
-          participant: cleanSender,
-          fromMe: false,
-        };
+        if (!this.viewedStatusIds.has(id)) {
+          this.viewedStatusIds.add(id);
+          if (this.viewedStatusIds.size > 3000) {
+            const first = this.viewedStatusIds.values().next().value;
+            if (first) this.viewedStatusIds.delete(first);
+          }
 
-        // A) Direct raw WhatsApp Web read receipt stanza:
-        //    <receipt id="..." to="status@broadcast" participant="252634444444@s.whatsapp.net" type="read" t="..." />
-        //    Forces explicit type="read" directly to WhatsApp servers so sender immediately sees our profile in their status viewers list!
-        if (typeof (this.socket as any).sendReceipt === 'function') {
-          await (this.socket as any).sendReceipt('status@broadcast', cleanSender, [id], 'read').catch(() => {});
-        } else if (typeof (this.socket as any).sendNode === 'function') {
-          await (this.socket as any).sendNode({
-            tag: 'receipt',
-            attrs: {
-              id,
-              type: 'read',
-              to: 'status@broadcast',
-              participant: cleanSender,
-              t: nowSec.toString(),
-            },
-          }).catch(() => {});
+          // A) Direct raw WhatsApp Web read receipt stanza:
+          //    <receipt id="..." to="status@broadcast" participant="252634444444@s.whatsapp.net" type="read" t="..." />
+          //    Explicit type="read" directly to WhatsApp servers so sender immediately sees our profile in their status viewers list!
+          //    CRITICAL: Never call socket.readMessages() which queries privacySettings and downgrades to type="read-self",
+          //    which makes the bot invisible on the status viewer list!
+          if (typeof (this.socket as any).sendReceipt === 'function') {
+            await (this.socket as any).sendReceipt('status@broadcast', cleanSender, [id], 'read').catch(() => {});
+          } else if (typeof (this.socket as any).sendNode === 'function') {
+            await (this.socket as any).sendNode({
+              tag: 'receipt',
+              attrs: {
+                id,
+                type: 'read',
+                to: 'status@broadcast',
+                participant: cleanSender,
+                t: nowSec.toString(),
+              },
+            }).catch(() => {});
+          }
+
+          // If rawParticipant differed from cleanSender, acknowledge rawParticipant too
+          if (rawParticipant && rawParticipant !== cleanSender) {
+            if (typeof (this.socket as any).sendReceipt === 'function') {
+              await (this.socket as any).sendReceipt('status@broadcast', rawParticipant, [id], 'read').catch(() => {});
+            }
+          }
+
+          // If a separate cleanPn exists, acknowledge it too
+          if (cleanPn && cleanPn !== cleanSender && cleanPn !== rawParticipant) {
+            if (typeof (this.socket as any).sendReceipt === 'function') {
+              await (this.socket as any).sendReceipt('status@broadcast', cleanPn, [id], 'read').catch(() => {});
+            }
+          }
+
+          console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${cleanSender} (id=${id})`);
         }
-
-        // B) Also call official Baileys readMessages for companion state sync
-        if (typeof this.socket.readMessages === 'function') {
-          await this.socket.readMessages([statusKey]).catch(() => {});
-        }
-
-        console.log(`👁️ [Auto-View Status] Status-ka waxaa arkay bot-ka: ${cleanSender} (id=${id})`);
       } catch (err: any) {
         console.warn(`[WhatsAppBaileys] Error auto-viewing status: ${err?.message}`);
       }
@@ -1147,12 +1240,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (cleanSender && this.broadcast.isValidIndividualJid(cleanSender)) {
       this.broadcast.recordContact(cleanSender, msg.pushName, false, Boolean(msg.pushName));
     }
-    const rawPn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
-    if (rawPn) {
-      const cleanPn = jidNormalizedUser(rawPn);
-      if (cleanPn && this.broadcast.isValidIndividualJid(cleanPn)) {
-        this.broadcast.recordContact(cleanPn, msg.pushName, false, Boolean(msg.pushName));
-      }
+    if (cleanPn && this.broadcast.isValidIndividualJid(cleanPn)) {
+      this.broadcast.recordContact(cleanPn, msg.pushName, false, Boolean(msg.pushName));
     }
 
     // 6. Status Reactor: Intelligently react (Love Cagaaran 💚) and comment like a real human,
@@ -1617,6 +1706,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
   public async stop(): Promise<void> {
     this.connected = false;
+    if (this.statusPresenceInterval) {
+      clearInterval(this.statusPresenceInterval);
+      this.statusPresenceInterval = null;
+    }
     if (this.socket) {
       this.socket.end(undefined);
       this.socket = null;

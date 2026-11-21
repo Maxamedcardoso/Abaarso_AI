@@ -1079,8 +1079,23 @@ Respond with ONLY valid JSON:
       }
     }
 
-    const rawParticipant = msg.key.participant || (msg as any).participant || '';
-    const cleanSender = rawParticipant ? rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net' : '';
+    const rawParticipant =
+      (msg.key as any)?.participantPn ||
+      (msg.key as any)?.senderPn ||
+      msg.key.participant ||
+      (msg as any).participant ||
+      '';
+    let cleanSender = '';
+    if (rawParticipant.includes('@lid')) {
+      const pn = (msg.key as any)?.participantPn || (msg.key as any)?.senderPn;
+      if (pn) {
+        cleanSender = pn.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+      } else {
+        cleanSender = rawParticipant.split(':')[0];
+      }
+    } else if (rawParticipant) {
+      cleanSender = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+    }
     const senderJid = cleanSender || rawParticipant;
     if (!senderJid || !this.broadcast.isValidIndividualJid(senderJid)) {
       console.log(`⚠️ [StatusReactor] SKIPPED: invalid senderJid="${senderJid}"`);
@@ -1399,8 +1414,8 @@ Respond with ONLY valid JSON:
     if (!socket || !msg?.key?.id) return false;
 
     const rawParticipant = msg.key.participant || (msg as any).participant || senderJid;
-    const cleanSender      = senderJid.split('@')[0].split(':')[0] + '@s.whatsapp.net';
-    const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + '@s.whatsapp.net';
+    const cleanSender      = senderJid.split('@')[0].split(':')[0] + (senderJid.endsWith('@lid') ? '@lid' : '@s.whatsapp.net');
+    const cleanParticipant = rawParticipant.split('@')[0].split(':')[0] + (rawParticipant.endsWith('@lid') ? '@lid' : '@s.whatsapp.net');
 
     // The reaction key targeting the status update
     const reactionKey: proto.IMessageKey = {
