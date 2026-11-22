@@ -39,7 +39,7 @@ export interface OutgoingMessageOptions {
 }
 
 export interface OutgoingMedia {
-  type: 'image' | 'audio' | 'document';
+  type: 'image' | 'audio' | 'document' | 'video';
   dataBuffer: Buffer;
   mimeType: string;
   caption?: string;

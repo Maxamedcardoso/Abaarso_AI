@@ -702,51 +702,179 @@ SHURUUCDA DUGSIIYA:
       if (vgRes.handled) return vgRes;
     }
 
-    // `!podcast` (alone -> CARDOSO AI promo; `!podcast <Mawduuc/Title>` -> AI writes lively Muuse & Ubax Somali conversation!)
-    // Always sent as a 100% playable native WhatsApp Voice Note (PTT Ogg Opus with waveform & exact duration — NEVER audio file!)
+    // `!podcast` — World-Class Safa & Mohamed Somali Podcast Studio!
+    // Supports:
+    // - `!podcast` -> Official CARDOSO AI Safa & Mohamed Promo Voice Note
+    // - `!podcast <Mawduuc> [minutes]` -> Live debate/conversation scaled to exact minutes (1-5m)
+    // - `!podcast debate|study|story|ad|diini <Mawduuc> [minutes]`
+    // - `!podcast video <Mawduuc> [minutes]` -> 9:16 WhatsApp Status / TikTok Video Audiogram (MP4)
+    // - `!podcast <https://...>` -> Article-to-Podcast
+    // - Reply to PDF/Image/Long text with `!podcast [minutes]` -> NotebookLM-style Somali Podcast!
     const isPodcastCmd = /^[!./#]podcast(?:\s+([\s\S]+))?$/i.test(text);
     if (isPodcastCmd && (isAdminUser || !message.isGroup)) {
       const podMatch = text.match(/^[!./#]podcast(?:\s+([\s\S]+))?$/i);
       const rawArg = (podMatch?.[1] || '').trim();
 
       try {
-        let audioResult = null;
+        const parsedCmd = VoiceReplyService.parsePodcastCommandArgs(rawArg);
 
-        if (!rawArg) {
-          // `!podcast` alone -> Official CARDOSO AI Muuse & Ubax Voice Note!
+        if (parsedCmd.isHelp) {
           await transport.sendMessage(
             message.chatId,
-            '🎙️ *Muuse & Ubax — Sharraxaadda CARDOSO AI Voice Note ayaa soo socota...*',
+            `🎙️ *CARDOSO AI — SAFA & MOHAMED PODCAST STUDIO* ✨\n\n` +
+              `• \`!podcast\` — Warbixinta CARDOSO AI (Safa & Mohamed)\n` +
+              `• \`!podcast <Mawduuc> 3min\` — Dood kulul oo 3 daqiiqo ah (1 ilaa 5 daqiiqo)\n` +
+              `• \`!podcast debate <Mawduuc> 2m\` — Dood & kala aragti duwanaan\n` +
+              `• \`!podcast study <Cashar> 3m\` — Cashar & Su'aal-Jawaab\n` +
+              `• \`!podcast story <Mawduuc> 2m\` — Sheeko macaan\n` +
+              `• \`!podcast ad <Ganacsigaaga> 1m\` — Xayeysiis Radio Commercial\n` +
+              `• \`!podcast diini <Mawduuc> 2m\` — Wacdi & Aqoon Diini ah (Cod Saafi ah)\n` +
+              `• \`!podcast video <Mawduuc> 1m\` — Muuqaal Status/TikTok (MP4 + Mowjad)\n` +
+              `• \`!podcast status\` — Codka CARDOSO AI toos u dhig WhatsApp Status! 🎙️\n` +
+              `• \`!podcast status <Mawduuc> 1m\` — Podcast cusub oo toos Voice Status u noqda!\n` +
+              `• \`!podcast status video <Mawduuc> 1m\` — Video Audiogram toos Status u noqda!\n` +
+              `• Reply ku samee *Voice Note / Podcast* adigoo qoraya \`!status\` si aad Status ugu dhigto!\n` +
+              `• Reply ku samee *PDF / Sawir / Qoraal dheer* adigoo qoraya \`!podcast 2m\`!\n` +
+              `• Ama soo dir link maqaal: \`!podcast https://... 2m\``,
+            { replyToMessageId: message.id }
+          );
+          return { handled: true, reason: 'Podcast help sent' };
+        }
+
+        const hasAttachedOrQuotedSource = Boolean(
+          (message.media && (message.media.type === 'document' || message.media.type === 'image')) ||
+          (message.quotedText && message.quotedText.trim().length >= 25)
+        );
+
+        let audioResult = null;
+        let effectiveTitle = parsedCmd.topic;
+
+        const isPromoOnly =
+          (!rawArg && !hasAttachedOrQuotedSource) ||
+          (parsedCmd.postToStatus && !effectiveTitle && !parsedCmd.sourceUrl && !hasAttachedOrQuotedSource);
+
+        if (isPromoOnly) {
+          // `!podcast` or `!podcast status` alone -> Official CARDOSO AI Safa & Mohamed Promo Voice Note!
+          await transport.sendMessage(
+            message.chatId,
+            VoiceReplyService.buildPodcastTeaserMessage({
+              isPromo: true,
+              outputKind: parsedCmd.outputKind,
+            }),
             { replyToMessageId: message.id }
           );
           audioResult = await VoiceReplyService.getCardosoPromoVoiceNote();
         } else if (VoiceReplyService.isExplicitDialogueScript(rawArg)) {
-          // Explicit multi-line `Ubax: ... \n Muuse: ...` script
+          // Explicit multi-line `Safa: ... \n Mohamed: ...` script
           const turns = VoiceReplyService.parseDialogueScript(rawArg);
           await transport.sendMessage(
             message.chatId,
-            `🎙️ *Muuse & Ubax Voice Note waa la duubayaa (${turns.length} qaybood)...* Fadlan sug ilbiriqsiyo yar!`,
+            VoiceReplyService.buildPodcastTeaserMessage({
+              topic: 'Wada-Sheekeysi Gaar ah',
+              style: parsedCmd.style,
+              durationMinutes: Math.max(0.5, Number((turns.length / 7).toFixed(1))),
+              outputKind: parsedCmd.outputKind,
+            }),
             { replyToMessageId: message.id }
           );
-          audioResult = await VoiceReplyService.synthesizeSomaliDialogue(turns, { outputFormat: 'ogg' });
+          audioResult = await VoiceReplyService.synthesizeSomaliDialogue(turns, {
+            outputFormat: parsedCmd.outputKind === 'video' ? 'mp3' : 'ogg',
+            soundMode: parsedCmd.soundMode,
+          });
         } else {
-          // `!podcast <Title / Topic>` -> Gemini AI writes a lively, clear Somali Muuse & Ubax dialogue on that topic!
+          // Dynamic Topic / Debate / URL / PDF / Quoted Text Podcast!
+          let sourceText = message.quotedText ? message.quotedText.trim() : undefined;
+          let sourceMedia =
+            message.media && (message.media.type === 'document' || message.media.type === 'image')
+              ? {
+                  type: message.media.type,
+                  mimeType: message.media.mimeType,
+                  dataBase64: message.media.dataBase64,
+                }
+              : undefined;
+
+          if (parsedCmd.sourceUrl) {
+            const article = await VoiceReplyService.fetchArticleExcerptForPodcast(parsedCmd.sourceUrl);
+            if (article) {
+              sourceText = [sourceText, article.excerpt].filter(Boolean).join('\n\n');
+              if (!effectiveTitle && article.title) effectiveTitle = article.title;
+            }
+          }
+          if (!effectiveTitle) {
+            effectiveTitle = sourceMedia
+              ? (message.media?.fileName || 'Falanqaynta Dukumentiga / Sawirka')
+              : 'Falanqaynta Qoraalka';
+          }
+
           await transport.sendMessage(
             message.chatId,
-            `🎙️ *Muuse & Ubax waxay ka wada hadlayaan:* "${rawArg}"\n⏳ Fadlan sug ilbiriqsiyo yar inta Voice Note-ka la duubayo...`,
+            VoiceReplyService.buildPodcastTeaserMessage({
+              topic: effectiveTitle,
+              style: parsedCmd.style,
+              durationMinutes: parsedCmd.durationMinutes,
+              outputKind: parsedCmd.outputKind,
+            }),
             { replyToMessageId: message.id }
           );
+
           const aiTurns = await VoiceReplyService.generateTopicDialogueTurns(
-            rawArg,
-            this.engine?.getAIOrchestrator?.()
+            effectiveTitle,
+            this.engine?.getAIOrchestrator?.(),
+            {
+              style: parsedCmd.style,
+              durationMinutes: parsedCmd.durationMinutes,
+              sourceText,
+              sourceMedia,
+            }
           );
+
           audioResult = await VoiceReplyService.synthesizeSomaliDialogue(aiTurns, {
-            outputFormat: 'ogg',
-            defaultPauseMs: 300,
+            outputFormat: parsedCmd.outputKind === 'video' ? 'mp3' : 'ogg',
+            soundMode: parsedCmd.soundMode,
           });
         }
 
         if (audioResult && typeof transport.sendMedia === 'function') {
+          if (parsedCmd.outputKind === 'video') {
+            const mp4Buf = await VoiceReplyService.renderPodcastVideoAudiogram(audioResult.buffer, {
+              title: effectiveTitle || 'CARDOSO AI PODCAST',
+              styleLabel: 'SAFA & MOHAMED · CARDOSO AI',
+            });
+            const vidCaption = `🎬 *CARDOSO AI PODCAST — Safa & Mohamed*\n📌 ${effectiveTitle || 'CARDOSO AI'}\n🎧 _Waxaa loo diyaariyay WhatsApp Status & TikTok!_`;
+
+            if (parsedCmd.postToStatus && isAdminUser) {
+              const statusRes = await this.whatsappManager.postMediaStatus({
+                buffer: mp4Buf,
+                mimeType: 'video/mp4',
+                type: 'video',
+                caption: vidCaption,
+              });
+              await transport.sendMessage(message.chatId, statusRes.message, { replyToMessageId: message.id });
+            }
+
+            await transport.sendMedia(
+              message.chatId,
+              {
+                type: 'video',
+                dataBuffer: mp4Buf,
+                mimeType: 'video/mp4',
+                caption: vidCaption,
+              },
+              { replyToMessageId: message.id }
+            );
+            return {
+              handled: true,
+              reason: `Podcast Video Audiogram MP4 sent (${audioResult.turnCount} turns, ${audioResult.seconds}s${parsedCmd.postToStatus ? ', posted to Status' : ''})`,
+            };
+          }
+
+          if (parsedCmd.postToStatus && isAdminUser) {
+            const statusRes = await this.whatsappManager.postVoiceStatusSeries(audioResult.buffer, {
+              caption: effectiveTitle || 'CARDOSO AI — Safa & Mohamed Podcast',
+            });
+            await transport.sendMessage(message.chatId, statusRes.message, { replyToMessageId: message.id });
+          }
+
           await transport.sendMedia(
             message.chatId,
             {
@@ -761,19 +889,19 @@ SHURUUCDA DUGSIIYA:
           );
           return {
             handled: true,
-            reason: `Podcast Voice Note PTT sent (${audioResult.turnCount} turns, ${audioResult.seconds}s)`,
+            reason: `Podcast Voice Note PTT sent (${audioResult.turnCount} turns, ${audioResult.seconds}s${parsedCmd.postToStatus ? ', posted to Status' : ''})`,
           };
         }
 
         await transport.sendMessage(
           message.chatId,
-          '⚠️ Voice Note-ka Podcast-ka hadda lama samayn karin — mar kale isku day.',
+          '⚠️ Podcast-ka hadda lama samayn karin — mar kale isku day.',
           { replyToMessageId: message.id }
         );
       } catch (podErr: any) {
         await transport.sendMessage(
           message.chatId,
-          `⚠️ Cilad Podcast Voice Note: ${podErr?.message || podErr}`,
+          `⚠️ Cilad Podcast Studio: ${podErr?.message || podErr}`,
           { replyToMessageId: message.id }
         );
       }
@@ -2093,9 +2221,16 @@ SHURUUCDA DUGSIIYA:
         statusContent = statusContent.replace(/^[!./#]?(?:status(?:-ai)?|sheeko)\s*/i, '').trim();
       }
 
-      // If media is attached (image, video, voice note)
+      // If media is attached (image, video, voice note / quoted podcast audio)
       if (message.media?.dataBase64) {
         const buffer = Buffer.from(message.media.dataBase64, 'base64');
+        if (message.media.type === 'audio') {
+          const res = await this.whatsappManager.postVoiceStatusSeries(buffer, {
+            caption: statusContent || 'CARDOSO AI Voice Status',
+          });
+          await transport.sendMessage(message.chatId, res.message);
+          return { handled: true, reason: `Voice status posted (${res.partsPosted} part(s))` };
+        }
         const res = await this.whatsappManager.postMediaStatus({
           buffer,
           mimeType: message.media.mimeType,

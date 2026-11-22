@@ -908,8 +908,8 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
               <div class="form-row">
                 <label class="field-label">Luqadda Codka</label>
                 <select class="field" id="ttsLangSelect">
-                  <option value="so">🇸🇴 Af-Soomaali — Muuse (Wiil Neural)</option>
-                  <option value="so_female">🇸🇴 Af-Soomaali — Ubax (Gabadh Neural)</option>
+                  <option value="so">🇸🇴 Af-Soomaali — Mohamed (Wiil Neural)</option>
+                  <option value="so_female">🇸🇴 Af-Soomaali — Safa (Gabadh Neural)</option>
                   <option value="en">🇬🇧 English (Christopher Neural)</option>
                   <option value="ar">🇸🇦 العربية (Hamed Neural)</option>
                 </select>
@@ -925,31 +925,81 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
               <audio id="ttsPreviewAudio" controls class="msg-audio" style="display:none;margin-top:0.85rem;"></audio>
             </div>
 
-            <!-- Muuse & Ubax Two-Voice Dialogue Podcast Studio -->
-            <div class="card" style="border-color:rgba(139,92,246,0.42);">
-              <h3>🎧 Muuse &amp; Ubax Podcast Studio (Laba Cod oo Hal Audio ah!)</h3>
-              <p class="sub">Geli <b>Mawduuc/Title</b> si AI-gu ugu qoro sheeko dabiici ah oo Muuse &amp; Ubax wada hadlayaan, ama wax ka beddel qoraalka CARDOSO AI ee hoose!</p>
+            <!-- Safa & Mohamed World-Class Somali Podcast Studio -->
+            <div class="card" style="border-color:rgba(139,92,246,0.45);background:linear-gradient(155deg,rgba(15,23,42,0.92),rgba(30,20,58,0.68));">
+              <h3>
+                <span>🎙️ Safa &amp; Mohamed Podcast Studio (Heer Caalami)</span>
+                <span style="font-size:0.74rem;color:#34d399;font-weight:700;">Studio Mastering · 100% Free</span>
+              </h3>
+              <p class="sub">Geli <b>Mawduuc/Title</b> ama <b>Link Maqaal</b>, dooro qaabka (<b>Dood Kulul, Cashar, Sheeko, Xayeysiis, Diini</b>) iyo <b>Daqiiqadaha (1–5 min)</b> — Safa &amp; Mohamed sidii laba qof oo dhab ah ayay u doodayaan, u qoslayaan, uguna falanqeynayaan!</p>
+
               <div class="form-row">
-                <label class="field-label">✨ Mawduuc / Title (Ikhtiyaari — haddii aad buuxiso AI ayaa qoraya sheekada!)</label>
-                <input class="field" id="podcastTopicInput" placeholder="Tusaale: Faa iidada waxbarashada, Ganacsiga Online-ka, ama Dukaankaaga..." />
+                <label class="field-label">📌 Mawduuca Maanta / Link Maqaal (Ikhtiyaari)</label>
+                <input class="field" id="podcastTopicInput" placeholder="Tusaale: Jacaylka iyo Lacagta, Ganacsiga Online-ka, ama https://..." />
               </div>
+
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:0.6rem;margin-bottom:0.85rem;">
+                <div>
+                  <label class="field-label">🎭 Qaabka Podcast-ka</label>
+                  <select class="field" id="podcastStyleSelect">
+                    <option value="debate">🔥 Dood Kulul (Debate)</option>
+                    <option value="study">📚 Cashar &amp; Imtixaan (Study)</option>
+                    <option value="story">📖 Sheeko &amp; Taariikh (Story)</option>
+                    <option value="ad">📢 Xayeysiis Radio (Ad)</option>
+                    <option value="diini">🕌 Wacdi &amp; Diini (Clean)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label">⏱️ Muddada (Minutes)</label>
+                  <select class="field" id="podcastDurationSelect">
+                    <option value="1">⚡ 1 Daqiiqo</option>
+                    <option value="2" selected>🎙️ 2 Daqiiqo</option>
+                    <option value="3">🔥 3 Daqiiqo</option>
+                    <option value="4">🎧 4 Daqiiqo</option>
+                    <option value="5">🏆 5 Daqiiqo (Deep Dive)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label">🎚️ Codka Istuudiyaha</label>
+                  <select class="field" id="podcastSoundSelect">
+                    <option value="chime" selected>🎵 Studio Chime + Mastering</option>
+                    <option value="ambient">🎹 Soft Ambient Bed + Mastering</option>
+                    <option value="clean">🎙️ Cod Saafi ah (Muusig la'aan)</option>
+                  </select>
+                </div>
+              </div>
+
               <div class="form-row">
-                <label class="field-label">Qoraalka Wada-Sheekeysiga (haddii mawduuca kore bannaanyahay)</label>
-                <textarea class="field" id="podcastScriptInput" rows="7">Ubax: Assalaamu calaykum Muuse! War ma maqashay barnaamijka cusub ee dadkoo dhan maanta ka hadlayaan ee la dhaho CARDOSO AI?
-Muuse: Wa calaykumus salaam Ubax! Haa walaal, aad baan u maqlay, xataa anigaa maalin kasta isticmaala. Waa kaaliye casri ah oo Af-Soomaali dabiici ah ku hadla.
-Ubax: Alla! Oo muxuu qabtaa? Ma qoraal kaliya ayuu kaga jawaabaa su aalaha?
-Muuse: Maya Ubax, waxyaabo cajiib ah ayuu qabtaa! Su aal kasta oo waxbarasho, ganacsi, ama barashada koodhka ah ayuu Af-Soomaali fudud kuugu sharxaa, sawirro cusub ayuu kuu sameeyaa, cod Soomaali ah ayuu kuugu hadlaa, waqtiga salaaddana wuu ku xasuusiyaa!
-Ubax: Masha Allaah! Oo ma WhatsApp kaliya ayaa laga isticmaalaa mise App u gaar ah ayuu leeyahay?
-Muuse: Labadaba! Waxaad toos ugala sheekeysan kartaa WhatsApp, sidoo kalena wuxuu leeyahay App casri ah oo aad telefoonkaaga ku install gareysan karto!
-Ubax: Hadda ayaan tijaabinayaa aniguba! Asxaabey, adinkuna ha moogaanina CARDOSO AI — barasho, ganacsi, iyo horumar hal meel ku wada jira!
-Muuse: Ku soo dhawaada CARDOSO AI! Nabad gelyo!</textarea>
+                <label class="field-label">📝 Qoraalka Wada-Sheekeysiga (haddii mawduuca kore bannaanyahay)</label>
+                <textarea class="field" id="podcastScriptInput" rows="7">Safa: [excited] Assalaamu calaykum Mohamed! War maanta dadkoo dhan waxay hadal hayaan CARDOSO AI — adigana ma ogtahay inaan markii hore u haystay bot caadi ah?
+Mohamed: [laugh] Wa calaykumus salaam Safa! Haa-haa, taasi waa qaladkii dad badan galeen! Maya walaal, CARDOSO AI waa kaaliye casri ah oo Af-Soomaali dabiici ah kula sheekeysta.
+Safa: [debate] Sug sug Mohamed, ha igu buunbuunin! Bal i tusi waxa uu kaga duwan yahay barnaamijyada kale?
+Mohamed: [debate] Wallaahi farqi weyn baa jira Safa! Af-Soomaaliga ayuu si qoto dheer u fahmaa, ardayda casharro iyo koodh ayuu u sharxaa, sawirro cusub ayuu curiyaa, waqtiga salaaddana wuu ku xasuusiyaa!
+Safa: [backchannel] Haa-haa, run miyaa? Oo ma WhatsApp keliya baa laga helaa?
+Mohamed: [excited] Maya! Labadaba — WhatsApp-kaaga ayuu ka shaqeeyaa, sidoo kalena App casri ah oo telefoonka lagu install gareysto ayuu leeyahay!
+Safa: [laugh] Wallaahi waad i qancisay Mohamed! Asxaabey, adinkuna ha moogaanina CARDOSO AI — barasho, ganacsi, iyo hal-abuur hal meel ku wada jira!
+Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wacan!</textarea>
               </div>
+
+              <div id="podcastTeaserBox" style="display:none;margin-bottom:0.8rem;padding:0.75rem 0.9rem;border-radius:11px;background:rgba(6,182,212,0.12);border:1px solid rgba(6,182,212,0.35);font-size:0.84rem;color:#cffafe;"></div>
+
               <div style="display:flex;gap:0.55rem;flex-wrap:wrap;align-items:center;">
-                <button class="btn btn-primary" id="podcastGenMp3Btn" onclick="generateMuuseUbaxPodcast('mp3')">🎧 Samee Podcast (MP3)</button>
-                <button class="btn btn-ghost btn-sm" id="podcastGenOggBtn" onclick="generateMuuseUbaxPodcast('ogg')">🎙️ WhatsApp Voice (.ogg)</button>
-                <a id="podcastDownloadLink" class="btn btn-emerald btn-sm" style="display:none;" download="cardoso-ai-muuse-ubax.mp3">⬇️ Soo Deji Codka</a>
+                <button class="btn btn-primary" id="podcastGenMp3Btn" onclick="generateSafaMohamedPodcast('mp3')">🎧 Podcast Stereo (MP3)</button>
+                <button class="btn btn-ghost btn-sm" id="podcastGenOggBtn" onclick="generateSafaMohamedPodcast('ogg')">🎙️ WhatsApp Voice (.ogg)</button>
+                <button class="btn btn-ghost btn-sm" id="podcastGenMp4Btn" onclick="generateSafaMohamedPodcast('mp4')" style="border-color:rgba(139,92,246,0.5);color:#ddd6fe;">🎬 Video Status/TikTok (.mp4)</button>
+                <a id="podcastDownloadLink" class="btn btn-emerald btn-sm" style="display:none;" download="cardoso-ai-safa-mohamed.mp3">⬇️ Soo Deji</a>
               </div>
+
               <audio id="podcastPreviewAudio" controls class="msg-audio" style="display:none;margin-top:0.85rem;"></audio>
+              <video id="podcastPreviewVideo" controls playsinline style="display:none;width:100%;max-height:420px;border-radius:14px;margin-top:0.85rem;background:#020617;"></video>
+
+              <div id="podcastTranscriptWrap" style="display:none;margin-top:0.9rem;padding:0.85rem;border-radius:12px;background:rgba(8,13,25,0.85);border:1px solid var(--border);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.45rem;">
+                  <strong style="font-size:0.82rem;color:#67e8f9;">📝 Qoraalka Sheekada (Safa &amp; Mohamed Transcript)</strong>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="copyPodcastTranscript()">📋 Copy</button>
+                </div>
+                <pre id="podcastTranscriptText" style="white-space:pre-wrap;font-family:inherit;font-size:0.82rem;line-height:1.55;color:#e2e8f0;margin:0;max-height:220px;overflow-y:auto;"></pre>
+              </div>
             </div>
 
             <!-- Image Creator Quick Card -->
@@ -1908,49 +1958,115 @@ Muuse: Ku soo dhawaada CARDOSO AI! Nabad gelyo!</textarea>
       }
     }
 
-    async function generateMuuseUbaxPodcast(format) {
+    function copyPodcastTranscript() {
+      const el = document.getElementById('podcastTranscriptText');
+      const txt = String(el ? el.textContent : '').trim();
+      if (!txt) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(function() {
+          showToast('📋 Qoraalka Safa & Mohamed waa la koobiyeeyay!');
+        }).catch(function() {});
+      }
+    }
+
+    async function generateSafaMohamedPodcast(format) {
       const topicEl = document.getElementById('podcastTopicInput');
       const scriptEl = document.getElementById('podcastScriptInput');
+      const styleEl = document.getElementById('podcastStyleSelect');
+      const durEl = document.getElementById('podcastDurationSelect');
+      const soundEl = document.getElementById('podcastSoundSelect');
+      const teaserEl = document.getElementById('podcastTeaserBox');
       const mp3Btn = document.getElementById('podcastGenMp3Btn');
       const oggBtn = document.getElementById('podcastGenOggBtn');
+      const mp4Btn = document.getElementById('podcastGenMp4Btn');
       const audio = document.getElementById('podcastPreviewAudio');
+      const video = document.getElementById('podcastPreviewVideo');
       const dl = document.getElementById('podcastDownloadLink');
+      const tWrap = document.getElementById('podcastTranscriptWrap');
+      const tText = document.getElementById('podcastTranscriptText');
+
       const topic = String(topicEl ? topicEl.value : '').trim();
       const script = String(scriptEl ? scriptEl.value : '').trim();
+      const style = styleEl ? styleEl.value : 'debate';
+      const durationMinutes = Number(durEl ? durEl.value : 2) || 2;
+      const soundMode = soundEl ? soundEl.value : 'chime';
+
       if (!topic && !script) {
-        showToast('Fadlan geli mawduuc ama qor wada-sheekeysiga Muuse iyo Ubax', true);
+        showToast('Fadlan geli mawduuc ama qor wada-sheekeysiga Safa iyo Mohamed', true);
         return;
       }
-      const fmt = format === 'ogg' ? 'ogg' : 'mp3';
+
+      const fmt = format === 'ogg' ? 'ogg' : format === 'mp4' ? 'mp4' : 'mp3';
       mp3Btn.disabled = true;
       oggBtn.disabled = true;
-      mp3Btn.textContent = topic ? '⏳ AI + Muuse & Ubax waa la duubayaa...' : '⏳ Muuse & Ubax waa la duubayaa...';
+      if (mp4Btn) mp4Btn.disabled = true;
+      mp3Btn.textContent = '🎙️ Safa & Mohamed Studio...';
+      if (teaserEl) {
+        teaserEl.style.display = 'block';
+        teaserEl.innerHTML = '📻 <strong>Goor dhow la soco!</strong> Safa &amp; Mohamed waxay maanta si qoto dheer uga wada hadlayaan <strong>' +
+          escapeHtml(topic || 'CARDOSO AI') + '</strong> (~' + durationMinutes + ' daqiiqo)... 🎧';
+      }
+
       try {
+        const payload = {
+          style: style,
+          durationMinutes: durationMinutes,
+          soundMode: soundMode,
+          format: fmt,
+          returnJson: true
+        };
+        if (topic) payload.topic = topic;
+        else payload.script = script;
+
         const res = await fetch('/api/app/podcast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(topic ? { topic: topic, format: fmt } : { script: script, format: fmt })
+          body: JSON.stringify(payload)
         });
-        if (!res.ok) {
-          const err = await res.json().catch(function() { return {}; });
-          throw new Error(err.message || 'Podcast-ka lama samayn karin');
+        const data = await res.json().catch(function() { return {}; });
+        if (!res.ok || data.status !== 'ok' || !data.mediaBase64) {
+          throw new Error(data.message || 'Podcast-ka lama samayn karin');
         }
-        const blob = await res.blob();
+
+        const binStr = atob(data.mediaBase64);
+        const bytes = new Uint8Array(binStr.length);
+        for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: data.mimeType || (fmt === 'mp4' ? 'video/mp4' : 'audio/mpeg') });
         const url = URL.createObjectURL(blob);
-        audio.src = url;
-        audio.style.display = 'block';
-        audio.play().catch(function() {});
+
+        if (fmt === 'mp4' && video) {
+          audio.style.display = 'none';
+          video.src = url;
+          video.style.display = 'block';
+          video.play().catch(function() {});
+        } else {
+          if (video) video.style.display = 'none';
+          audio.src = url;
+          audio.style.display = 'block';
+          audio.play().catch(function() {});
+        }
+
         dl.href = url;
-        dl.download = 'cardoso-ai-muuse-ubax.' + fmt;
-        dl.textContent = '⬇️ Soo Deji (' + fmt.toUpperCase() + ')';
+        dl.download = 'cardoso-ai-safa-mohamed.' + (data.fileExt || fmt);
+        dl.textContent = '⬇️ Soo Deji (' + String(data.fileExt || fmt).toUpperCase() + ' · ' + (data.seconds || '?') + 's)';
         dl.style.display = 'inline-flex';
-        showToast('🎧 Podcast-ka Muuse & Ubax waa diyaar!');
+
+        if (tWrap && tText && data.transcript) {
+          tText.textContent = data.transcript;
+          tWrap.style.display = 'block';
+        }
+        if (teaserEl) {
+          teaserEl.innerHTML = '✅ <strong>Safa &amp; Mohamed Podcast waa diyaar!</strong> (' + (data.seconds || '?') + ' ilbiriqsi · ' + (data.turnCount || '?') + ' qaybood) 🎧🔥';
+        }
+        showToast('🎧 Podcast-ka Safa & Mohamed waa diyaar!');
       } catch (err) {
+        if (teaserEl) teaserEl.style.display = 'none';
         showToast('❌ ' + (err.message || 'Khalad ayaa dhacay'), true);
       } finally {
         mp3Btn.disabled = false;
         oggBtn.disabled = false;
-        mp3Btn.textContent = '🎧 Samee Podcast (MP3)';
+        if (mp4Btn) mp4Btn.disabled = false;
+        mp3Btn.textContent = '🎧 Podcast Stereo (MP3)';
       }
     }
 

@@ -6,22 +6,24 @@ async function main() {
   const outDir = path.join(process.cwd(), 'assets', 'audio');
   fs.mkdirSync(outDir, { recursive: true });
 
-  console.log('🎧 Generating CARDOSO AI Promo Podcast (Muuse + Ubax Somali Neural Voices)...');
+  console.log('🎧 Generating World-Class CARDOSO AI Promo Podcast (Safa + Mohamed Studio Mastered)...');
 
   const mp3 = await VoiceReplyService.synthesizeSomaliDialogue(DEFAULT_CARDOSO_PROMO_DIALOGUE, {
     outputFormat: 'mp3',
-    defaultPauseMs: 300,
+    defaultPauseMs: 200,
+    soundMode: 'chime',
+    masterAudio: true,
   });
   if (!mp3) {
     throw new Error('Failed to generate MP3 podcast');
   }
-  const mp3Path = path.join(outDir, 'cardoso-ai-muuse-ubax-promo.mp3');
+  const mp3Path = path.join(outDir, 'cardoso-ai-safa-mohamed-promo.mp3');
   fs.writeFileSync(mp3Path, mp3.buffer);
-  console.log(`✅ MP3 saved: ${mp3Path} (${(mp3.buffer.length / 1024).toFixed(1)} KB, ${mp3.turnCount} turns)`);
+  console.log(`✅ Stereo Studio MP3 saved: ${mp3Path} (${(mp3.buffer.length / 1024).toFixed(1)} KB, ${mp3.turnCount} turns, ~${mp3.seconds}s)`);
 
-  // Convert the already-stitched MP3 directly to WhatsApp-native OGG Opus (2x faster!)
+  // Convert to authentic WhatsApp OGG Opus PTT Voice Note
   const oggBuf = await VoiceReplyService.convertMediaToOggOpusStrict(mp3.buffer);
-  const oggPath = path.join(outDir, 'cardoso-ai-muuse-ubax-promo.ogg');
+  const oggPath = path.join(outDir, 'cardoso-ai-safa-mohamed-promo.ogg');
   fs.writeFileSync(oggPath, oggBuf);
   console.log(`✅ WhatsApp OGG Voice Note saved: ${oggPath} (${(oggBuf.length / 1024).toFixed(1)} KB, OggS verified)`);
 }

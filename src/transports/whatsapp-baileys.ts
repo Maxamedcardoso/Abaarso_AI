@@ -1907,6 +1907,25 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
               } catch {}
             }
           }
+        } else if (media.type === 'video') {
+          const videoPayload: any = {
+            video: media.dataBuffer,
+            mimetype: media.mimeType || 'video/mp4',
+            ...(media.caption ? { caption: media.caption } : {}),
+          };
+          try {
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              videoPayload,
+              sendOptions
+            );
+          } catch (quotedErr) {
+            console.warn('[WhatsAppBaileys] Quoted video send failed, falling back to direct send:', quotedErr);
+            sentMediaMsg = await this.socket!.sendMessage(
+              chatId,
+              videoPayload
+            );
+          }
         } else if (media.type === 'document') {
           const docPayload: any = {
             document: media.dataBuffer,

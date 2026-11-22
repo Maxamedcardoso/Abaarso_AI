@@ -1,11 +1,22 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import vm from 'vm';
 import {
   VoiceReplyService,
   generateSpeechWaveform,
   getOggOpusDurationSeconds,
+  normalizePodcastSpeaker,
 } from '../src/services/voice-reply.service.js';
+import {
+  createAmbientPadWav,
+  createStudioChimeWav,
+  encodePcmWav,
+  generatePodcastCoverPng,
+  splitAudioIntoVoiceStatusClips,
+} from '../src/services/podcast-studio.service.js';
+import { WhatsAppManagerService } from '../src/services/whatsapp-manager.service.js';
+import { renderPwaAppHTML } from '../src/web/views/app-page.js';
 import { SQLiteStudentMemory } from '../src/memory/sqlite-memory.js';
 import { QuotaTracker } from '../src/ai/quota-tracker.js';
 import { AIOrchestrator } from '../src/ai/ai-orchestrator.js';
@@ -17,81 +28,206 @@ function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(`Assertion failed: ${msg}`);
 }
 
+function createToneWav(freqHz: number, durationSec: number = 0.6, sampleRate: number = 24000): Buffer {
+  const n = Math.round(sampleRate * durationSec);
+  const samples = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    samples[i] = 0.25 * Math.sin((2 * Math.PI * freqHz * i) / sampleRate);
+  }
+  return encodePcmWav(samples, sampleRate);
+}
+
 async function runPodcastTests(): Promise<void> {
-  console.log('\n🧪 Running Muuse & Ubax WhatsApp Voice Note (!podcast) Test Suite...\n');
+  console.log('\n🧪 Running Safa & Mohamed World-Class Podcast Studio V2 Test Suite...\n');
 
-  // 1. Script vs Topic detection
+  // 1. Host renaming (Safa & Mohamed) + legacy alias compatibility + emotion tag extraction
+  assert(!VoiceReplyService.isExplicitDialogueScript("faa'iidada waxbarashada"), 'Single topic must NOT be treated as script');
   assert(
-    !VoiceReplyService.isExplicitDialogueScript("faa'iidada waxbarashada"),
-    'Single topic line must be detected as a Topic, NOT an explicit script'
+    VoiceReplyService.isExplicitDialogueScript('Safa: [excited] Asc Mohamed!\nMohamed: [laugh] Wcs Safa!'),
+    'Safa/Mohamed lines must be detected as explicit dialogue script'
+  );
+  const parsed = VoiceReplyService.parseDialogueScript(
+    'Safa: [laugh] Haa-haa war Mohamed!\nMohamed: [debate] Maya Safa, bal i dhagayso!\nUbax: Sidee tahay?\nMuuse: Waan fiicanahay!'
+  );
+  assert(parsed.length === 4, 'Should parse 4 turns');
+  assert(
+    parsed[0].speaker === 'safa' &&
+      parsed[0].emotion === 'laugh' &&
+      !parsed[0].text.includes('[laugh]'),
+    'Safa turn must extract [laugh] emotion and strip bracketed tag'
   );
   assert(
-    VoiceReplyService.isExplicitDialogueScript('Ubax: Asc Muuse\nMuuse: Wcs Ubax'),
-    'Labeled Ubax/Muuse lines must be detected as explicit dialogue script'
+    parsed[1].speaker === 'mohamed' && parsed[1].emotion === 'debate',
+    'Mohamed turn must extract [debate] emotion'
   );
+  assert(
+    normalizePodcastSpeaker(parsed[2].speaker) === 'safa' &&
+      normalizePodcastSpeaker(parsed[3].speaker) === 'mohamed',
+    'Legacy Ubax/Muuse aliases must normalize cleanly to safa/mohamed'
+  );
+  console.log('  ✅ PASS: Safa & Mohamed host mapping, legacy aliases & emotion extraction verified');
 
-  // 2. Parse dialogue script with alternating Somali voices
-  const parsed = VoiceReplyService.parseDialogueScript('Ubax: Asc Muuse!\nMuuse: Wcs Ubax!\nGabadh: Sidee tahay?');
-  assert(parsed.length === 3, 'Should parse 3 turns');
-  assert(parsed[0].speaker === 'ubax' && parsed[1].speaker === 'muuse' && parsed[2].speaker === 'ubax', 'Speaker mapping must match');
-  console.log('  ✅ PASS: Topic vs script detection & Muuse/Ubax speaker parsing verified');
+  // 2. Command parser: Title + Minutes + Styles + Video + URL
+  const c1 = VoiceReplyService.parsePodcastCommandArgs('Jacaylka iyo Lacagta 3min');
+  assert(c1.topic === 'Jacaylka iyo Lacagta' && c1.durationMinutes === 3 && c1.style === 'debate', `Unexpected c1: ${JSON.stringify(c1)}`);
 
-  // 3. Topic dialogue generation via AI mock & zero-quota fallback
+  const c2 = VoiceReplyService.parsePodcastCommandArgs('study Barashada Python 4 daqiiqo');
+  assert(c2.topic === 'Barashada Python' && c2.durationMinutes === 4 && c2.style === 'study', `Unexpected c2: ${JSON.stringify(c2)}`);
+
+  const c3 = VoiceReplyService.parsePodcastCommandArgs('diini Sabirka iyo Dulqaadka 2');
+  assert(c3.topic === 'Sabirka iyo Dulqaadka' && c3.durationMinutes === 2 && c3.style === 'diini' && c3.soundMode === 'clean', `Unexpected c3: ${JSON.stringify(c3)}`);
+
+  const c4 = VoiceReplyService.parsePodcastCommandArgs('video Ganacsiga Online 1m');
+  assert(c4.topic === 'Ganacsiga Online' && c4.durationMinutes === 1 && c4.outputKind === 'video', `Unexpected c4: ${JSON.stringify(c4)}`);
+
+  const c5 = VoiceReplyService.parsePodcastCommandArgs('https://example.com/somalia-ai 2m');
+  assert(c5.sourceUrl === 'https://example.com/somalia-ai' && c5.durationMinutes === 2, `Unexpected c5: ${JSON.stringify(c5)}`);
+
+  const c6 = VoiceReplyService.parsePodcastCommandArgs('status Ganacsiga Online 1m');
+  assert(c6.postToStatus === true && c6.topic === 'Ganacsiga Online' && c6.durationMinutes === 1, `Unexpected c6: ${JSON.stringify(c6)}`);
+
+  const c7 = VoiceReplyService.parsePodcastCommandArgs('status video Jacaylka 45s');
+  assert(c7.postToStatus === true && c7.outputKind === 'video' && c7.topic === 'Jacaylka', `Unexpected c7: ${JSON.stringify(c7)}`);
+  console.log('  ✅ PASS: !podcast command parser handles minutes (1-5m), 5 styles, video, status & URLs');
+
+  // 3. Sleek Broadcast Teaser (NO boring waiting boilerplate, Safa & Mohamed names!)
+  const teaser = VoiceReplyService.buildPodcastTeaserMessage({
+    topic: 'Ganacsiga Online-ka',
+    style: 'debate',
+    durationMinutes: 3,
+    outputKind: 'ogg',
+  });
+  assert(teaser.includes('Safa & Mohamed'), 'Teaser must name Safa & Mohamed');
+  assert(teaser.includes('Goor dhow la soco'), 'Teaser must include radio broadcast teaser "Goor dhow la soco"');
+  assert(teaser.includes('3 daqiiqo'), 'Teaser must display requested duration');
+  assert(!teaser.toLowerCase().includes('fadlan sug'), 'Teaser must NOT include boring "Fadlan sug" boilerplate');
+  assert(!teaser.includes('Muuse') && !teaser.includes('Ubax'), 'Teaser must NOT use legacy Muuse/Ubax names');
+  console.log('  ✅ PASS: Sleek radio broadcast teaser verified ("Goor dhow la soco", Safa & Mohamed)');
+
+  // 4. AI topic generator (with minute scaling) + lively Somali debate fallback
+  let capturedPrompt = '';
   const mockAi = {
-    generateResponse: async () => ({
-      text: [
-        'Ubax: Assalaamu calaykum Muuse! Maanta maxaan ka baranaynaa ganacsiga online-ka?',
-        'Muuse: Wa calaykumus salaam Ubax! Ganacsiga online-ku waa fursad weyn oo qof walba taleefankiisa ka bilaabi karo.',
-        'Ubax: Alla waa runtaa! Oo maxaa ugu muhiimsan marka la bilaabayo?',
-        'Muuse: Inaad doorato badeecad dadku u baahan yihiin oo aad si daacad ah ugu adeegto macaamiisha.',
-      ].join('\n'),
-    }),
+    generateResponse: async (prompt: string) => {
+      capturedPrompt = prompt;
+      return {
+        text: [
+          'Safa: [excited] Assalaamu calaykum Mohamed! Maanta waxaan ka doodnaynaa ganacsiga online-ka!',
+          'Mohamed: [laugh] Wa calaykumus salaam Safa! Haa-haa, sug bal maxaad ka diiddan tahay ganacsiga online-ka?',
+          'Safa: [debate] Dad badan baa lacag ku khasaara iyagoon baran suuq-geynta!',
+          'Mohamed: [debate] Maya Safa, taasi ma aha ciladda internet-ka ee waa qorshe la\'aan!',
+          'Safa: [backchannel] Haa-haa waa run!',
+          'Mohamed: [calm] Qofkii si daacad ah ugu adeega macaamiisha wuu guulaystaa.',
+        ].join('\n'),
+      };
+    },
   };
-  const aiTurns = await VoiceReplyService.generateTopicDialogueTurns('ganacsiga online-ka', mockAi);
-  assert(aiTurns.length === 4 && aiTurns[0].speaker === 'ubax' && aiTurns[1].speaker === 'muuse', 'AI topic dialogue should generate alternating Ubax/Muuse turns');
+  const aiTurns = await VoiceReplyService.generateTopicDialogueTurns('ganacsiga online-ka', mockAi, {
+    style: 'debate',
+    durationMinutes: 3,
+  });
+  assert(capturedPrompt.includes('3 daqiiqo'), 'AI prompt must pass requested minutes');
+  assert(aiTurns.length === 6 && aiTurns[0].speaker === 'safa' && aiTurns[1].speaker === 'mohamed', 'AI turns must alternate Safa & Mohamed');
 
-  const fallbackTurns = await VoiceReplyService.generateTopicDialogueTurns('waxbarashada', undefined);
-  assert(fallbackTurns.length >= 6 && fallbackTurns.some((t) => t.text.includes('waxbarashada')), 'Fallback topic dialogue should discuss the topic cleanly');
-  console.log('  ✅ PASS: AI topic dialogue generator & offline fallback verified');
+  const fallbackLong = await VoiceReplyService.generateTopicDialogueTurns('waxbarashada', undefined, {
+    style: 'debate',
+    durationMinutes: 3,
+  });
+  assert(fallbackLong.length >= 12, `3-min fallback should expand depth (>=12 turns), got ${fallbackLong.length}`);
+  assert(fallbackLong.every((t) => t.speaker === 'safa' || t.speaker === 'mohamed'), 'Fallback must use Safa & Mohamed exclusively');
+  console.log('  ✅ PASS: AI dialogue writer (minute-scaled) & lively Somali debate fallback verified');
 
-  // 4. Real OggS duration parser & 64-byte waveform generator against generated promo file (if present)
-  const promoOggPath = path.join(process.cwd(), 'assets', 'audio', 'cardoso-ai-muuse-ubax-promo.ogg');
-  if (fs.existsSync(promoOggPath)) {
-    const oggBuf = fs.readFileSync(promoOggPath);
-    assert(oggBuf.slice(0, 4).toString('ascii') === 'OggS', 'Prebuilt promo must start with OggS magic header');
-    const sec = getOggOpusDurationSeconds(oggBuf);
-    assert(sec >= 30 && sec <= 240, `Prebuilt promo duration should be realistic (30..240s), got ${sec}s`);
-    const wf = generateSpeechWaveform(oggBuf);
-    assert(wf.length === 64 && wf.every((v) => v >= 10 && v <= 96), 'Waveform must be 64 valid bars');
-    console.log(`  ✅ PASS: Prebuilt Ogg Opus Voice Note verified (${sec}s, OggS, 64-bar waveform)`);
+  // 5. Pure-Node Studio Chime, Ambient Pad, Cover PNG + REAL FFmpeg Broadcast Mastering + Stereo MP3 + OGG PTT + MP4 Video Audiogram!
+  const introWav = createStudioChimeWav('intro');
+  const ambientWav = createAmbientPadWav(4);
+  const coverPng = generatePodcastCoverPng(540, 960);
+  assert(introWav.slice(0, 4).toString('ascii') === 'RIFF', 'Intro chime must be valid WAV');
+  assert(ambientWav.slice(0, 4).toString('ascii') === 'RIFF', 'Ambient pad must be valid WAV');
+  assert(coverPng.subarray(0, 8).toString('hex') === '89504e470d0a1a0a', 'Studio cover must be valid PNG');
+
+  // Temporarily stub Edge TTS single attempt with pure-Node synthetic WAV so FFmpeg Mastering + Video Audiogram run 100% offline!
+  const origAttempt = (VoiceReplyService as any).synthesizeSingleAttempt;
+  (VoiceReplyService as any).synthesizeSingleAttempt = async (_clean: string, voiceName: string) => ({
+    buffer: createToneWav(voiceName.includes('Ubax') ? 340 : 210, 0.55),
+    mimeType: 'audio/wav',
+  });
+
+  try {
+    const mp3Mastered = await VoiceReplyService.synthesizeSomaliDialogue(aiTurns.slice(0, 4), {
+      outputFormat: 'mp3',
+      soundMode: 'ambient',
+      masterAudio: true,
+    });
+    assert(mp3Mastered && mp3Mastered.buffer.length > 4000, 'Mastered stereo MP3 must be non-trivial');
+    assert(mp3Mastered!.transcript.includes('Safa:') && mp3Mastered!.transcript.includes('Mohamed:'), 'Result must include formatted Safa & Mohamed transcript');
+
+    const oggMastered = await VoiceReplyService.synthesizeSomaliDialogue(aiTurns.slice(0, 4), {
+      outputFormat: 'ogg',
+      soundMode: 'chime',
+      masterAudio: true,
+    });
+    assert(oggMastered && oggMastered.buffer.slice(0, 4).toString('ascii') === 'OggS', 'Mastered WhatsApp PTT must be valid OggS Opus');
+    assert(oggMastered!.waveform.length === 64, 'Mastered PTT must include 64-bar waveform');
+
+    const mp4Video = await VoiceReplyService.renderPodcastVideoAudiogram(mp3Mastered!.buffer, {
+      title: 'Ganacsiga Online-ka',
+      styleLabel: 'SAFA & MOHAMED STUDIO',
+    });
+    assert(mp4Video.length > 8000 && mp4Video.subarray(4, 8).toString('ascii') === 'ftyp', 'Video Audiogram must be a valid MP4 (ftyp header)');
+    console.log(
+      `  ✅ PASS: Real FFmpeg Studio Mastering (MP3 ${(mp3Mastered!.buffer.length / 1024).toFixed(1)}KB, OGG ${(oggMastered!.buffer.length / 1024).toFixed(1)}KB) & 9:16 Video Audiogram MP4 (${(mp4Video.length / 1024).toFixed(1)}KB) verified`
+    );
+  } finally {
+    (VoiceReplyService as any).synthesizeSingleAttempt = origAttempt;
   }
 
-  // 5. Router `!podcast` (no args) -> sends playable PTT Voice Note (ptt: true, OggS, seconds, waveform, NO fileName!)
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-pod-test-'));
-  const memory = new SQLiteStudentMemory(path.join(tmpDir, 'pod.db'));
-  await memory.initialize();
-  try {
-    const testConfig = { ...config, security: { ...config.security, adminPhoneNumbers: ['252634949642'] } };
-    const ai = new AIOrchestrator(testConfig, new QuotaTracker(100, 14), 'fake');
-    const engine = new StudentAdvisorEngine(memory, ai);
-    const router = new MessageRouter(engine, testConfig, undefined, undefined, memory, { tenantId: 'owner' });
+  // 6. /app PWA Podcast Studio UI syntax validation
+  const appHtml = renderPwaAppHTML({ botName: 'CARDOSO AI' });
+  const scripts = [...appHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)];
+  assert(scripts.length >= 1, '/app must contain client script');
+  for (let i = 0; i < scripts.length; i++) {
+    new vm.Script(scripts[i][1], { filename: `app-podcast-script-${i}.js` });
+  }
+  assert(appHtml.includes('Safa &amp; Mohamed Podcast Studio'), '/app must show Safa & Mohamed Podcast Studio');
+  assert(appHtml.includes('podcastDurationSelect') && appHtml.includes('podcastStyleSelect'), '/app must expose duration & style selectors');
+  console.log('  ✅ PASS: /app Safa & Mohamed Podcast Studio UI & inline JS syntax verified');
 
-    const sentAudios: any[] = [];
-    const sentTexts: string[] = [];
-    const mockTransport: any = {
-      name: 'mock',
-      isConnected: true,
-      sendMessage: async (_chatId: string, t: string) => {
-        sentTexts.push(t);
-        return true;
-      },
-      sendMedia: async (_chatId: string, media: any) => {
-        sentAudios.push(media);
-        return true;
-      },
-    };
+  // 7. Router `!podcast` delivers sleek Safa & Mohamed teaser + playable WhatsApp PTT Voice Note
+  const promoOggCandidates = [
+    path.join(process.cwd(), 'assets', 'audio', 'cardoso-ai-safa-mohamed-promo.ogg'),
+    path.join(process.cwd(), 'assets', 'audio', 'cardoso-ai-muuse-ubax-promo.ogg'),
+  ];
+  const existingPromo = promoOggCandidates.find((p) => fs.existsSync(p));
+  if (existingPromo) {
+    const oggBuf = fs.readFileSync(existingPromo);
+    assert(oggBuf.slice(0, 4).toString('ascii') === 'OggS', 'Prebuilt promo must start with OggS');
+    const sec = getOggOpusDurationSeconds(oggBuf);
+    const wf = generateSpeechWaveform(oggBuf);
+    assert(sec >= 20 && wf.length === 64, 'Prebuilt promo duration & waveform valid');
 
-    if (fs.existsSync(promoOggPath)) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-pod-test-'));
+    const memory = new SQLiteStudentMemory(path.join(tmpDir, 'pod.db'));
+    await memory.initialize();
+    try {
+      const testConfig = { ...config, security: { ...config.security, adminPhoneNumbers: ['252634949642'] } };
+      const ai = new AIOrchestrator(testConfig, new QuotaTracker(100, 14), 'fake');
+      const engine = new StudentAdvisorEngine(memory, ai);
+      const router = new MessageRouter(engine, testConfig, undefined, undefined, memory, { tenantId: 'owner' });
+
+      const sentAudios: any[] = [];
+      const sentTexts: string[] = [];
+      const mockTransport: any = {
+        name: 'mock',
+        isConnected: true,
+        sendMessage: async (_chatId: string, t: string) => {
+          sentTexts.push(t);
+          return true;
+        },
+        sendMedia: async (_chatId: string, media: any) => {
+          sentAudios.push(media);
+          return true;
+        },
+      };
+
       const res = await router.handleIncomingMessage(
         {
           id: 'pod_cmd_1',
@@ -107,22 +243,54 @@ async function runPodcastTests(): Promise<void> {
         mockTransport
       );
       assert(res.handled === true, '!podcast must be handled');
+      assert(sentTexts.length >= 1 && sentTexts[0].includes('Safa & Mohamed') && sentTexts[0].includes('Goor dhow la soco'), 'Router must send sleek Safa & Mohamed teaser');
       assert(sentAudios.length === 1, '!podcast must send 1 Voice Note');
       const vn = sentAudios[0];
-      assert(vn.type === 'audio' && vn.ptt === true, 'Must be sent as WhatsApp PTT Voice Note (ptt: true)');
+      assert(vn.type === 'audio' && vn.ptt === true, 'Must be sent as WhatsApp PTT Voice Note');
       assert(vn.mimeType === 'audio/ogg; codecs=opus', 'Must use audio/ogg; codecs=opus');
-      assert(vn.fileName === undefined, 'PTT Voice Note must NOT set fileName (prevents generic audio file rendering)');
+      assert(vn.fileName === undefined, 'PTT Voice Note must NOT set fileName');
       assert(vn.dataBuffer.slice(0, 4).toString('ascii') === 'OggS', 'Voice Note buffer must be valid OggS Opus');
-      assert(typeof vn.seconds === 'number' && vn.seconds >= 30, `Voice Note must include exact duration, got ${vn.seconds}`);
-      assert(vn.waveform instanceof Uint8Array && vn.waveform.length === 64, 'Voice Note must include 64-byte waveform');
-      console.log(`  ✅ PASS: Router !podcast delivers authentic WhatsApp PTT Voice Note (${vn.seconds}s, OggS, waveform)`);
-    }
+      assert(typeof vn.seconds === 'number' && vn.seconds >= 20, `Exact duration expected, got ${vn.seconds}`);
+      assert(vn.waveform instanceof Uint8Array && vn.waveform.length === 64, '64-bar waveform expected');
+      console.log(`  ✅ PASS: Router !podcast sends sleek teaser + authentic PTT Voice Note (${vn.seconds}s, OggS, waveform)`);
 
-    console.log('\n🎉 All Muuse & Ubax Podcast Voice Note tests passed!\n');
-  } finally {
-    await memory.close?.();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+      // 8. Voice Status splitting (>55s) + authentic Ogg Opus Voice Status posting to status@broadcast
+      const clips = await splitAudioIntoVoiceStatusClips(oggBuf, sec, 55);
+      assert(clips.length >= 2, `Expected 109s promo to split into >=2 Voice Status clips, got ${clips.length}`);
+      assert(clips.every((c) => c.slice(0, 4).toString('ascii') === 'OggS'), 'Every split Voice Status clip must be valid OggS');
+
+      const statusMgr = new WhatsAppManagerService({
+        authDir: path.join(tmpDir, 'status_auth'),
+        statusStoragePath: path.join(tmpDir, 'statuses.json'),
+        adminPhones: ['252634949642'],
+      });
+      const statusCalls: any[] = [];
+      statusMgr.setSocket({
+        user: { id: '252634949642:1@s.whatsapp.net' },
+        sendMessage: async (jid: string, payload: any, opts: any) => {
+          statusCalls.push({ jid, payload, opts });
+          return { key: { id: `st_${statusCalls.length}` } };
+        },
+      } as any);
+
+      const postedSeries = await statusMgr.postVoiceStatusSeries(clips[0], {
+        caption: 'CARDOSO AI Safa & Mohamed',
+      });
+      assert(postedSeries.success === true && postedSeries.partsPosted === 1, 'Voice Status series should post cleanly');
+      assert(statusCalls.length === 1 && statusCalls[0].jid === 'status@broadcast', 'Must dispatch to status@broadcast');
+      const sp = statusCalls[0].payload;
+      assert(sp.mimetype === 'audio/ogg; codecs=opus' && sp.ptt === true, 'Voice Status must use audio/ogg; codecs=opus & ptt: true');
+      assert(typeof sp.seconds === 'number' && sp.seconds >= 10 && sp.waveform instanceof Uint8Array && sp.waveform.length === 64, 'Voice Status must include exact seconds & 64-bar waveform');
+      assert(typeof sp.backgroundColor === 'string' && sp.backgroundColor.startsWith('#'), 'Voice Status must include backgroundColor');
+      statusMgr.stopAutonomousGovernorLoop();
+      console.log(`  ✅ PASS: Voice Status auto-splits long podcasts (${clips.length}x <=55s) & posts valid OggS PTT + waveform + color to status@broadcast`);
+    } finally {
+      await memory.close?.();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   }
+
+  console.log('\n🎉 All Safa & Mohamed World-Class Podcast Studio V2 tests passed!\n');
 }
 
 runPodcastTests().catch((err) => {

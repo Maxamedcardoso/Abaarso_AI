@@ -7,7 +7,8 @@ import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
 import { groupGovernorService, GroupGovernorService } from './group-governor.service.js';
 import { prayerTimesService, PrayerTimesService, PrayerDefinition, PrayerKey } from './prayer-times.service.js';
-import { generateSpeechWaveform, getOggOpusDurationSeconds } from './voice-reply.service.js';
+import { generateSpeechWaveform, getOggOpusDurationSeconds, VoiceReplyService } from './voice-reply.service.js';
+import { splitAudioIntoVoiceStatusClips } from './podcast-studio.service.js';
 
 export interface WhatsAppManagerOptions {
   authDir?: string;
@@ -1133,6 +1134,19 @@ export class WhatsAppManagerService {
         } else if (media.type === 'audio') {
           const colors = ['#1e3c72', '#0f5132', '#4a154b', '#0d6efd', '#6f42c1'];
           const chosenColor = options?.backgroundColor || colors[Math.floor(Math.random() * colors.length)];
+          let opusBuf = media.buffer;
+          const isOgg = opusBuf.length >= 4 && opusBuf.slice(0, 4).toString('ascii') === 'OggS';
+          if (!isOgg) {
+            try {
+              opusBuf = await VoiceReplyService.convertMediaToOggOpusStrict(opusBuf);
+            } catch (convErr: any) {
+              console.warn('[WhatsApp Status] Ogg Opus conversion notice:', convErr?.message || convErr);
+            }
+          }
+          const finalIsOgg = opusBuf.length >= 4 && opusBuf.slice(0, 4).toString('ascii') === 'OggS';
+          const seconds = finalIsOgg ? getOggOpusDurationSeconds(opusBuf) : Math.max(1, Math.round(opusBuf.length / 6000));
+          const waveform = generateSpeechWaveform(opusBuf);
+
           const audioSendOptions = {
             ...sendOpts,
             backgroundColor: chosenColor,
@@ -1140,9 +1154,11 @@ export class WhatsAppManagerService {
           return await this.socket!.sendMessage(
             'status@broadcast',
             {
-              audio: media.buffer,
-              mimetype: 'audio/mp4',
+              audio: opusBuf,
+              mimetype: finalIsOgg ? 'audio/ogg; codecs=opus' : (media.mimeType || 'audio/mpeg'),
               ptt: true,
+              seconds,
+              waveform,
               backgroundColor: chosenColor,
             } as any,
             audioSendOptions
@@ -1187,6 +1203,106 @@ export class WhatsAppManagerService {
     } catch (err: any) {
       console.error('❌ [WhatsApp Status] Error posting media status:', err);
       return { success: false, message: `Cilad ayaa ku timid soo dhigista media status: ${err.message}` };
+    }
+  }
+
+  /**
+   * Posts any Voice Note or Podcast to WhatsApp Status (`status@broadcast`) as authentic Ogg Opus
+   * Voice Status(es) with colorful backgrounds & waveform. Automatically splits audio longer than
+   * 55 seconds into sequential parts so WhatsApp's 60s Voice Status cap never cuts off your podcast!
+   */
+  public async postVoiceStatusSeries(
+    audioBuffer: Buffer,
+    options?: {
+      caption?: string;
+      backgroundColor?: string;
+      maxChunkSeconds?: number;
+      statusJidList?: string[];
+    }
+  ): Promise<{ success: boolean; partsPosted: number; totalSeconds: number; message: string }> {
+    if (!this.socket) {
+      return {
+        success: false,
+        partsPosted: 0,
+        totalSeconds: 0,
+        message: 'WhatsApp ma xirna hadda (Socket not connected).',
+      };
+    }
+
+    try {
+      let baseOgg = audioBuffer;
+      if (baseOgg.length < 4 || baseOgg.slice(0, 4).toString('ascii') !== 'OggS') {
+        baseOgg = await VoiceReplyService.convertMediaToOggOpusStrict(baseOgg);
+      }
+      const totalSeconds = getOggOpusDurationSeconds(baseOgg);
+      const maxChunk = Math.max(15, Math.min(58, options?.maxChunkSeconds ?? 55));
+      const clips = await splitAudioIntoVoiceStatusClips(baseOgg, totalSeconds, maxChunk);
+
+      const palette = ['#0f5132', '#1e3c72', '#4a154b', '#0b4f6c', '#3b1d5a'];
+      let postedCount = 0;
+      let lastError = '';
+
+      for (let i = 0; i < clips.length; i++) {
+        const bg = options?.backgroundColor || palette[i % palette.length];
+        const partLabel = clips.length > 1
+          ? `${options?.caption || 'CARDOSO AI Voice Status'} (${i + 1}/${clips.length})`
+          : (options?.caption || 'CARDOSO AI Voice Status');
+
+        const res = await this.postMediaStatus(
+          {
+            buffer: clips[i],
+            mimeType: 'audio/ogg; codecs=opus',
+            type: 'audio',
+            caption: partLabel,
+          },
+          {
+            backgroundColor: bg,
+            statusJidList: options?.statusJidList,
+          }
+        );
+
+        if (res.success) {
+          postedCount++;
+        } else {
+          lastError = res.message;
+        }
+
+        if (i < clips.length - 1) {
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+      }
+
+      if (postedCount === 0) {
+        return {
+          success: false,
+          partsPosted: 0,
+          totalSeconds,
+          message: lastError || 'Codka laguma dhigi karin WhatsApp Status.',
+        };
+      }
+
+      const partsMsg =
+        clips.length > 1
+          ? `${postedCount}/${clips.length} qaybood oo is-daba-joog ah (midkiiba ≤${maxChunk}s si aanu WhatsApp u gooyn!)`
+          : `1 Voice Status (${totalSeconds}s)`;
+
+      return {
+        success: true,
+        partsPosted: postedCount,
+        totalSeconds,
+        message:
+          `✅ *Codkaaga Voice Status si guul leh ayaa loogu dhigay WhatsApp Status!* 🎙️🔥\n` +
+          `• Qaybaha: *${partsMsg}*\n` +
+          `• Wadarta Muddada: *${totalSeconds} ilbiriqsi*\n` +
+          `• 👁️ Eeg cidda daawatay: Qor \`!statusviews\``,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        partsPosted: 0,
+        totalSeconds: 0,
+        message: `Cilad Voice Status: ${err?.message || err}`,
+      };
     }
   }
 

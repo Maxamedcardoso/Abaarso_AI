@@ -11,6 +11,8 @@ import { StatusReactorService, statusReactorService } from '../services/status-r
 import {
   DEFAULT_CARDOSO_PROMO_DIALOGUE,
   DialogueTurn,
+  PodcastSoundMode,
+  PodcastStyle,
   VoiceReplyService,
 } from '../services/voice-reply.service.js';
 import { MediaUrlDownloaderService } from '../services/media-url-downloader.service.js';
@@ -553,7 +555,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       });
 
       let replyMedia:
-        | { type: 'image' | 'audio' | 'document'; mimeType: string; dataBase64: string; caption?: string }
+        | { type: 'image' | 'audio' | 'document' | 'video'; mimeType: string; dataBase64: string; caption?: string }
         | undefined;
 
       if (output.replyMedia && output.replyMedia.dataBuffer) {
@@ -612,34 +614,100 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/app/podcast', async (req: Request, res: Response) => {
     try {
-      const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+      const rawTopic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
       const rawScript = typeof req.body?.script === 'string' ? req.body.script.trim() : '';
       const rawTurns = Array.isArray(req.body?.turns) ? (req.body.turns as DialogueTurn[]) : null;
-      const format = req.body?.format === 'ogg' ? 'ogg' : 'mp3';
+      const formatRaw = String(req.body?.format || 'mp3').toLowerCase();
+      const format: 'mp3' | 'ogg' | 'mp4' = formatRaw === 'ogg' ? 'ogg' : formatRaw === 'mp4' ? 'mp4' : 'mp3';
+      const returnJson = Boolean(req.body?.returnJson);
+
+      const styleRaw = String(req.body?.style || 'debate').toLowerCase();
+      const style: PodcastStyle =
+        styleRaw === 'study' || styleRaw === 'story' || styleRaw === 'ad' || styleRaw === 'diini'
+          ? styleRaw
+          : 'debate';
+      const durationMinutes = Math.max(0.5, Math.min(5, Number(req.body?.durationMinutes) || (style === 'ad' ? 0.75 : 1.5)));
+      const soundRaw = String(req.body?.soundMode || (style === 'diini' ? 'clean' : 'chime')).toLowerCase();
+      const soundMode: PodcastSoundMode =
+        style === 'diini' ? 'clean' : soundRaw === 'ambient' || soundRaw === 'clean' ? soundRaw : 'chime';
+
+      let effectiveTopic = rawTopic;
+      let sourceText: string | undefined = typeof req.body?.sourceText === 'string' ? req.body.sourceText.trim() : undefined;
+
+      if (effectiveTopic && /^https?:\/\//i.test(effectiveTopic)) {
+        const article = await VoiceReplyService.fetchArticleExcerptForPodcast(effectiveTopic);
+        if (article) {
+          sourceText = [sourceText, article.excerpt].filter(Boolean).join('\n\n');
+          effectiveTopic = article.title || effectiveTopic;
+        }
+      }
 
       let turns: DialogueTurn[] = DEFAULT_CARDOSO_PROMO_DIALOGUE;
-      if (topic) {
+      if (effectiveTopic || sourceText) {
         const { engine } = getOwnerRefs();
-        turns = await VoiceReplyService.generateTopicDialogueTurns(topic, engine?.getAIOrchestrator?.());
+        turns = await VoiceReplyService.generateTopicDialogueTurns(
+          effectiveTopic,
+          engine?.getAIOrchestrator?.(),
+          { style, durationMinutes, sourceText }
+        );
       } else if (rawTurns && rawTurns.length > 0) {
         turns = rawTurns;
       } else if (rawScript) {
         turns = VoiceReplyService.isExplicitDialogueScript(rawScript)
           ? VoiceReplyService.parseDialogueScript(rawScript)
-          : await VoiceReplyService.generateTopicDialogueTurns(rawScript, getOwnerRefs().engine?.getAIOrchestrator?.());
+          : await VoiceReplyService.generateTopicDialogueTurns(
+              rawScript,
+              getOwnerRefs().engine?.getAIOrchestrator?.(),
+              { style, durationMinutes }
+            );
       }
 
-      const audio = await VoiceReplyService.synthesizeSomaliDialogue(turns, { outputFormat: format });
+      const audioFormat: 'mp3' | 'ogg' = format === 'ogg' ? 'ogg' : 'mp3';
+      const audio = await VoiceReplyService.synthesizeSomaliDialogue(turns, {
+        outputFormat: audioFormat,
+        soundMode,
+      });
       if (!audio) {
         res.status(503).json({ status: 'error', message: 'Podcast-ka hadda lama samayn karin — mar kale isku day' });
         return;
       }
-      const ext = format === 'ogg' ? 'ogg' : 'mp3';
-      res.setHeader('Content-Type', audio.mimeType);
-      res.setHeader('Content-Disposition', `inline; filename="cardoso-ai-muuse-ubax-podcast.${ext}"`);
-      res.setHeader('Content-Length', String(audio.buffer.length));
+
+      let outBuffer: Buffer = audio.buffer;
+      let outMime = audio.mimeType;
+      let ext: 'mp3' | 'ogg' | 'mp4' = audioFormat;
+
+      if (format === 'mp4') {
+        outBuffer = await VoiceReplyService.renderPodcastVideoAudiogram(audio.buffer, {
+          title: effectiveTopic || 'CARDOSO AI PODCAST',
+          styleLabel: 'SAFA & MOHAMED · CARDOSO AI',
+        });
+        outMime = 'video/mp4';
+        ext = 'mp4';
+      }
+
+      if (returnJson) {
+        res.json({
+          status: 'ok',
+          mimeType: outMime,
+          fileExt: ext,
+          seconds: audio.seconds,
+          turnCount: audio.turnCount,
+          style,
+          durationMinutes,
+          soundMode,
+          transcript: audio.transcript,
+          mediaBase64: outBuffer.toString('base64'),
+        });
+        return;
+      }
+
+      res.setHeader('Content-Type', outMime);
+      res.setHeader('Content-Disposition', `inline; filename="cardoso-ai-safa-mohamed-podcast.${ext}"`);
+      res.setHeader('Content-Length', String(outBuffer.length));
+      res.setHeader('X-Podcast-Duration', String(audio.seconds));
+      res.setHeader('X-Podcast-Turns', String(audio.turnCount));
       res.setHeader('Cache-Control', 'no-store');
-      res.send(audio.buffer);
+      res.send(outBuffer);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message || 'Khalad ayaa ka dhacay samaynta podcast-ka' });
     }
@@ -1997,6 +2065,64 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/status/post-podcast', async (req: Request, res: Response) => {
+    try {
+      const { whatsappManager, engine } = getOwnerRefs();
+      const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+      const styleRaw = String(req.body?.style || 'debate').toLowerCase();
+      const style: PodcastStyle =
+        styleRaw === 'study' || styleRaw === 'story' || styleRaw === 'ad' || styleRaw === 'diini'
+          ? styleRaw
+          : 'debate';
+      const durationMinutes = Math.max(0.5, Math.min(3, Number(req.body?.durationMinutes) || 0.85));
+      const mode = req.body?.mode === 'video' ? 'video' : 'voice';
+
+      let audioRes = null;
+      if (!topic) {
+        audioRes = await VoiceReplyService.getCardosoPromoVoiceNote();
+      } else {
+        const turns = await VoiceReplyService.generateTopicDialogueTurns(
+          topic,
+          engine?.getAIOrchestrator?.(),
+          { style, durationMinutes }
+        );
+        audioRes = await VoiceReplyService.synthesizeSomaliDialogue(turns, {
+          outputFormat: mode === 'video' ? 'mp3' : 'ogg',
+          soundMode: style === 'diini' ? 'clean' : 'chime',
+        });
+      }
+
+      if (!audioRes) {
+        res.status(503).json({ success: false, message: 'Codka Podcast-ka hadda lama samayn karin.' });
+        return;
+      }
+
+      if (mode === 'video') {
+        const mp4Buf = await VoiceReplyService.renderPodcastVideoAudiogram(audioRes.buffer, {
+          title: topic || 'CARDOSO AI PODCAST',
+          styleLabel: 'SAFA & MOHAMED · CARDOSO AI',
+        });
+        const posted = await whatsappManager.postMediaStatus({
+          buffer: mp4Buf,
+          mimeType: 'video/mp4',
+          type: 'video',
+          caption: `🎬 *CARDOSO AI PODCAST — Safa & Mohamed*\n📌 ${topic || 'CARDOSO AI'}`,
+        });
+        if (posted.success) tenantManager?.markTenantDirty('owner', ['meta'], false);
+        res.json(posted);
+        return;
+      }
+
+      const posted = await whatsappManager.postVoiceStatusSeries(audioRes.buffer, {
+        caption: topic || 'CARDOSO AI — Safa & Mohamed Podcast',
+      });
+      if (posted.success) tenantManager?.markTenantDirty('owner', ['meta'], false);
+      res.json(posted);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
     }
   });
 

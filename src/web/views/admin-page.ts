@@ -298,6 +298,11 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
             <input class="field" id="ownerStatusText" placeholder="Soo dhig Status cusub..." />
             <button class="btn btn-primary btn-sm" onclick="ownerPostStatus()">📤 Status</button>
           </div>
+          <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;">
+            <input class="field" id="ownerPodcastStatusTopic" style="flex:1;min-width:170px;" placeholder="🎙️ Voice Podcast Status (faaruq = Promo Safa & Mohamed)..." />
+            <button class="btn btn-emerald btn-sm" id="btnOwnerVoiceStatus" onclick="ownerPostPodcastStatus('voice')">🎙️ Voice Status</button>
+            <button class="btn btn-ghost btn-sm" id="btnOwnerVideoStatus" onclick="ownerPostPodcastStatus('video')">🎬 Video Status</button>
+          </div>
           <div style="display:flex;gap:0.5rem;">
             <input class="field" id="ownerBroadcastText" placeholder="Fariin-wadareed (50 qof oo cusub)..." />
             <button class="btn btn-ghost btn-sm" onclick="ownerBroadcast()">📢 Dir</button>
@@ -1193,6 +1198,30 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       });
       const data = await res.json();
       showToast(data.success ? '✅ Status waa la dhigay' : '❌ ' + data.message, !data.success);
+    }
+
+    async function ownerPostPodcastStatus(mode) {
+      const inp = document.getElementById('ownerPodcastStatusTopic');
+      const topic = inp ? inp.value.trim() : '';
+      const vBtn = document.getElementById('btnOwnerVoiceStatus');
+      const mBtn = document.getElementById('btnOwnerVideoStatus');
+      if (vBtn) vBtn.disabled = true;
+      if (mBtn) mBtn.disabled = true;
+      showToast(mode === 'video' ? '🎬 Video Podcast Status waa la diyaarinayaa...' : '🎙️ Voice Podcast Status waa la diyaarinayaa...');
+      try {
+        const res = await fetch('/api/status/post-podcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: topic, mode: mode || 'voice', durationMinutes: 0.85 }),
+        });
+        const data = await res.json();
+        showToast(data.success ? '✅ ' + data.message : '❌ ' + (data.message || 'Lama dhigi karin'), !data.success);
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      } finally {
+        if (vBtn) vBtn.disabled = false;
+        if (mBtn) mBtn.disabled = false;
+      }
     }
 
     async function ownerBroadcast() {
