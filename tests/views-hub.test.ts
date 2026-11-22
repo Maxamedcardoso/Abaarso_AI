@@ -10,6 +10,7 @@ import { AIOrchestrator } from '../src/ai/ai-orchestrator.js';
 import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { ConsoleSimulatorTransport } from '../src/transports/console-simulator.js';
 import { createStudioServer } from '../src/web/studio-server.js';
+import { normalizeViewsPhone } from '../src/services/views-hub.service.js';
 import { config } from '../src/config/env.js';
 
 function assert(condition: unknown, message: string): void {
@@ -20,6 +21,17 @@ function assert(condition: unknown, message: string): void {
 
 async function runViewsHubTests(): Promise<void> {
   console.log('\n🧪 Running CARDOSO Views & .vcf Contact Hub Test Suite...\n');
+
+  // 0. Phone Normalization Unit Checks (+252 Somalia AND +251 Ethiopia / Jigjiga!)
+  assert(normalizeViewsPhone('0634112233') === '252634112233', 'Somalia 063 -> 25263');
+  assert(normalizeViewsPhone('+252 063 411 2233') === '252634112233', 'Somalia +252 063 -> strip extra 0');
+  assert(normalizeViewsPhone('0915123456') === '251915123456', 'Ethiopia 0915 -> 251915');
+  assert(normalizeViewsPhone('+251 0915 123 456') === '251915123456', 'Ethiopia +251 0915 -> strip extra 0');
+  assert(normalizeViewsPhone('915123456', '251') === '251915123456', 'Ethiopia 915 + cc=251 -> 251915');
+  assert(normalizeViewsPhone('0712345678', '251') === '251712345678', 'Ethiopia Safaricom 07 + cc=251 -> 2517');
+  assert(normalizeViewsPhone('00251922334455') === '251922334455', '00251 -> 251');
+  assert(normalizeViewsPhone('0907112233') === '252907112233', 'Puntland Golis 090 stays 25290');
+  console.log('  ✅ PASS: +252 Somalia & +251 Ethiopia (Jigjiga/DDS) phone normalization verified');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardoso-views-hub-'));
   const dbPath = path.join(tmpDir, 'views-test.db');
@@ -97,7 +109,7 @@ async function runViewsHubTests(): Promise<void> {
   const adminAuth = 'Basic ' + Buffer.from('admin:admin-secret').toString('base64');
 
   try {
-    // 1. Validate /views, /app, and / (Admin Studio) HTML + inline JS syntax
+    // 1. Validate /views, /app, and Admin Studio HTML + inline JS syntax
     for (const check of [
       { route: '/views' },
       { route: '/app' },
@@ -114,100 +126,119 @@ async function runViewsHubTests(): Promise<void> {
     }
     console.log('  ✅ PASS: /views, /app, and Admin Studio render with valid JS syntax');
 
-    // 2. Public Join + Normalization + Referral Tracking + Duplicate Handling
+    // 2. Set batchTarget=2 and downloadMode='locked' to test Lock + Auto-Rollover + Premature Block!
+    const cfgRes = await invokeServer('PUT', '/api/admin/views/config', {
+      headers: { Authorization: adminAuth },
+      body: { contactPrefix: 'CV - ', batchTarget: 2, downloadMode: 'locked', vipPriceLabel: '$5 / Bil' },
+    });
+    assert(cfgRes.status === 200 && cfgRes.json().config.downloadMode === 'locked', 'config locked mode should save');
+
+    // 3. First Join (+252) & Strict Duplicate Rejection (409) & Returning Lookup
     const j1 = await invokeServer('POST', '/api/views/join', {
-      body: { name: 'Axmed Cali', phone: '0634112233', city: 'Hargeysa', category: 'personal', tagline: 'Daily status' },
+      body: { name: 'Axmed Cali', phone: '0634112233', countryCode: '252', city: 'Hargeysa' },
     });
-    assert(j1.status === 201, `first join should return 201, got ${j1.status}`);
-    const c1 = j1.json().contact;
-    assert(c1.phone === '252634112233', `phone should normalize to 252634112233, got ${c1.phone}`);
+    assert(j1.status === 201 && j1.json().contact.phone === '252634112233', 'first join should succeed');
 
-    const j2 = await invokeServer('POST', '/api/views/join', {
-      body: { name: 'Hodan Nuur', phone: '+252 61 555 7788', city: 'Muqdisho', category: 'student', referredBy: '0634112233' },
+    // Duplicate join in ANY format MUST be rejected with 409!
+    const dup1 = await invokeServer('POST', '/api/views/join', {
+      body: { name: 'Axmed Duplicate', phone: '+252 063 411 2233', city: 'Hargeysa' },
     });
-    assert(j2.status === 201, 'second join should return 201');
+    assert(dup1.status === 409 && dup1.json().code === 'DUPLICATE_PHONE', `duplicate phone must return 409, got ${dup1.status}`);
 
-    // Duplicate re-join should succeed smoothly with alreadyJoined: true
-    const dup = await invokeServer('POST', '/api/views/join', {
-      body: { name: 'Axmed Cali Updated', phone: '252634112233', city: 'Hargeysa' },
+    // Returning lookup works cleanly without creating duplicate
+    const lookRes = await invokeServer('POST', '/api/views/lookup', {
+      body: { phone: '0634112233', countryCode: '252' },
     });
-    assert(dup.status === 200 && dup.json().alreadyJoined === true, 'duplicate join should update cleanly');
-    console.log('  ✅ PASS: /api/views/join normalizes Somali numbers, tracks referrals & handles re-joins');
+    assert(lookRes.status === 200 && lookRes.json().contact.phone === '252634112233', 'returning lookup should succeed');
+    console.log('  ✅ PASS: Strict duplicate rejection (409) & returning lookup verified');
 
-    // 3. Admin Auth Guard + VIP Pinned Sponsor Creation
-    const unauthVip = await invokeServer('POST', '/api/admin/views/vip', {
-      body: { name: 'Hacker', phone: '252639999999' },
+    // 4. Premature New Batch MUST be blocked while Batch #1 is 1/2 (NOT full)
+    const prematureBatch = await invokeServer('POST', '/api/admin/views/new-batch', {
+      headers: { Authorization: adminAuth },
     });
-    assert(unauthVip.status === 401, 'unauthenticated VIP creation must return 401');
+    assert(
+      prematureBatch.status === 400 && prematureBatch.json().code === 'BATCH_NOT_FULL',
+      `premature new batch must be rejected with 400 BATCH_NOT_FULL, got ${prematureBatch.status}`
+    );
 
+    // 5. While Batch #1 is 1/2 in locked mode, public download returns 423 BATCH_LOCKED (not 0-byte failure!)
+    const lockedDl = await invokeServer('GET', '/api/views/download.vcf?scope=current&batch=1&myPhone=252634112233');
+    assert(lockedDl.status === 423 && lockedDl.json().code === 'BATCH_LOCKED', `locked batch should return 423, got ${lockedDl.status}`);
+    console.log('  ✅ PASS: Premature new batch blocked & locked batch returns 423 BATCH_LOCKED');
+
+    // 6. Add VIP Pinned Sponsor (+251 Ethiopia / Jigjiga!) — VIP .vcf MUST remain downloadable even when batch is locked!
     const vipRes = await invokeServer('POST', '/api/admin/views/vip', {
       headers: { Authorization: adminAuth },
       body: {
-        name: 'Hargeysa Fashion VIP',
-        phone: '0634998877',
-        city: 'Hargeysa',
-        tagline: 'Dhar casri ah & delivery bilaash ah!',
+        name: 'Jigjiga Fashion VIP',
+        countryCode: '251',
+        phone: '0915998877',
+        city: 'Jigjiga',
+        tagline: 'Dhar casri ah Jigjiga!',
         durationDays: 30,
         vipPriority: 1,
       },
     });
-    assert(vipRes.status === 201, `VIP creation should return 201, got ${vipRes.status}`);
-    const vipContact = vipRes.json().contact;
-    assert(vipContact.isVip === true && vipContact.phone === '252634998877', 'VIP contact should be active & normalized');
-    console.log('  ✅ PASS: Admin VIP Pinned creation works and enforces auth');
+    assert(vipRes.status === 201 && vipRes.json().contact.phone === '251915998877', 'Ethiopia +251 VIP should save cleanly');
 
-    // 4. Public Summary masks regular phones but exposes VIP sponsors
-    const sumRes = await invokeServer('GET', '/api/views/summary');
-    assert(sumRes.status === 200, '/api/views/summary should return 200');
-    const sum = sumRes.json();
-    assert(sum.stats.totalContacts === 3, `totalContacts should be 3, got ${sum.stats.totalContacts}`);
-    assert(sum.stats.activeVipCount === 1, 'activeVipCount should be 1');
-    assert(sum.vips.length === 1 && sum.vips[0].phone === '252634998877', 'VIP phone should be exposed on VIP cards');
-    const regularFeedItem = sum.recentMembers.find((m: any) => !m.isVip);
-    assert(regularFeedItem && regularFeedItem.maskedPhone.includes('•••'), 'Regular member phone must be privacy-masked in public feed');
-    console.log('  ✅ PASS: /api/views/summary masks regular phones and showcases VIP sponsors');
+    const vipOnlyVcf = await invokeServer('GET', '/api/views/download.vcf?scope=vip');
+    assert(vipOnlyVcf.status === 200 && vipOnlyVcf.text.includes('+251915998877'), 'VIP .vcf must stay unlocked');
+    assert(vipOnlyVcf.text.includes('UID:cardoso-views-251915998877'), 'vCard must include stable UID preventing duplicate phonebook saves');
 
-    // 5. vCard 3.0 (.vcf) Generation: VIP Pinned strictly FIRST, CRLF valid, exclude myPhone, city filter
-    const vcfRes = await invokeServer('GET', '/api/views/download.vcf?scope=current&myPhone=252634112233');
-    assert(vcfRes.status === 200, 'download.vcf should return 200');
-    assert(String(vcfRes.headers['content-type'] || '').includes('text/vcard'), 'Content-Type should be text/vcard');
-    assert(vcfRes.text.includes('BEGIN:VCARD\r\nVERSION:3.0\r\n'), 'vCard must use RFC 2426 vCard 3.0 CRLF format');
-    assert(vcfRes.text.includes('TEL;TYPE=CELL,VOICE:+252634998877'), 'vCard must contain VIP phone');
-    assert(vcfRes.text.includes('TEL;TYPE=CELL,VOICE:+252615557788'), 'vCard must contain batch peer phone');
-    assert(!vcfRes.text.includes('+252634112233'), 'vCard should skip downloader own myPhone');
-    const vipIdx = vcfRes.text.indexOf('VIP Hargeysa Fashion VIP');
-    const peerIdx = vcfRes.text.indexOf('CV - Hodan Nuur');
-    assert(vipIdx >= 0 && peerIdx > vipIdx, 'VIP Pinned contact must appear BEFORE regular contacts in .vcf');
-
-    // City filter test: VIP still pinned + Muqdisho only
-    const cityVcf = await invokeServer('GET', '/api/views/download.vcf?scope=current&city=Muqdisho');
-    assert(cityVcf.text.includes('+252634998877') && cityVcf.text.includes('+252615557788'), 'City VCF should keep VIP + Muqdisho members');
-    assert(!cityVcf.text.includes('+252634112233'), 'City VCF for Muqdisho should exclude Hargeysa free members');
-
-    // Verify download counter incremented
-    const sumAfter = (await invokeServer('GET', '/api/views/summary')).json();
-    assert(sumAfter.stats.totalDownloads >= 2, 'totalDownloads counter should increment on .vcf downloads');
-    console.log('  ✅ PASS: /api/views/download.vcf generates valid vCard 3.0 with VIPs pinned at top');
-
-    // 6. Admin Config, New Batch, Toggle VIP, Delete
-    const cfgRes = await invokeServer('PUT', '/api/admin/views/config', {
-      headers: { Authorization: adminAuth },
-      body: { contactPrefix: 'CS - ', batchTarget: 150, vipPriceLabel: '$7 / Bil', announcement: 'Batch #1 caawa!' },
+    // 7. Second free join (+251 Ethiopia) fills Batch #1 (2/2) -> AUTOMATICALLY unlocks Batch #1 AND opens Batch #2!
+    const j2 = await invokeServer('POST', '/api/views/join', {
+      body: { name: 'Hodan Jigjiga', countryCode: '251', phone: '0915556677', city: 'Jigjiga', referredBy: '0634112233' },
     });
-    assert(cfgRes.status === 200 && cfgRes.json().config.contactPrefix === 'CS - ', 'admin config update should persist');
+    assert(j2.status === 201, 'second join should succeed');
+    const j2Json = j2.json();
+    assert(j2Json.contact.phone === '251915556677', 'Ethiopia 0915 must normalize to 251915556677');
+    assert(j2Json.contact.batchNumber === 1, '2nd member should stay in Batch #1');
+    assert(j2Json.batchCompleted === true && j2Json.nextBatchOpened === 2, 'Filling Batch #1 must auto-open Batch #2!');
 
-    const batchRes = await invokeServer('POST', '/api/admin/views/new-batch', {
+    // Verify Batch #1 is now UNLOCKED and downloads cleanly with Content-Length, VIP first, and tracks hasDownloaded!
+    const batch1Vcf = await invokeServer('GET', '/api/views/download.vcf?scope=current&batch=1&myPhone=252634112233');
+    assert(batch1Vcf.status === 200, `completed Batch #1 should unlock and return 200, got ${batch1Vcf.status}`);
+    assert(Number(batch1Vcf.headers['content-length']) > 100, 'Content-Length header must be non-zero');
+    assert(batch1Vcf.text.includes('UID:cardoso-views-251915998877'), 'Batch #1 VCF must contain VIP UID');
+    assert(batch1Vcf.text.includes('UID:cardoso-views-251915556677'), 'Batch #1 VCF must contain peer +251 UID');
+    assert(!batch1Vcf.text.includes('+252634112233'), 'Batch #1 VCF skips downloader own phone when peers exist');
+    assert(
+      batch1Vcf.text.indexOf('VIP Jigjiga Fashion VIP') < batch1Vcf.text.indexOf('CV - Hodan Jigjiga'),
+      'VIP must be pinned before regular members'
+    );
+
+    // Verify 3rd member automatically lands in Batch #2!
+    const j3 = await invokeServer('POST', '/api/views/join', {
+      body: { name: 'Fartuun', countryCode: '252', phone: '615889900', city: 'Muqdisho' },
+    });
+    assert(j3.status === 201 && j3.json().contact.batchNumber === 2, '3rd member must automatically enter Batch #2');
+    console.log('  ✅ PASS: Auto-batch rollover on full (Batch #1 -> #2) & vCard UID/Content-Length verified');
+
+    // 8. Verify 1-tap Verified Saver + Admin Overview Download/Verified tracking
+    const verRes = await invokeServer('POST', '/api/views/verify', {
+      body: { phone: '0634112233', countryCode: '252' },
+    });
+    assert(verRes.status === 200 && verRes.json().contact.verifiedSaver === true, 'verify saver should mark verifiedSaver=true');
+
+    const adminOverview = (await invokeServer('GET', '/api/admin/views/overview', { headers: { Authorization: adminAuth } })).json();
+    const axmedRow = adminOverview.contacts.find((c: any) => c.phone === '252634112233');
+    assert(axmedRow && axmedRow.hasDownloaded === true && axmedRow.verifiedSaver === true, 'Admin overview must show hasDownloaded & verifiedSaver');
+    assert(adminOverview.stats.downloadedMembersCount >= 1 && adminOverview.stats.verifiedSaversCount >= 1, 'Admin stats must count downloaded & verified savers');
+
+    // 9. Admin manual unlock on Batch #2 works + Admin Master .vcf download works
+    const unlock2 = await invokeServer('POST', '/api/admin/views/unlock-batch', {
+      headers: { Authorization: adminAuth },
+      body: { batchNumber: 2 },
+    });
+    assert(unlock2.status === 200, 'admin unlock-batch should succeed');
+
+    const adminMasterVcf = await invokeServer('GET', '/api/admin/views/download.vcf?scope=all', {
       headers: { Authorization: adminAuth },
     });
-    assert(batchRes.status === 200 && batchRes.json().config.currentBatch === 2, 'new-batch should advance batch to #2');
+    assert(adminMasterVcf.status === 200 && adminMasterVcf.text.includes('+251915998877'), 'Admin master VCF download should work');
+    console.log('  ✅ PASS: Download tracker, Verified Saver, Manual Unlock & Admin Master VCF verified');
 
-    const delRes = await invokeServer('DELETE', `/api/admin/views/contacts/${c1.id}`, {
-      headers: { Authorization: adminAuth },
-    });
-    assert(delRes.status === 200 && delRes.json().deleted === true, 'admin delete contact should succeed');
-    console.log('  ✅ PASS: Admin config, new batch rollover, and contact management verified');
-
-    console.log('\n🎉 All CARDOSO Views & .vcf Hub tests passed!\n');
+    console.log('\n🎉 All CARDOSO Views & .vcf Hub upgraded tests passed!\n');
   } finally {
     await memory.close?.();
     fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -505,13 +505,15 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         </div>
       </section>
 
-      <div style="display:flex;gap:0.65rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+      <div style="display:flex;gap:0.65rem;flex-wrap:wrap;margin-bottom:1.25rem;align-items:center;">
         <a href="/views" target="_blank" class="btn btn-primary btn-sm">🔗 Fur Bogga /views</a>
         <button class="btn btn-ghost btn-sm" onclick="copyText(location.origin + '/views', '✅ Link-ga /views waa la koobiyeeyay!')">📋 Koobi Link-ga /views</button>
-        <a href="/api/views/download.vcf?scope=all" class="btn btn-emerald btn-sm">📥 Soo Deji Master .vcf (All)</a>
-        <a href="/api/views/download.vcf?scope=vip" class="btn btn-ghost btn-sm">👑 Soo Deji VIP .vcf</a>
-        <button class="btn btn-ghost btn-sm" onclick="startNextViewsBatch()">📦 Billow Batch Cusub (+1)</button>
+        <button class="btn btn-emerald btn-sm" onclick="downloadAdminVcf('all')">📥 Soo Deji Master .vcf (All)</button>
+        <button class="btn btn-ghost btn-sm" onclick="downloadAdminVcf('vip')">👑 Soo Deji VIP .vcf</button>
+        <button class="btn btn-ghost btn-sm" id="btnUnlockBatchAdmin" onclick="unlockCurrentViewsBatch()">🔓 Fur Download Batch-ka</button>
+        <button class="btn btn-ghost btn-sm" id="btnNextBatchAdmin" onclick="startNextViewsBatch()">📦 Batch Xiga (Markuu Buuxsamo)</button>
         <button class="btn btn-ghost btn-sm" onclick="loadAdminViewsHub()">🔄 Refresh</button>
+        <span class="pill pill-green" id="adminViewsVerifiedPill">✅ 0 Verified · 📥 0 Downloaded</span>
       </div>
 
       <div class="grid-2" style="margin-bottom:1.25rem;">
@@ -526,14 +528,23 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
                 <input class="field" id="vipAddName" required placeholder="Tusaale: Hargeysa Fashion" />
               </div>
               <div class="form-group">
-                <label class="field-label">Lambarka WhatsApp</label>
-                <input class="field" id="vipAddPhone" required placeholder="252634xxxxxx" />
+                <label class="field-label">Lambarka WhatsApp (+252 / +251)</label>
+                <div style="display:flex;gap:0.4rem;">
+                  <select class="field" id="vipAddCountry" style="width:112px;flex-shrink:0;">
+                    <option value="252">🇸🇴 +252</option>
+                    <option value="251">🇪🇹 +251</option>
+                    <option value="254">🇰🇪 +254</option>
+                    <option value="253">🇩🇯 +253</option>
+                    <option value="">🌍 Kale</option>
+                  </select>
+                  <input class="field" id="vipAddPhone" required placeholder="634... ama 915..." />
+                </div>
               </div>
             </div>
             <div class="grid-3">
               <div class="form-group">
                 <label class="field-label">Magaalada</label>
-                <input class="field" id="vipAddCity" value="Hargeysa" placeholder="Hargeysa" />
+                <input class="field" id="vipAddCity" value="Hargeysa" placeholder="Hargeysa / Jigjiga" />
               </div>
               <div class="form-group">
                 <label class="field-label">Muddada VIP</label>
@@ -567,22 +578,29 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         <!-- Hub Settings -->
         <section class="glass-card">
           <div class="card-title">⚙️ Dejinta CARDOSO Views Hub</div>
-          <div class="card-sub">Maamul magaca contacts-ka, tirada Batch-ka, qiimaha VIP-ga, iyo lambarkaaga iibka VIP.</div>
+          <div class="card-sub">Maamul Batch Lock Mode, tirada Batch-ka (si toos ah u furma markuu buuxsamo), qiimaha VIP-ga, iyo lambarkaaga.</div>
           <form onsubmit="saveAdminViewsConfig(event)">
-            <div class="grid-2">
+            <div class="grid-3">
               <div class="form-group">
-                <label class="field-label">Prefix-ka Magacyada (.vcf)</label>
+                <label class="field-label">Prefix-ka (.vcf)</label>
                 <input class="field" id="cfgViewsPrefix" value="CV - " placeholder="CV - " />
               </div>
               <div class="form-group">
-                <label class="field-label">Xadka Batch Kasta (Target)</label>
-                <input class="field" id="cfgViewsTarget" type="number" value="100" min="10" max="2000" />
+                <label class="field-label">Xadka Batch (Auto-Next)</label>
+                <input class="field" id="cfgViewsTarget" type="number" value="100" min="2" max="2000" />
+              </div>
+              <div class="form-group">
+                <label class="field-label">Qaabka Download-ka</label>
+                <select class="field" id="cfgViewsDownloadMode">
+                  <option value="instant">🔓 Instant (Isla markiiba)</option>
+                  <option value="locked">🔒 Batch Lock (Sug ilaa Buuxsamo)</option>
+                </select>
               </div>
             </div>
             <div class="grid-2">
               <div class="form-group">
-                <label class="field-label">Lambarka Dalabka VIP (WhatsApp)</label>
-                <input class="field" id="cfgViewsVipPhone" placeholder="252634xxxxxx" />
+                <label class="field-label">Lambarka Dalabka VIP (+252 / +251)</label>
+                <input class="field" id="cfgViewsVipPhone" placeholder="252634xxxxxx ama 251915xxxxxx" />
               </div>
               <div class="form-group">
                 <label class="field-label">Qiimaha VIP (Label)</label>
@@ -604,7 +622,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           <span>👥 Dhammaan Dadka Ku Jira Views Pool-ka</span>
           <input class="field" id="adminViewsSearch" style="max-width:240px;padding:0.45rem 0.7rem;font-size:0.82rem;" placeholder="🔍 Raadi magac ama lambar..." oninput="renderAdminViewsTable()" />
         </div>
-        <div class="card-sub">Hal gujis VIP ka dhig, kordhi +30 maalmood, ama tirtir.</div>
+        <div class="card-sub">La soco cidda <code>.vcf</code>-ka soo dejisay (<b>✅ Downloaded</b>), cidda xaqiijisay (<b>✅ Verified</b>), VIP ka dhig, ama tirtir.</div>
         <div class="table-wrap">
           <table class="saas-table">
             <thead>
@@ -613,7 +631,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
                 <th>Magaalada</th>
                 <th>Batch</th>
                 <th>Xaaladda VIP</th>
-                <th>Referrals</th>
+                <th>Download &amp; Verified</th>
                 <th>Tallaabooyinka</th>
               </tr>
             </thead>
@@ -1555,11 +1573,25 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         document.getElementById('adminViewsTotal').textContent = String(stats.totalContacts || 0);
         document.getElementById('adminViewsVipCount').textContent = String(stats.activeVipCount || 0);
         document.getElementById('adminViewsBatch').textContent = '#' + (cfg.currentBatch || 1);
-        document.getElementById('adminViewsBatchFill').textContent = (stats.currentBatchCount || 0) + ' / ' + (cfg.batchTarget || 100);
+        document.getElementById('adminViewsBatchFill').textContent = (stats.currentBatchFreeCount || 0) + ' / ' + (cfg.batchTarget || 100) + ' (+' + (stats.activeVipCount || 0) + ' VIP)';
         document.getElementById('adminViewsDownloads').textContent = String(stats.totalDownloads || 0);
+        const vPill = document.getElementById('adminViewsVerifiedPill');
+        if (vPill) vPill.textContent = '✅ ' + (stats.verifiedSaversCount || 0) + ' Verified · 📥 ' + (stats.downloadedMembersCount || 0) + ' Downloaded';
+
+        const nextBtn = document.getElementById('btnNextBatchAdmin');
+        if (nextBtn) {
+          nextBtn.textContent = stats.canStartNextBatch
+            ? ('📦 Fur Batch #' + ((cfg.currentBatch || 1) + 1) + ' Hadda')
+            : ('⏳ Auto-Next Markuu Buuxsamo (' + (stats.currentBatchFreeCount || 0) + '/' + (cfg.batchTarget || 100) + ')');
+        }
+        const unlockBtn = document.getElementById('btnUnlockBatchAdmin');
+        if (unlockBtn) {
+          unlockBtn.style.display = (cfg.downloadMode === 'locked' && !stats.currentBatchUnlocked) ? 'inline-flex' : 'none';
+        }
 
         document.getElementById('cfgViewsPrefix').value = cfg.contactPrefix || 'CV - ';
         document.getElementById('cfgViewsTarget').value = String(cfg.batchTarget || 100);
+        document.getElementById('cfgViewsDownloadMode').value = cfg.downloadMode || 'instant';
         document.getElementById('cfgViewsVipPhone').value = cfg.ownerVipPhone || '';
         document.getElementById('cfgViewsVipPrice').value = cfg.vipPriceLabel || '$5 / Bil';
         document.getElementById('cfgViewsAnnouncement').value = cfg.announcement || '';
@@ -1567,6 +1599,33 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         renderAdminViewsTable();
       } catch (err) {
         showToast('❌ Views Hub lama soo rari karin: ' + err.message, true);
+      }
+    }
+
+    async function downloadAdminVcf(scope) {
+      try {
+        const res = await fetch('/api/admin/views/download.vcf?scope=' + encodeURIComponent(scope || 'all'), { cache: 'no-store' });
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (!res.ok || ct.includes('application/json')) {
+          const err = await res.json().catch(function() { return {}; });
+          throw new Error(err.message || 'Contacts ma jiraan');
+        }
+        const text = await res.text();
+        const disp = res.headers.get('content-disposition') || '';
+        const m = disp.match(/filename="([^"]+)"/i);
+        const filename = (m && m[1]) ? m[1] : 'CARDOSO_Views_Master.vcf';
+        const blob = new Blob([text], { type: 'text/vcard;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(url); }, 15000);
+        showToast('✅ ' + filename + ' waa soo degay!');
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
       }
     }
 
@@ -1588,12 +1647,18 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         const vipBadge = c.isVip
           ? ('<span class="pill pill-amber">👑 VIP #' + c.vipPriority + (c.vipExpiresAt ? (' · ' + Math.max(0, Math.ceil((c.vipExpiresAt - Date.now()) / 86400000)) + 'd') : ' · ∞') + '</span>')
           : '<span class="pill pill-muted">Free</span>';
+        const dlBadge = c.hasDownloaded
+          ? '<span class="pill pill-green" style="font-size:0.7rem;">📥 Downloaded</span>'
+          : '<span class="pill pill-muted" style="font-size:0.7rem;">⏳ Pending</span>';
+        const verBadge = c.verifiedSaver
+          ? ' <span class="pill pill-cyan" style="font-size:0.7rem;">✅ Verified</span>'
+          : '';
         return '<tr>' +
-          '<td><strong>' + escapeHtml(c.displayName) + '</strong><div style="font-size:0.78rem;color:var(--text-muted);">+' + escapeHtml(c.phone) + (c.tagline ? (' · ' + escapeHtml(c.tagline)) : '') + '</div></td>' +
+          '<td><strong>' + escapeHtml(c.displayName) + '</strong><div style="font-size:0.78rem;color:var(--text-muted);">+' + escapeHtml(c.phone) + (c.tagline ? (' · ' + escapeHtml(c.tagline)) : '') + ' · Ref: ' + String(c.referralsCount || 0) + '</div></td>' +
           '<td>' + escapeHtml(c.city) + '</td>' +
           '<td><span class="pill pill-cyan">#' + c.batchNumber + '</span></td>' +
           '<td>' + vipBadge + '</td>' +
-          '<td>' + String(c.referralsCount || 0) + '</td>' +
+          '<td>' + dlBadge + verBadge + '</td>' +
           '<td style="display:flex;gap:0.35rem;flex-wrap:wrap;">' +
             (c.isVip
               ? ('<button class="btn btn-emerald btn-sm" onclick="renewViewsVip(' + c.id + ')">+30d</button>' +
@@ -1615,6 +1680,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: document.getElementById('vipAddName').value.trim(),
+            countryCode: document.getElementById('vipAddCountry').value,
             phone: document.getElementById('vipAddPhone').value.trim(),
             city: document.getElementById('vipAddCity').value.trim(),
             durationDays: Number(document.getElementById('vipAddDays').value),
@@ -1648,6 +1714,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           body: JSON.stringify({
             contactPrefix: document.getElementById('cfgViewsPrefix').value,
             batchTarget: Number(document.getElementById('cfgViewsTarget').value) || 100,
+            downloadMode: document.getElementById('cfgViewsDownloadMode').value,
             ownerVipPhone: document.getElementById('cfgViewsVipPhone').value.trim(),
             vipPriceLabel: document.getElementById('cfgViewsVipPrice').value.trim(),
             announcement: document.getElementById('cfgViewsAnnouncement').value.trim()
@@ -1662,11 +1729,26 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       }
     }
 
+    async function unlockCurrentViewsBatch() {
+      try {
+        const res = await fetch('/api/admin/views/unlock-batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed');
+        showToast(data.message || '🔓 Batch waa la furay!');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      }
+    }
+
     async function startNextViewsBatch() {
-      if (!confirm('Ma hubtaa inaad bilowdo Batch cusub? Xubnaha cusub waxay geli doonaan Batch-ka xiga.')) return;
       try {
         const res = await fetch('/api/admin/views/new-batch', { method: 'POST' });
         const data = await res.json();
+        if (!res.ok || data.status !== 'ok') {
+          showToast(data.message || '⛔ Batch-ku weli ma buuxsamin', true);
+          return;
+        }
         showToast(data.message || '📦 Batch cusub waa la bilaabay!');
         await loadAdminViewsHub();
       } catch (err) {

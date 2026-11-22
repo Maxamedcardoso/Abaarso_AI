@@ -824,22 +824,35 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
 
               <!-- Quick Join OR Unlocked Download -->
               <form id="appViewsJoinForm" onsubmit="submitAppViewsJoin(event)">
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.55rem;margin-bottom:0.65rem;">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:0.55rem;margin-bottom:0.65rem;">
                   <input class="field" id="appViewsName" required placeholder="Magacaaga..." />
-                  <input class="field" id="appViewsPhone" required placeholder="Lambarka (063/061/252...)" />
+                  <select class="field" id="appViewsCountry">
+                    <option value="252">🇸🇴 +252</option>
+                    <option value="251">🇪🇹 +251</option>
+                    <option value="254">🇰🇪 +254</option>
+                    <option value="253">🇩🇯 +253</option>
+                    <option value="">🌍 Kale</option>
+                  </select>
+                  <input class="field" id="appViewsPhone" required placeholder="634... ama 915..." />
                   <select class="field" id="appViewsCity">
                     <option value="Hargeysa">Hargeysa</option>
                     <option value="Muqdisho">Muqdisho</option>
+                    <option value="Jigjiga">Jigjiga (+251)</option>
+                    <option value="Diridhaba">Diridhaba (+251)</option>
+                    <option value="Addis Ababa">Addis Ababa (+251)</option>
                     <option value="Garowe">Garowe</option>
                     <option value="Burco">Burco</option>
                     <option value="Boosaaso">Boosaaso</option>
                     <option value="Kismaayo">Kismaayo</option>
                     <option value="Boorama">Boorama</option>
-                    <option value="Nairobi">Nairobi</option>
+                    <option value="Nairobi">Nairobi (+254)</option>
                     <option value="Qurbaha">Qurbaha</option>
                   </select>
                 </div>
-                <button type="submit" id="appViewsJoinBtn" class="btn btn-primary" style="width:100%;">🚀 Ku Biir &amp; Fur Faylka .vcf</button>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                  <button type="submit" id="appViewsJoinBtn" class="btn btn-primary" style="flex:1;">🚀 Ku Biir &amp; Fur Faylka .vcf</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="lookupExistingAppViews()">🔑 Horay Ma U Gashay?</button>
+                </div>
               </form>
 
               <div id="appViewsUnlockedBox" style="display:none;margin-top:0.5rem;">
@@ -847,6 +860,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
                   <button class="btn btn-emerald" style="flex:1;" onclick="downloadAppViewsVcf('current')">📥 Soo Deji Batch .vcf</button>
                   <button class="btn btn-primary btn-sm" onclick="downloadAppViewsVcf('all')">🌍 All .vcf</button>
+                  <button class="btn btn-ghost btn-sm" onclick="verifyAppViewsSaver()">✅ Xaqiiji Save</button>
                   <button class="btn btn-ghost btn-sm" onclick="shareAppViewsLink()">📤 Share</button>
                 </div>
               </div>
@@ -1175,12 +1189,38 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
               '<div style="font-size:0.78rem;color:#cbd5e1;">' + escapeHtml(v.tagline || 'VIP Pinned Sponsor') + '</div>' +
               '<div style="display:flex;gap:0.4rem;margin-top:0.2rem;">' +
                 '<a href="' + waUrl + '" target="_blank" class="btn btn-emerald btn-sm" style="flex:1;">💬 Chat</a>' +
-                '<button class="btn btn-ghost btn-sm" onclick="window.location.href=\\'/api/views/download.vcf?scope=single&id=' + v.id + '\\'">➕ .vcf</button>' +
+                '<button class="btn btn-ghost btn-sm" onclick="downloadAppSingleVip(' + v.id + ')">➕ .vcf</button>' +
               '</div>' +
             '</div>';
           }).join('');
         }
       } catch {}
+    }
+
+    async function fetchAndSaveAppVcf(url, fallbackName) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!res.ok || ct.includes('application/json')) {
+        const err = await res.json().catch(function() { return {}; });
+        throw new Error(err.message || 'Faylka .vcf lama soo dejin karin');
+      }
+      const text = await res.text();
+      if (!text || !text.includes('BEGIN:VCARD')) {
+        throw new Error('Weli contacts diyaar ah ma jiraan');
+      }
+      const disp = res.headers.get('content-disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/i);
+      const filename = (m && m[1]) ? m[1] : (fallbackName || 'CARDOSO_Views.vcf');
+      const blob = new Blob([text], { type: 'text/vcard;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 15000);
+      return Number(res.headers.get('x-contacts-count') || 0);
     }
 
     async function submitAppViewsJoin(e) {
@@ -1194,6 +1234,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: document.getElementById('appViewsName').value.trim(),
+            countryCode: document.getElementById('appViewsCountry').value,
             phone: document.getElementById('appViewsPhone').value.trim(),
             city: document.getElementById('appViewsCity').value
           })
@@ -1212,12 +1253,70 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       }
     }
 
-    function downloadAppViewsVcf(scope) {
+    async function lookupExistingAppViews() {
+      const phone = String((document.getElementById('appViewsPhone') || {}).value || '').trim();
+      const cc = String((document.getElementById('appViewsCountry') || {}).value || '');
+      if (!phone) {
+        showToast('Fadlan marka hore geli lambarkaaga sanduuqa lambarka', true);
+        return;
+      }
+      try {
+        const res = await fetch('/api/views/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phone, countryCode: cc })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Lambarka lama helin');
+        appViewsMember = data.contact;
+        try { localStorage.setItem('cardoso_views_member', JSON.stringify(data.contact)); } catch {}
+        showToast('✅ Akoonkaaga waa la furay, ' + data.contact.displayName + '!');
+        await loadAppViewsHub();
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Khalad'), true);
+      }
+    }
+
+    async function downloadAppViewsVcf(scope) {
       const q = new URLSearchParams({ scope: scope || 'current' });
-      if (appViewsMember && appViewsMember.phone) q.set('myPhone', appViewsMember.phone);
-      window.location.href = '/api/views/download.vcf?' + q.toString();
-      showToast('📥 Faylka .vcf waa soo degayaa!');
-      setTimeout(loadAppViewsHub, 1000);
+      if (appViewsMember && appViewsMember.phone) {
+        q.set('myPhone', appViewsMember.phone);
+        if ((scope || 'current') === 'current' && appViewsMember.batchNumber) {
+          q.set('batch', String(appViewsMember.batchNumber));
+        }
+      }
+      try {
+        const cnt = await fetchAndSaveAppVcf('/api/views/download.vcf?' + q.toString(), 'CARDOSO_Views.vcf');
+        showToast('✅ ' + (cnt || '') + ' Contacts (.vcf) waa soo degeen — guji si aad u Import gareyso!');
+        await loadAppViewsHub();
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Lama soo dejin karin'), true);
+      }
+    }
+
+    async function downloadAppSingleVip(id) {
+      try {
+        await fetchAndSaveAppVcf('/api/views/download.vcf?scope=single&id=' + encodeURIComponent(String(id)), 'CARDOSO_VIP.vcf');
+        showToast('✅ Contact-ka VIP waa soo degay!');
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Lama soo dejin karin'), true);
+      }
+    }
+
+    async function verifyAppViewsSaver() {
+      if (!appViewsMember || !appViewsMember.phone) return;
+      try {
+        const res = await fetch('/api/views/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: appViewsMember.phone })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          showToast('✅ Waad ku mahadsan tahay! Verified Saver waa la diiwaangeliyay.');
+          await loadAppViewsHub();
+        }
+      } catch {}
     }
 
     function shareAppViewsLink() {

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
-import { normalizePhoneNumber } from './broadcast.service.js';
 
 export type ViewsCategory = 'personal' | 'business' | 'student' | 'creator';
+export type ViewsDownloadMode = 'instant' | 'locked';
 
 export interface ViewsHubContact {
   id: number;
@@ -16,6 +16,10 @@ export interface ViewsHubContact {
   vipPriority: number;
   vipExpiresAt: number | null;
   downloadsCount: number;
+  hasDownloaded: boolean;
+  lastDownloadedAt: number | null;
+  verifiedSaver: boolean;
+  verifiedAt: number | null;
   referralsCount: number;
   referredBy: string;
   status: 'active' | 'banned';
@@ -28,6 +32,8 @@ export interface ViewsHubConfig {
   contactPrefix: string;
   currentBatch: number;
   batchTarget: number;
+  downloadMode: ViewsDownloadMode;
+  unlockedBatches: number[];
   ownerVipPhone: string;
   vipPriceLabel: string;
   announcement: string;
@@ -38,6 +44,7 @@ export interface ViewsHubConfig {
 export interface JoinViewsInput {
   name: string;
   phone: string;
+  countryCode?: string;
   city?: string;
   category?: string;
   tagline?: string;
@@ -47,12 +54,25 @@ export interface JoinViewsInput {
 export interface UpsertVipInput {
   name: string;
   phone: string;
+  countryCode?: string;
   city?: string;
   category?: string;
   tagline?: string;
   avatarUrl?: string;
   durationDays?: number; // 0 or undefined -> unlimited
   vipPriority?: number;
+}
+
+export class ViewsHubError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+
+  constructor(message: string, statusCode: number = 400, code: string = 'VIEWS_ERROR') {
+    super(message);
+    this.name = 'ViewsHubError';
+    this.statusCode = statusCode;
+    this.code = code;
+  }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -79,17 +99,85 @@ export function maskPhoneForPublic(digits: string): string {
   return `+${clean.slice(0, 5)} ••• ${clean.slice(-3)}`;
 }
 
-export function normalizeViewsPhone(raw: string): string {
-  const cleaned = String(raw || '').split('@')[0].split(':')[0].trim();
-  return normalizePhoneNumber(cleaned).replace(/\D/g, '');
+/**
+ * Normalizes Somali (+252), Ethiopian/Somali Region (+251), Kenyan (+254), Djibouti (+253),
+ * and international WhatsApp numbers into canonical E.164 digits (without leading +).
+ *
+ * Examples:
+ * - "0634112233"                  -> "252634112233"
+ * - "+252 063 411 2233"           -> "252634112233"
+ * - "0915123456" (or cc='251')    -> "251915123456"
+ * - "+251 0915 123 456"           -> "251915123456"
+ * - "0712345678" with cc='251'    -> "251712345678"
+ * - "00251915123456"              -> "251915123456"
+ */
+export function normalizeViewsPhone(raw: string, countryCode?: string): string {
+  const stripped = String(raw || '').split('@')[0].split(':')[0].trim();
+  let digits = stripped.replace(/\D/g, '');
+  if (!digits) return '';
+
+  // Remove international 00 prefix (e.g. 00251... -> 251..., 00252... -> 252...)
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+
+  const cc = String(countryCode || '').replace(/\D/g, '');
+
+  // Strip mistaken leading 0 immediately after known East Africa country codes (e.g. 25109... -> 2519..., 252063... -> 25263...)
+  if (/^(251|252|253|254)0\d{7,10}$/.test(digits)) {
+    digits = digits.slice(0, 3) + digits.slice(4);
+  }
+
+  // Already has an explicit international country code (251/252/253/254 or >=11 digits not starting with 0)
+  if (/^251[79]\d{8}$/.test(digits)) return digits;
+  if (/^252[679]\d{7,8}$/.test(digits)) return digits;
+  if (/^254[17]\d{8}$/.test(digits)) return digits;
+  if (/^2537\d{7}$/.test(digits)) return digits;
+
+  // If user selected an explicit country code in the UI
+  if (cc) {
+    if (digits.startsWith(cc) && digits.length >= cc.length + 7) {
+      // Also clean stray 0 right after cc (e.g. cc=251, digits=2510912345678)
+      if (digits[cc.length] === '0' && digits.length >= cc.length + 8) {
+        return cc + digits.slice(cc.length + 1);
+      }
+      return digits;
+    }
+    const localNoZero = digits.startsWith('0') ? digits.slice(1) : digits;
+    return cc + localNoZero;
+  }
+
+  // Auto-detect when no explicit countryCode was provided:
+  // Ethiopia (+251): local 09[1-9]xxxxxxx (10 digits) or 9[1-9]xxxxxxx (9 digits)
+  // Note: Somalia Puntland Golis is 090xxxxxxx (so 090 stays 252, while 091..099 is Ethiopia 251!)
+  if (/^09[1-9]\d{7}$/.test(digits)) {
+    return '251' + digits.slice(1);
+  }
+  if (/^9[1-9]\d{7}$/.test(digits)) {
+    return '251' + digits;
+  }
+
+  // Somalia / Somaliland (+252): local 06x / 077 / 090 (10 digits) or 9-digit without leading 0
+  if (/^0(?:6\d|77|90)\d{7}$/.test(digits)) {
+    return '252' + digits.slice(1);
+  }
+  if (/^(?:6\d|77|90)\d{7}$/.test(digits)) {
+    return '252' + digits;
+  }
+
+  // Local 07xxxxxxxx (if not 077 Somalia): default to Ethiopia +251 Safaricom if 10 digits
+  if (/^07\d{8}$/.test(digits)) {
+    return '251' + digits.slice(1);
+  }
+
+  return digits;
 }
 
 /**
  * ViewsHubService — Zero-Ban WhatsApp Status Views & 1-Click .vcf Contact Exchange Hub
  *
- * Stores contacts, VIP Pinned sponsors, batch progression, and download metrics directly
- * inside the Owner SQLite database so CloudStateSync (Neon Postgres) preserves all data
- * automatically across Render restarts/deployments.
+ * Stores contacts, VIP Pinned sponsors, batch progression, download tracking, and verified savers
+ * inside the Owner SQLite database so CloudStateSync (Neon Postgres) persists all data automatically.
  */
 export class ViewsHubService {
   private readonly getDb: () => DatabaseSync | null;
@@ -104,7 +192,7 @@ export class ViewsHubService {
   private db(): DatabaseSync {
     const conn = this.getDb();
     if (!conn) {
-      throw new Error('ViewsHub database is not initialized');
+      throw new ViewsHubError('ViewsHub database is not initialized', 503, 'DB_NOT_READY');
     }
     if (!this.initialized) {
       this.initializeSchema(conn);
@@ -135,6 +223,10 @@ export class ViewsHubService {
         vip_priority INTEGER DEFAULT 100,
         vip_expires_at INTEGER DEFAULT NULL,
         downloads_count INTEGER DEFAULT 0,
+        has_downloaded INTEGER DEFAULT 0,
+        last_downloaded_at INTEGER DEFAULT NULL,
+        verified_saver INTEGER DEFAULT 0,
+        verified_at INTEGER DEFAULT NULL,
         referrals_count INTEGER DEFAULT 0,
         referred_by TEXT DEFAULT '',
         status TEXT DEFAULT 'active',
@@ -152,6 +244,8 @@ export class ViewsHubService {
         contact_prefix TEXT DEFAULT 'CV - ',
         current_batch INTEGER DEFAULT 1,
         batch_target INTEGER DEFAULT 100,
+        download_mode TEXT DEFAULT 'instant',
+        unlocked_batches TEXT DEFAULT '[]',
         owner_vip_phone TEXT DEFAULT '',
         vip_price_label TEXT DEFAULT '$5 / Bil',
         announcement TEXT DEFAULT '',
@@ -160,6 +254,23 @@ export class ViewsHubService {
       );
     `);
 
+    // Safe forward migrations for existing databases deployed on Render
+    const contactMigrations = [
+      'ALTER TABLE views_hub_contacts ADD COLUMN has_downloaded INTEGER DEFAULT 0;',
+      'ALTER TABLE views_hub_contacts ADD COLUMN last_downloaded_at INTEGER DEFAULT NULL;',
+      'ALTER TABLE views_hub_contacts ADD COLUMN verified_saver INTEGER DEFAULT 0;',
+      'ALTER TABLE views_hub_contacts ADD COLUMN verified_at INTEGER DEFAULT NULL;',
+      "ALTER TABLE views_hub_config ADD COLUMN download_mode TEXT DEFAULT 'instant';",
+      "ALTER TABLE views_hub_config ADD COLUMN unlocked_batches TEXT DEFAULT '[]';",
+    ];
+    for (const sql of contactMigrations) {
+      try {
+        conn.exec(sql);
+      } catch {
+        // Column already exists
+      }
+    }
+
     const existingCfg = conn
       .prepare('SELECT id FROM views_hub_config WHERE id = ?')
       .get('default') as { id?: string } | undefined;
@@ -167,8 +278,9 @@ export class ViewsHubService {
     if (!existingCfg) {
       conn
         .prepare(
-          `INSERT INTO views_hub_config (id, hub_title, contact_prefix, current_batch, batch_target, owner_vip_phone, vip_price_label, announcement, total_vcf_downloads, updated_at)
-           VALUES ('default', 'CARDOSO Views Hub', 'CV - ', 1, 100, ?, '$5 / Bil', '', 0, ?)`
+          `INSERT INTO views_hub_config
+           (id, hub_title, contact_prefix, current_batch, batch_target, download_mode, unlocked_batches, owner_vip_phone, vip_price_label, announcement, total_vcf_downloads, updated_at)
+           VALUES ('default', 'CARDOSO Views Hub', 'CV - ', 1, 100, 'instant', '[]', ?, '$5 / Bil', '', 0, ?)`
         )
         .run(this.defaultOwnerPhone || '', Date.now());
     }
@@ -193,12 +305,26 @@ export class ViewsHubService {
       vipPriority: Number(row.vip_priority ?? 100),
       vipExpiresAt: expiresAt,
       downloadsCount: Number(row.downloads_count || 0),
+      hasDownloaded: Boolean(row.has_downloaded),
+      lastDownloadedAt: row.last_downloaded_at != null ? Number(row.last_downloaded_at) : null,
+      verifiedSaver: Boolean(row.verified_saver),
+      verifiedAt: row.verified_at != null ? Number(row.verified_at) : null,
       referralsCount: Number(row.referrals_count || 0),
       referredBy: String(row.referred_by || ''),
       status: row.status === 'banned' ? 'banned' : 'active',
       createdAt: Number(row.created_at || 0),
       updatedAt: Number(row.updated_at || 0),
     };
+  }
+
+  private parseUnlockedBatches(raw: unknown): number[] {
+    try {
+      const arr = JSON.parse(String(raw || '[]'));
+      if (Array.isArray(arr)) {
+        return Array.from(new Set(arr.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n >= 1))).sort((a, b) => a - b);
+      }
+    } catch {}
+    return [];
   }
 
   public getConfig(): ViewsHubConfig {
@@ -210,6 +336,8 @@ export class ViewsHubService {
         contactPrefix: 'CV - ',
         currentBatch: 1,
         batchTarget: 100,
+        downloadMode: 'instant',
+        unlockedBatches: [],
         ownerVipPhone: this.defaultOwnerPhone,
         vipPriceLabel: '$5 / Bil',
         announcement: '',
@@ -221,7 +349,9 @@ export class ViewsHubService {
       hubTitle: String(row.hub_title || 'CARDOSO Views Hub'),
       contactPrefix: String(row.contact_prefix ?? 'CV - '),
       currentBatch: Math.max(1, Number(row.current_batch || 1)),
-      batchTarget: Math.max(10, Number(row.batch_target || 100)),
+      batchTarget: Math.max(2, Number(row.batch_target || 100)),
+      downloadMode: row.download_mode === 'locked' ? 'locked' : 'instant',
+      unlockedBatches: this.parseUnlockedBatches(row.unlocked_batches),
       ownerVipPhone: String(row.owner_vip_phone || this.defaultOwnerPhone || ''),
       vipPriceLabel: String(row.vip_price_label || '$5 / Bil'),
       announcement: String(row.announcement || ''),
@@ -230,14 +360,43 @@ export class ViewsHubService {
     };
   }
 
+  public getBatchFreeCount(batchNumber: number): number {
+    const conn = this.db();
+    const row = conn
+      .prepare('SELECT COUNT(*) as cnt FROM views_hub_contacts WHERE status = ? AND batch_number = ? AND is_vip = 0')
+      .get('active', batchNumber) as { cnt?: number };
+    return Number(row?.cnt || 0);
+  }
+
+  public isBatchDownloadUnlocked(batchNumber: number, cfgOverride?: ViewsHubConfig): boolean {
+    const cfg = cfgOverride || this.getConfig();
+    if (cfg.downloadMode === 'instant') return true;
+    // Past completed batches (< currentBatch) are always unlocked
+    if (batchNumber < cfg.currentBatch) return true;
+    if (cfg.unlockedBatches.includes(batchNumber)) return true;
+    return this.getBatchFreeCount(batchNumber) >= cfg.batchTarget;
+  }
+
   public updateConfig(partial: Partial<Omit<ViewsHubConfig, 'totalVcfDownloads' | 'updatedAt'>>): ViewsHubConfig {
     const conn = this.db();
     const current = this.getConfig();
+    const nextUnlocked =
+      partial.unlockedBatches !== undefined
+        ? Array.from(new Set(partial.unlockedBatches.map(Number).filter((n) => Number.isFinite(n) && n >= 1))).sort((a, b) => a - b)
+        : current.unlockedBatches;
+
     const next: ViewsHubConfig = {
       hubTitle: (partial.hubTitle ?? current.hubTitle).trim().slice(0, 80) || 'CARDOSO Views Hub',
       contactPrefix: String(partial.contactPrefix ?? current.contactPrefix).slice(0, 16),
       currentBatch: Math.max(1, Number(partial.currentBatch ?? current.currentBatch) || 1),
-      batchTarget: Math.max(10, Math.min(2000, Number(partial.batchTarget ?? current.batchTarget) || 100)),
+      batchTarget: Math.max(2, Math.min(2000, Number(partial.batchTarget ?? current.batchTarget) || 100)),
+      downloadMode:
+        partial.downloadMode === 'locked'
+          ? 'locked'
+          : partial.downloadMode === 'instant'
+          ? 'instant'
+          : current.downloadMode,
+      unlockedBatches: nextUnlocked,
       ownerVipPhone: partial.ownerVipPhone !== undefined ? normalizeViewsPhone(partial.ownerVipPhone) : current.ownerVipPhone,
       vipPriceLabel: (partial.vipPriceLabel ?? current.vipPriceLabel).trim().slice(0, 40) || '$5 / Bil',
       announcement: (partial.announcement ?? current.announcement).trim().slice(0, 260),
@@ -249,7 +408,8 @@ export class ViewsHubService {
       .prepare(
         `UPDATE views_hub_config
          SET hub_title = ?, contact_prefix = ?, current_batch = ?, batch_target = ?,
-             owner_vip_phone = ?, vip_price_label = ?, announcement = ?, updated_at = ?
+             download_mode = ?, unlocked_batches = ?, owner_vip_phone = ?,
+             vip_price_label = ?, announcement = ?, updated_at = ?
          WHERE id = 'default'`
       )
       .run(
@@ -257,6 +417,8 @@ export class ViewsHubService {
         next.contactPrefix,
         next.currentBatch,
         next.batchTarget,
+        next.downloadMode,
+        JSON.stringify(next.unlockedBatches),
         next.ownerVipPhone,
         next.vipPriceLabel,
         next.announcement,
@@ -266,24 +428,84 @@ export class ViewsHubService {
     return next;
   }
 
+  public unlockBatch(batchNumber?: number): ViewsHubConfig {
+    const cfg = this.getConfig();
+    const target = batchNumber || cfg.currentBatch;
+    const nextUnlocked = Array.from(new Set([...cfg.unlockedBatches, target]));
+    return this.updateConfig({ unlockedBatches: nextUnlocked });
+  }
+
+  /**
+   * Strict batch rule: a new batch CANNOT be opened manually until the current batch reaches batchTarget.
+   * When a batch hits batchTarget during signup, it already opens the next batch automatically!
+   */
   public startNewBatch(): ViewsHubConfig {
     const cfg = this.getConfig();
-    return this.updateConfig({ currentBatch: cfg.currentBatch + 1 });
+    const currentCount = this.getBatchFreeCount(cfg.currentBatch);
+    if (currentCount < cfg.batchTarget) {
+      throw new ViewsHubError(
+        `⛔ Batch #${cfg.currentBatch} weli ma buuxsamin (${currentCount} / ${cfg.batchTarget} Qof)! Batch cusub lama furi karo ilaa uu buuxsamo — marka ${cfg.batchTarget} la gaaro si toos ah ayuu Batch #${cfg.currentBatch + 1} u furmayaa.`,
+        400,
+        'BATCH_NOT_FULL'
+      );
+    }
+    const nextUnlocked = Array.from(new Set([...cfg.unlockedBatches, cfg.currentBatch]));
+    return this.updateConfig({
+      currentBatch: cfg.currentBatch + 1,
+      unlockedBatches: nextUnlocked,
+    });
+  }
+
+  public lookupContactByPhone(rawPhone: string, countryCode?: string): ViewsHubContact {
+    const conn = this.db();
+    const phone = normalizeViewsPhone(rawPhone, countryCode);
+    if (!phone || phone.length < 9 || phone.length > 15) {
+      throw new ViewsHubError('Fadlan geli lambar WhatsApp sax ah (252 / 251 / 254...).', 400, 'INVALID_PHONE');
+    }
+    const row = conn.prepare('SELECT * FROM views_hub_contacts WHERE phone = ?').get(phone) as any;
+    if (!row) {
+      throw new ViewsHubError(
+        'Lambarkan weli kama diiwaangashana Views Hub — fadlan marka hore isdiiwaangeli.',
+        404,
+        'NOT_FOUND'
+      );
+    }
+    if (row.status === 'banned') {
+      throw new ViewsHubError('Lambarkan waa laga mamnuucay Hub-ka.', 403, 'BANNED');
+    }
+    return this.mapContact(row);
   }
 
   public joinContact(input: JoinViewsInput): {
-    alreadyJoined: boolean;
     contact: ViewsHubContact;
-    batchRolledOver: boolean;
+    batchCompleted: boolean;
+    nextBatchOpened: number | null;
   } {
     const conn = this.db();
     const displayName = String(input.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-    const phone = normalizeViewsPhone(input.phone);
+    const phone = normalizeViewsPhone(input.phone, input.countryCode);
     if (!displayName || displayName.length < 2) {
-      throw new Error('Fadlan geli magacaaga oo sax ah (ugu yaraan 2 xaraf).');
+      throw new ViewsHubError('Fadlan geli magacaaga oo sax ah (ugu yaraan 2 xaraf).', 400, 'INVALID_NAME');
     }
     if (!phone || phone.length < 9 || phone.length > 15) {
-      throw new Error('Fadlan geli lambar WhatsApp sax ah (tusaale: 0634xxxxxx ama 25261xxxxxxx).');
+      throw new ViewsHubError(
+        'Fadlan geli lambar WhatsApp sax ah (tusaale: +252 63..., +251 91..., +254 7...).',
+        400,
+        'INVALID_PHONE'
+      );
+    }
+
+    // Strict Duplicate Protection: same phone can NEVER be registered twice!
+    const existing = conn.prepare('SELECT * FROM views_hub_contacts WHERE phone = ?').get(phone) as any;
+    if (existing) {
+      if (existing.status === 'banned') {
+        throw new ViewsHubError('Lambarkan waa laga mamnuucay Hub-ka.', 403, 'BANNED');
+      }
+      throw new ViewsHubError(
+        `⚠️ Lambarkan (+${phone}) horay ayaa loo diiwaangeliyay! Hal lambar laba jeer lama kaydin karo — guji "🔑 Horay Ma Isku Diiwaangelisay?" si aad .vcf-kaaga u furto.`,
+        409,
+        'DUPLICATE_PHONE'
+      );
     }
 
     const city = String(input.city || 'Hargeysa').trim().slice(0, 40) || 'Hargeysa';
@@ -292,48 +514,25 @@ export class ViewsHubService {
     const refPhone = normalizeViewsPhone(input.referredBy || '');
     const now = Date.now();
 
-    const existing = conn.prepare('SELECT * FROM views_hub_contacts WHERE phone = ?').get(phone) as any;
-    if (existing) {
-      if (existing.status === 'banned') {
-        throw new Error('Lambarkan waa laga mamnuucay Hub-ka.');
-      }
-      conn
-        .prepare(
-          `UPDATE views_hub_contacts
-           SET display_name = ?, city = ?, category = ?,
-               tagline = CASE WHEN ? <> '' THEN ? ELSE tagline END,
-               updated_at = ?
-           WHERE id = ?`
-        )
-        .run(displayName, city, category, tagline, tagline, now, existing.id);
-      const updated = conn.prepare('SELECT * FROM views_hub_contacts WHERE id = ?').get(existing.id) as any;
-      return {
-        alreadyJoined: true,
-        contact: this.mapContact(updated),
-        batchRolledOver: false,
-      };
-    }
-
     const cfg = this.getConfig();
     let assignedBatch = cfg.currentBatch;
-    let batchRolledOver = false;
 
-    const currentCountRow = conn
-      .prepare('SELECT COUNT(*) as cnt FROM views_hub_contacts WHERE status = ? AND batch_number = ? AND is_vip = 0')
-      .get('active', assignedBatch) as { cnt?: number };
-
-    if ((currentCountRow?.cnt || 0) >= cfg.batchTarget) {
-      assignedBatch = cfg.currentBatch + 1;
-      this.updateConfig({ currentBatch: assignedBatch });
-      batchRolledOver = true;
+    // Guard in case currentBatch already filled (e.g. target lowered by admin): advance first
+    const countBefore = this.getBatchFreeCount(assignedBatch);
+    if (countBefore >= cfg.batchTarget) {
+      const nextUnlocked = Array.from(new Set([...cfg.unlockedBatches, assignedBatch]));
+      assignedBatch = assignedBatch + 1;
+      this.updateConfig({ currentBatch: assignedBatch, unlockedBatches: nextUnlocked });
     }
 
     const validRef = refPhone && refPhone !== phone ? refPhone : '';
     const insertRes = conn
       .prepare(
         `INSERT INTO views_hub_contacts
-         (phone, display_name, city, category, tagline, avatar_url, batch_number, is_vip, vip_priority, vip_expires_at, downloads_count, referrals_count, referred_by, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '', ?, 0, 100, NULL, 0, 0, ?, 'active', ?, ?)`
+         (phone, display_name, city, category, tagline, avatar_url, batch_number, is_vip, vip_priority, vip_expires_at,
+          downloads_count, has_downloaded, last_downloaded_at, verified_saver, verified_at,
+          referrals_count, referred_by, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, '', ?, 0, 100, NULL, 0, 0, NULL, 0, NULL, 0, ?, 'active', ?, ?)`
       )
       .run(phone, displayName, city, category, tagline, assignedBatch, validRef, now, now);
 
@@ -343,26 +542,56 @@ export class ViewsHubService {
         .run(now, validRef);
     }
 
+    // Check if THIS signup just filled the current batch -> auto-unlock it & auto-open next batch!
+    const countAfter = this.getBatchFreeCount(assignedBatch);
+    let batchCompleted = false;
+    let nextBatchOpened: number | null = null;
+    if (countAfter >= cfg.batchTarget) {
+      batchCompleted = true;
+      nextBatchOpened = assignedBatch + 1;
+      const latestCfg = this.getConfig();
+      const nextUnlocked = Array.from(new Set([...latestCfg.unlockedBatches, assignedBatch]));
+      this.updateConfig({
+        currentBatch: nextBatchOpened,
+        unlockedBatches: nextUnlocked,
+      });
+    }
+
     const inserted = conn
       .prepare('SELECT * FROM views_hub_contacts WHERE id = ?')
       .get(Number(insertRes.lastInsertRowid)) as any;
 
     return {
-      alreadyJoined: false,
       contact: this.mapContact(inserted),
-      batchRolledOver,
+      batchCompleted,
+      nextBatchOpened,
     };
+  }
+
+  public markVerifiedSaver(rawPhone: string, countryCode?: string): ViewsHubContact {
+    const conn = this.db();
+    const phone = normalizeViewsPhone(rawPhone, countryCode);
+    const existing = conn.prepare('SELECT * FROM views_hub_contacts WHERE phone = ?').get(phone) as any;
+    if (!existing) {
+      throw new ViewsHubError('Lambarkan kama diiwaangashana Hub-ka.', 404, 'NOT_FOUND');
+    }
+    const now = Date.now();
+    conn
+      .prepare('UPDATE views_hub_contacts SET verified_saver = 1, verified_at = ?, updated_at = ? WHERE id = ?')
+      .run(now, now, existing.id);
+    const updated = conn.prepare('SELECT * FROM views_hub_contacts WHERE id = ?').get(existing.id) as any;
+    return this.mapContact(updated);
   }
 
   public upsertVipContact(input: UpsertVipInput): ViewsHubContact {
     const conn = this.db();
     const displayName = String(input.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-    const phone = normalizeViewsPhone(input.phone);
+    const phone = normalizeViewsPhone(input.phone, input.countryCode);
     if (!displayName || displayName.length < 2) {
-      throw new Error('Magaca VIP-ga waa waajib.');
+      throw new ViewsHubError('Magaca VIP-ga waa waajib.', 400, 'INVALID_NAME');
     }
     if (!phone || phone.length < 9 || phone.length > 15) {
-      throw new Error('Lambarka WhatsApp ee VIP-gu ma saxna.');
+      throw new ViewsHubError('Lambarka WhatsApp ee VIP-gu ma saxna (+252 / +251...).', 400, 'INVALID_PHONE');
     }
 
     const city = String(input.city || 'Hargeysa').trim().slice(0, 40) || 'Hargeysa';
@@ -370,7 +599,7 @@ export class ViewsHubService {
     const tagline = String(input.tagline || '').trim().slice(0, 140);
     const avatarUrl = String(input.avatarUrl || '').trim();
     if (avatarUrl && avatarUrl.length > 250_000) {
-      throw new Error('Sawirka VIP-gu aad buu u weyn yahay — fadlan mid ka yar soo geli.');
+      throw new ViewsHubError('Sawirka VIP-gu aad buu u weyn yahay — fadlan mid ka yar soo geli.', 400, 'IMAGE_TOO_LARGE');
     }
     const vipPriority = Math.max(1, Math.min(999, Number(input.vipPriority ?? 10) || 10));
     const days = Number(input.durationDays ?? 30);
@@ -407,10 +636,12 @@ export class ViewsHubService {
     const res = conn
       .prepare(
         `INSERT INTO views_hub_contacts
-         (phone, display_name, city, category, tagline, avatar_url, batch_number, is_vip, vip_priority, vip_expires_at, downloads_count, referrals_count, referred_by, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, '', 'active', ?, ?)`
+         (phone, display_name, city, category, tagline, avatar_url, batch_number, is_vip, vip_priority, vip_expires_at,
+          downloads_count, has_downloaded, last_downloaded_at, verified_saver, verified_at,
+          referrals_count, referred_by, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, NULL, 1, ?, 0, '', 'active', ?, ?)`
       )
-      .run(phone, displayName, city, category, tagline, avatarUrl, cfg.currentBatch, vipPriority, vipExpiresAt, now, now);
+      .run(phone, displayName, city, category, tagline, avatarUrl, cfg.currentBatch, vipPriority, vipExpiresAt, now, now, now);
 
     const inserted = conn.prepare('SELECT * FROM views_hub_contacts WHERE id = ?').get(Number(res.lastInsertRowid)) as any;
     return this.mapContact(inserted);
@@ -418,7 +649,7 @@ export class ViewsHubService {
 
   public updateContactAdmin(
     id: number,
-    patch: { isVip?: boolean; durationDays?: number; vipPriority?: number; status?: 'active' | 'banned' }
+    patch: { isVip?: boolean; durationDays?: number; vipPriority?: number; status?: 'active' | 'banned'; verifiedSaver?: boolean }
   ): ViewsHubContact | null {
     const conn = this.db();
     const existing = conn.prepare('SELECT * FROM views_hub_contacts WHERE id = ?').get(id) as any;
@@ -441,14 +672,17 @@ export class ViewsHubService {
     const nextPriority =
       patch.vipPriority !== undefined ? Math.max(1, Math.min(999, Number(patch.vipPriority) || 10)) : existing.vip_priority;
     const nextStatus = patch.status === 'banned' ? 'banned' : patch.status === 'active' ? 'active' : existing.status;
+    const nextVerified = patch.verifiedSaver !== undefined ? (patch.verifiedSaver ? 1 : 0) : existing.verified_saver;
+    const nextVerifiedAt = patch.verifiedSaver ? now : existing.verified_at;
 
     conn
       .prepare(
         `UPDATE views_hub_contacts
-         SET is_vip = ?, vip_expires_at = ?, vip_priority = ?, status = ?, updated_at = ?
+         SET is_vip = ?, vip_expires_at = ?, vip_priority = ?, status = ?,
+             verified_saver = ?, verified_at = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(nextIsVip, nextExpires, nextPriority, nextStatus, now, id);
+      .run(nextIsVip, nextExpires, nextPriority, nextStatus, nextVerified, nextVerifiedAt, now, id);
 
     const updated = conn.prepare('SELECT * FROM views_hub_contacts WHERE id = ?').get(id) as any;
     return updated ? this.mapContact(updated) : null;
@@ -465,8 +699,13 @@ export class ViewsHubService {
     stats: {
       totalContacts: number;
       activeVipCount: number;
+      currentBatchFreeCount: number;
       currentBatchCount: number;
       batchTarget: number;
+      canStartNextBatch: boolean;
+      currentBatchUnlocked: boolean;
+      downloadedMembersCount: number;
+      verifiedSaversCount: number;
       totalDownloads: number;
     };
     contacts: ViewsHubContact[];
@@ -480,15 +719,21 @@ export class ViewsHubService {
     const contacts = rows.map((r) => this.mapContact(r));
     const activeContacts = contacts.filter((c) => c.status === 'active');
     const activeVips = activeContacts.filter((c) => c.isVip);
-    const currentBatchCount = activeContacts.filter((c) => c.batchNumber === cfg.currentBatch || c.isVip).length;
+    const currentBatchFreeCount = activeContacts.filter((c) => !c.isVip && c.batchNumber === cfg.currentBatch).length;
+    const currentBatchCount = currentBatchFreeCount + activeVips.length;
 
     return {
       config: cfg,
       stats: {
         totalContacts: activeContacts.length,
         activeVipCount: activeVips.length,
+        currentBatchFreeCount,
         currentBatchCount,
         batchTarget: cfg.batchTarget,
+        canStartNextBatch: currentBatchFreeCount >= cfg.batchTarget,
+        currentBatchUnlocked: this.isBatchDownloadUnlocked(cfg.currentBatch, cfg),
+        downloadedMembersCount: activeContacts.filter((c) => c.hasDownloaded).length,
+        verifiedSaversCount: activeContacts.filter((c) => c.verifiedSaver).length,
         totalDownloads: cfg.totalVcfDownloads,
       },
       contacts,
@@ -511,6 +756,25 @@ export class ViewsHubService {
     const currentBatchFreeCount = allActive.filter((c) => !c.isVip && c.batchNumber === cfg.currentBatch).length;
     const currentBatchTotalCount = currentBatchFreeCount + vips.length;
     const progressPct = Math.min(100, Math.round((currentBatchFreeCount / Math.max(1, cfg.batchTarget)) * 100));
+    const currentBatchUnlocked = this.isBatchDownloadUnlocked(cfg.currentBatch, cfg);
+
+    // Build batch list (completed batches + current batch) so users can download completed batches cleanly
+    const batchNums = new Set<number>([cfg.currentBatch]);
+    for (const c of allActive) {
+      if (!c.isVip && c.batchNumber >= 1) batchNums.add(c.batchNumber);
+    }
+    const batches = Array.from(batchNums)
+      .sort((a, b) => b - a)
+      .map((num) => {
+        const freeCount = allActive.filter((c) => !c.isVip && c.batchNumber === num).length;
+        return {
+          batchNumber: num,
+          freeCount,
+          totalWithVips: freeCount + vips.length,
+          isFull: freeCount >= cfg.batchTarget || num < cfg.currentBatch,
+          isUnlocked: this.isBatchDownloadUnlocked(num, cfg),
+        };
+      });
 
     const cityMap = new Map<string, number>();
     for (const c of allActive) {
@@ -533,9 +797,13 @@ export class ViewsHubService {
         currentBatchTotalCount,
         batchTarget: cfg.batchTarget,
         progressPct,
+        downloadMode: cfg.downloadMode,
+        currentBatchUnlocked,
         activeVipCount: vips.length,
+        verifiedSaversCount: allActive.filter((c) => c.verifiedSaver).length,
         totalDownloads: cfg.totalVcfDownloads,
         cities,
+        batches,
       },
       vips: vips.map((v) => ({
         id: v.id,
@@ -557,6 +825,8 @@ export class ViewsHubService {
         tagline: m.tagline,
         batchNumber: m.batchNumber,
         isVip: m.isVip,
+        hasDownloaded: m.hasDownloaded,
+        verifiedSaver: m.verifiedSaver,
         referralsCount: m.referralsCount,
         createdAt: m.createdAt,
       })),
@@ -564,9 +834,8 @@ export class ViewsHubService {
   }
 
   /**
-   * Generates a standards-compliant vCard 3.0 (.vcf) file with CRLF endings compatible
-   * with Android, Samsung, Xiaomi, and Apple iOS Contacts.
-   * VIP Pinned sponsors are ALWAYS placed at the very top of every batch file.
+   * Generates a standards-compliant vCard 3.0 (.vcf) file with stable UID per phone
+   * so Android & iPhone NEVER create duplicate contacts when re-importing batches.
    */
   public generateVcf(options?: {
     scope?: 'current' | 'all' | 'vip' | 'single';
@@ -574,12 +843,26 @@ export class ViewsHubService {
     city?: string;
     batch?: number;
     excludePhone?: string;
+    isAdminBypass?: boolean;
   }): { vcfText: string; filename: string; count: number; vipCount: number } {
     const conn = this.db();
     const cfg = this.getConfig();
     const scope = options?.scope || 'current';
     const cityFilter = String(options?.city || '').trim().toLowerCase();
-    const excludePhone = normalizeViewsPhone(options?.excludePhone || '');
+    const downloaderPhone = normalizeViewsPhone(options?.excludePhone || '');
+
+    // Enforce Batch Lock Mode for non-admin batch/all downloads (VIP & single VIP stay unlocked!)
+    if (!options?.isAdminBypass && cfg.downloadMode === 'locked' && (scope === 'current' || scope === 'all')) {
+      const targetBatch = options?.batch || cfg.currentBatch;
+      if (!this.isBatchDownloadUnlocked(targetBatch, cfg)) {
+        const countNow = this.getBatchFreeCount(targetBatch);
+        throw new ViewsHubError(
+          `🔒 Batch #${targetBatch} weli wuu xiran yahay (${countNow} / ${cfg.batchTarget} Qof). Markuu gaaro ${cfg.batchTarget} qof si toos ah ayuu u furmayaa — u dir asxaabtaada si degdeg loo furo!`,
+          423,
+          'BATCH_LOCKED'
+        );
+      }
+    }
 
     let selected: ViewsHubContact[] = [];
 
@@ -608,19 +891,37 @@ export class ViewsHubService {
           regular = regular.filter((c) => c.city.toLowerCase() === cityFilter);
         }
 
-        // VIP Pinned contacts ALWAYS go at the top of the file!
+        // VIP Pinned contacts ALWAYS appear at the very top!
         selected = [...activeVips, ...regular];
       }
     }
 
-    // Deduplicate by phone & optionally skip downloader's own phone
-    const seenPhones = new Set<string>();
-    const finalContacts: ViewsHubContact[] = [];
-    for (const c of selected) {
-      if (!c.phone || seenPhones.has(c.phone)) continue;
-      if (excludePhone && c.phone === excludePhone && scope !== 'single') continue;
-      seenPhones.add(c.phone);
-      finalContacts.push(c);
+    // Strictly deduplicate by normalized phone digits
+    const dedup = (skipSelf: boolean): ViewsHubContact[] => {
+      const seenPhones = new Set<string>();
+      const out: ViewsHubContact[] = [];
+      for (const c of selected) {
+        const norm = normalizeViewsPhone(c.phone);
+        if (!norm || seenPhones.has(norm)) continue;
+        if (skipSelf && downloaderPhone && norm === downloaderPhone && scope !== 'single') continue;
+        seenPhones.add(norm);
+        out.push({ ...c, phone: norm });
+      }
+      return out;
+    };
+
+    let finalContacts = dedup(true);
+    // Prevent 0-byte "Download failed" when only 1 contact exists in the pool so far
+    if (finalContacts.length === 0 && selected.length > 0) {
+      finalContacts = dedup(false);
+    }
+
+    if (finalContacts.length === 0) {
+      throw new ViewsHubError(
+        'Weli ma jiraan contacts ku jira qaybtan oo la soo dejiyo — fadlan u dir asxaabtaada ama dooro "Dhammaan Pool-ka".',
+        404,
+        'NO_CONTACTS'
+      );
     }
 
     const prefix = cfg.contactPrefix || 'CV - ';
@@ -637,10 +938,12 @@ export class ViewsHubService {
       const safeNote = escapeVCardText(noteParts.filter(Boolean).join(' - '));
       const org = c.isVip ? 'CARDOSO Views VIP' : 'CARDOSO Views Hub';
 
+      // Stable UID per phone ensures Android & iOS merge/update instead of creating duplicate phonebook entries!
       cards.push(
         [
           'BEGIN:VCARD',
           'VERSION:3.0',
+          `UID:cardoso-views-${c.phone}`,
           `N:;${safeName};;;`,
           `FN:${safeName}`,
           `TEL;TYPE=CELL,VOICE:+${c.phone}`,
@@ -651,16 +954,26 @@ export class ViewsHubService {
       );
     }
 
-    // Increment aggregate download counter + per-contact metric
-    if (finalContacts.length > 0) {
+    const now = Date.now();
+    conn
+      .prepare(`UPDATE views_hub_config SET total_vcf_downloads = total_vcf_downloads + 1, updated_at = ? WHERE id = 'default'`)
+      .run(now);
+
+    if (scope === 'single' && finalContacts[0]) {
       conn
-        .prepare(`UPDATE views_hub_config SET total_vcf_downloads = total_vcf_downloads + 1, updated_at = ? WHERE id = 'default'`)
-        .run(Date.now());
-      if (scope === 'single' && finalContacts[0]) {
-        conn
-          .prepare('UPDATE views_hub_contacts SET downloads_count = downloads_count + 1 WHERE id = ?')
-          .run(finalContacts[0].id);
-      }
+        .prepare('UPDATE views_hub_contacts SET downloads_count = downloads_count + 1 WHERE id = ?')
+        .run(finalContacts[0].id);
+    }
+
+    // Track per-member download so Admin Studio shows who actually downloaded the .vcf!
+    if (downloaderPhone) {
+      conn
+        .prepare(
+          `UPDATE views_hub_contacts
+           SET has_downloaded = 1, downloads_count = downloads_count + 1, last_downloaded_at = ?, updated_at = ?
+           WHERE phone = ?`
+        )
+        .run(now, now, downloaderPhone);
     }
 
     const safeCitySlug = cityFilter ? `_${cityFilter.replace(/[^a-z0-9]/gi, '')}` : '';
@@ -674,7 +987,7 @@ export class ViewsHubService {
         : `CARDOSO_Views_Batch_${options?.batch || cfg.currentBatch}${safeCitySlug}.vcf`;
 
     return {
-      vcfText: cards.join('\r\n') + (cards.length ? '\r\n' : ''),
+      vcfText: cards.join('\r\n') + '\r\n',
       filename,
       count: finalContacts.length,
       vipCount,

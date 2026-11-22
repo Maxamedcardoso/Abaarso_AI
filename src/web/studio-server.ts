@@ -11,7 +11,7 @@ import { StatusReactorService, statusReactorService } from '../services/status-r
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { MediaUrlDownloaderService } from '../services/media-url-downloader.service.js';
 import { PrayerTimesService } from '../services/prayer-times.service.js';
-import { ViewsHubService } from '../services/views-hub.service.js';
+import { ViewsHubError, ViewsHubService } from '../services/views-hub.service.js';
 import { AppConfig } from '../config/env.js';
 import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
 import { TenantManager } from '../tenants/tenant-manager.js';
@@ -171,20 +171,21 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/views/join', (req: Request, res: Response) => {
     try {
-      const { name, phone, city, category, tagline, referredBy } = req.body || {};
+      const { name, phone, countryCode, city, category, tagline, referredBy } = req.body || {};
       const result = viewsHub.joinContact({
         name: String(name || ''),
         phone: String(phone || ''),
+        countryCode: typeof countryCode === 'string' ? countryCode : undefined,
         city: typeof city === 'string' ? city : undefined,
         category: typeof category === 'string' ? category : undefined,
         tagline: typeof tagline === 'string' ? tagline : undefined,
         referredBy: typeof referredBy === 'string' ? referredBy : undefined,
       });
       tenantManager?.markTenantDirty('owner', ['db'], false);
-      res.status(result.alreadyJoined ? 200 : 201).json({
+      res.status(201).json({
         status: 'ok',
-        alreadyJoined: result.alreadyJoined,
-        batchRolledOver: result.batchRolledOver,
+        batchCompleted: result.batchCompleted,
+        nextBatchOpened: result.nextBatchOpened,
         contact: {
           id: result.contact.id,
           displayName: result.contact.displayName,
@@ -193,10 +194,72 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
           category: result.contact.category,
           batchNumber: result.contact.batchNumber,
           isVip: result.contact.isVip,
+          hasDownloaded: result.contact.hasDownloaded,
+          verifiedSaver: result.contact.verifiedSaver,
         },
       });
     } catch (err: any) {
-      res.status(400).json({ status: 'error', message: err.message || 'Isdiiwaangelinta Views Hub way fashilantay' });
+      const status = err instanceof ViewsHubError ? err.statusCode : 400;
+      res.status(status).json({
+        status: 'error',
+        code: err instanceof ViewsHubError ? err.code : 'JOIN_FAILED',
+        message: err.message || 'Isdiiwaangelinta Views Hub way fashilantay',
+      });
+    }
+  });
+
+  app.post('/api/views/lookup', (req: Request, res: Response) => {
+    try {
+      const { phone, countryCode } = req.body || {};
+      const contact = viewsHub.lookupContactByPhone(
+        String(phone || ''),
+        typeof countryCode === 'string' ? countryCode : undefined
+      );
+      res.json({
+        status: 'ok',
+        contact: {
+          id: contact.id,
+          displayName: contact.displayName,
+          phone: contact.phone,
+          city: contact.city,
+          category: contact.category,
+          batchNumber: contact.batchNumber,
+          isVip: contact.isVip,
+          hasDownloaded: contact.hasDownloaded,
+          verifiedSaver: contact.verifiedSaver,
+        },
+      });
+    } catch (err: any) {
+      const status = err instanceof ViewsHubError ? err.statusCode : 400;
+      res.status(status).json({
+        status: 'error',
+        code: err instanceof ViewsHubError ? err.code : 'LOOKUP_FAILED',
+        message: err.message || 'Lambarka lama helin',
+      });
+    }
+  });
+
+  app.post('/api/views/verify', (req: Request, res: Response) => {
+    try {
+      const { phone, countryCode } = req.body || {};
+      const contact = viewsHub.markVerifiedSaver(
+        String(phone || ''),
+        typeof countryCode === 'string' ? countryCode : undefined
+      );
+      tenantManager?.markTenantDirty('owner', ['db'], false);
+      res.json({
+        status: 'ok',
+        message: '✅ Waad ku mahadsan tahay! Xaqiijintaada waa la diiwaangeliyay.',
+        contact: {
+          id: contact.id,
+          displayName: contact.displayName,
+          phone: contact.phone,
+          verifiedSaver: contact.verifiedSaver,
+        },
+      });
+    } catch (err: any) {
+      const status = err instanceof ViewsHubError ? err.statusCode : 400;
+      res.status(status).json({ status: 'error', message: err.message });
     }
   });
 
@@ -216,19 +279,25 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         city,
         batch,
         excludePhone,
+        isAdminBypass: false,
       });
-      if (generated.count > 0) {
-        tenantManager?.markTenantDirty('owner', ['db'], false);
-      }
+      tenantManager?.markTenantDirty('owner', ['db'], false);
 
+      const vcfBuf = Buffer.from(generated.vcfText, 'utf8');
       res.setHeader('Content-Type', 'text/vcard; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${generated.filename}"`);
+      res.setHeader('Content-Length', String(vcfBuf.length));
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Contacts-Count', String(generated.count));
       res.setHeader('X-Vip-Count', String(generated.vipCount));
-      res.send(generated.vcfText);
+      res.send(vcfBuf);
     } catch (err: any) {
-      res.status(500).json({ status: 'error', message: err.message });
+      const status = err instanceof ViewsHubError ? err.statusCode : 500;
+      res.status(status).json({
+        status: 'error',
+        code: err instanceof ViewsHubError ? err.code : 'DOWNLOAD_FAILED',
+        message: err.message || 'Faylka .vcf lama soo dejin karin',
+      });
     }
   });
 
@@ -1151,10 +1220,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.post('/api/admin/views/vip', (req: Request, res: Response) => {
     try {
-      const { name, phone, city, category, tagline, avatarUrl, durationDays, vipPriority } = req.body || {};
+      const { name, phone, countryCode, city, category, tagline, avatarUrl, durationDays, vipPriority } = req.body || {};
       const contact = viewsHub.upsertVipContact({
         name: String(name || ''),
         phone: String(phone || ''),
+        countryCode: typeof countryCode === 'string' ? countryCode : undefined,
         city: typeof city === 'string' ? city : undefined,
         category: typeof category === 'string' ? category : undefined,
         tagline: typeof tagline === 'string' ? tagline : undefined,
@@ -1169,18 +1239,38 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         contact,
       });
     } catch (err: any) {
-      res.status(400).json({ status: 'error', message: err.message });
+      const status = err instanceof ViewsHubError ? err.statusCode : 400;
+      res.status(status).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.get('/api/admin/views/download.vcf', (req: Request, res: Response) => {
+    try {
+      const scopeRaw = String(req.query.scope || 'all').trim();
+      const scope: 'current' | 'all' | 'vip' | 'single' =
+        scopeRaw === 'current' || scopeRaw === 'vip' || scopeRaw === 'single' ? scopeRaw : 'all';
+      const generated = viewsHub.generateVcf({ scope, isAdminBypass: true });
+      const vcfBuf = Buffer.from(generated.vcfText, 'utf8');
+      res.setHeader('Content-Type', 'text/vcard; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${generated.filename}"`);
+      res.setHeader('Content-Length', String(vcfBuf.length));
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(vcfBuf);
+    } catch (err: any) {
+      const status = err instanceof ViewsHubError ? err.statusCode : 404;
+      res.status(status).json({ status: 'error', message: err.message });
     }
   });
 
   app.patch('/api/admin/views/contacts/:id', (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { isVip, durationDays, vipPriority, status } = req.body || {};
+      const { isVip, durationDays, vipPriority, status, verifiedSaver } = req.body || {};
       const updated = viewsHub.updateContactAdmin(id, {
         ...(isVip !== undefined ? { isVip: Boolean(isVip) } : {}),
         ...(durationDays !== undefined ? { durationDays: Number(durationDays) } : {}),
         ...(vipPriority !== undefined ? { vipPriority: Number(vipPriority) } : {}),
+        ...(verifiedSaver !== undefined ? { verifiedSaver: Boolean(verifiedSaver) } : {}),
         ...(status === 'active' || status === 'banned' ? { status } : {}),
       });
       if (!updated) {
@@ -1209,19 +1299,34 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
 
   app.put('/api/admin/views/config', (req: Request, res: Response) => {
     try {
-      const { hubTitle, contactPrefix, currentBatch, batchTarget, ownerVipPhone, vipPriceLabel, announcement } =
+      const { hubTitle, contactPrefix, batchTarget, downloadMode, ownerVipPhone, vipPriceLabel, announcement } =
         req.body || {};
       const updated = viewsHub.updateConfig({
         ...(hubTitle !== undefined ? { hubTitle: String(hubTitle) } : {}),
         ...(contactPrefix !== undefined ? { contactPrefix: String(contactPrefix) } : {}),
-        ...(currentBatch !== undefined ? { currentBatch: Number(currentBatch) } : {}),
         ...(batchTarget !== undefined ? { batchTarget: Number(batchTarget) } : {}),
+        ...(downloadMode === 'locked' || downloadMode === 'instant' ? { downloadMode } : {}),
         ...(ownerVipPhone !== undefined ? { ownerVipPhone: String(ownerVipPhone) } : {}),
         ...(vipPriceLabel !== undefined ? { vipPriceLabel: String(vipPriceLabel) } : {}),
         ...(announcement !== undefined ? { announcement: String(announcement) } : {}),
       });
       tenantManager?.markTenantDirty('owner', ['db'], true);
       res.json({ status: 'ok', config: updated, message: '✅ Dejinta Views Hub waa la keydiyay!' });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/admin/views/unlock-batch', (req: Request, res: Response) => {
+    try {
+      const batchNumber = req.body?.batchNumber ? Number(req.body.batchNumber) : undefined;
+      const updated = viewsHub.unlockBatch(batchNumber);
+      tenantManager?.markTenantDirty('owner', ['db'], true);
+      res.json({
+        status: 'ok',
+        config: updated,
+        message: `🔓 Batch #${batchNumber || updated.currentBatch} waa la furay — dadku hadda .vcf way soo dejin karaan!`,
+      });
     } catch (err: any) {
       res.status(400).json({ status: 'error', message: err.message });
     }
@@ -1237,7 +1342,12 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         message: `📦 Batch cusub (#${updated.currentBatch}) waa la bilaabay!`,
       });
     } catch (err: any) {
-      res.status(500).json({ status: 'error', message: err.message });
+      const status = err instanceof ViewsHubError ? err.statusCode : 500;
+      res.status(status).json({
+        status: 'error',
+        code: err instanceof ViewsHubError ? err.code : 'NEW_BATCH_FAILED',
+        message: err.message,
+      });
     }
   });
 
