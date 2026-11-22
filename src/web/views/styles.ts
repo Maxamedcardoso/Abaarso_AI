@@ -1,3 +1,7 @@
+import { PWA_HEAD_TAGS, PWA_INSTALL_CLIENT_JS } from '../pwa-assets.js';
+
+export { PWA_HEAD_TAGS, PWA_INSTALL_CLIENT_JS };
+
 export const SAAS_STYLES = `
   :root {
     --bg: #070b14;
@@ -432,5 +436,5 @@ export const COMMON_CLIENT_JS = `
     document.body.removeChild(a);
     setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
   }
-`;
+` + PWA_INSTALL_CLIENT_JS;
 

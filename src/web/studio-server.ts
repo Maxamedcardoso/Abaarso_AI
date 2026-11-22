@@ -10,16 +10,25 @@ import { WhatsAppManagerService, whatsappManagerService } from '../services/what
 import { StatusReactorService, statusReactorService } from '../services/status-reactor.service.js';
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { MediaUrlDownloaderService } from '../services/media-url-downloader.service.js';
+import { PrayerTimesService } from '../services/prayer-times.service.js';
 import { AppConfig } from '../config/env.js';
 import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
 import { TenantManager } from '../tenants/tenant-manager.js';
 import { normalizeSubscriptionPhone, TenantRecord } from '../tenants/tenant-registry.js';
 import { getCategoryStarterTemplate } from '../tenants/tenant-templates.js';
+import {
+  buildWebManifest,
+  getAppIconPng,
+  getAppIconSvg,
+  getServiceWorkerJS,
+  renderOfflineHTML,
+} from './pwa-assets.js';
 import { renderJoinHTML } from './views/join-page.js';
 import { renderClientPortalHTML } from './views/client-page.js';
 import { renderAdminDashboardHTML } from './views/admin-page.js';
 import { renderPortalLoginHTML } from './views/portal-login-page.js';
 import { renderAdminLoginHTML } from './views/admin-login-page.js';
+import { renderPwaAppHTML } from './views/app-page.js';
 
 export interface StudioServerOptions {
   port: number | string;
@@ -92,8 +101,8 @@ function sanitizePlanTier(raw: any, fallback: PlanTier = 'trial_free'): PlanTier
 
 export function createStudioServer(options: StudioServerOptions): http.Server {
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   const { config, tenantManager } = options;
   const studioPassword = options.studioPasswordOverride ?? (process.env.STUDIO_PASSWORD ? process.env.STUDIO_PASSWORD : 'maxamed11@');
@@ -131,7 +140,314 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     };
   };
 
-  // ─── 1. Public Health & Self-Signup Endpoints (No Admin Password) ──────────
+  // ─── 1. Public Health, Installable PWA App & Self-Signup Endpoints ─────────
+  const prayerTimesService = new PrayerTimesService();
+
+  const resolveAppTarget = async (tenantIdRaw?: unknown, tokenRaw?: unknown) => {
+    const tid = String(tenantIdRaw || '').trim();
+    const tok = String(tokenRaw || '').trim();
+    if (tid && tok && tenantManager) {
+      const tenant = tenantManager.registry.getTenant(tid);
+      if (tenant && tenant.accessToken === tok && tenant.status === 'active') {
+        const ctx = await tenantManager.mountTenant(tenant, false);
+        return {
+          tenantId: tenant.id,
+          memory: ctx.memory,
+          engine: ctx.engine,
+          transport: ctx.transport,
+          botFallbackName: tenant.name || 'CARDOSO AI',
+        };
+      }
+    }
+    const owner = getOwnerRefs();
+    return {
+      tenantId: 'owner',
+      memory: owner.memory,
+      engine: owner.engine,
+      transport: owner.transport,
+      botFallbackName: 'CARDOSO AI',
+    };
+  };
+
+  app.get('/manifest.webmanifest', async (req: Request, res: Response) => {
+    let botName = 'CARDOSO AI — Smart Assistant App';
+    try {
+      const { memory } = getOwnerRefs();
+      const cfg = await memory.getBotConfig();
+      if (cfg?.botName && cfg.botName.trim()) {
+        botName = `${cfg.botName.trim()} — Smart App`;
+      }
+    } catch {}
+    res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.send(JSON.stringify(buildWebManifest({ name: botName })));
+  });
+
+  app.get('/sw.js', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Service-Worker-Allowed', '/');
+    res.send(getServiceWorkerJS());
+  });
+
+  app.get('/pwa/icon.svg', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getAppIconSvg());
+  });
+
+  app.get('/pwa/icon-192.png', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getAppIconPng(192, false));
+  });
+
+  app.get('/pwa/icon-512.png', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getAppIconPng(512, false));
+  });
+
+  app.get('/pwa/icon-512-maskable.png', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getAppIconPng(512, true));
+  });
+
+  app.get('/pwa/apple-touch-icon.png', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(getAppIconPng(180, true));
+  });
+
+  app.get('/pwa/offline', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderOfflineHTML());
+  });
+
+  app.get('/app', async (req: Request, res: Response) => {
+    const tenantId = typeof req.query.tenant === 'string' ? req.query.tenant.trim() : '';
+    const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+    const target = await resolveAppTarget(tenantId, token);
+    let botName = target.botFallbackName;
+    let businessName = '';
+    try {
+      const cfg = await target.memory.getBotConfig();
+      if (cfg?.botName?.trim()) botName = cfg.botName.trim();
+      if (cfg?.businessName?.trim()) businessName = cfg.businessName.trim();
+    } catch {}
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(
+      renderPwaAppHTML({
+        botName,
+        businessName,
+        tenantId: target.tenantId === 'owner' ? '' : target.tenantId,
+        tenantToken: target.tenantId === 'owner' ? '' : token,
+        mode: config.messaging.mode,
+      })
+    );
+  });
+
+  app.get('/api/app/bootstrap', async (req: Request, res: Response) => {
+    try {
+      const target = await resolveAppTarget(req.query.tenantId, req.query.token);
+      let botName = target.botFallbackName;
+      let businessName = '';
+      try {
+        const cfg = await target.memory.getBotConfig();
+        if (cfg?.botName?.trim()) botName = cfg.botName.trim();
+        if (cfg?.businessName?.trim()) businessName = cfg.businessName.trim();
+      } catch {}
+      res.json({
+        status: 'ok',
+        botName,
+        businessName,
+        tenantId: target.tenantId,
+        mode: config.messaging.mode,
+        whatsappConnected: Boolean(target.transport?.isConnected),
+        capabilities: {
+          chat: true,
+          voiceTts: true,
+          visionUpload: true,
+          prayerTimes: true,
+          pwaInstallable: true,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.get('/api/app/prayer-times', (_req: Request, res: Response) => {
+    const eat = prayerTimesService.getEATDate();
+    const schedule = prayerTimesService.getTodaySchedule(eat);
+    const nowMinutes = eat.getHours() * 60 + eat.getMinutes();
+    let nextPrayer = schedule.prayers.find((p) => p.hour * 60 + p.minute > nowMinutes);
+    if (!nextPrayer) nextPrayer = schedule.prayers[0];
+
+    res.json({
+      status: 'ok',
+      dateStr: schedule.dateStr,
+      currentTimeEAT: prayerTimesService.formatTime(eat.getHours(), eat.getMinutes()),
+      nextPrayerKey: nextPrayer?.key || 'fajr',
+      prayers: schedule.prayers.map((p) => ({
+        key: p.key,
+        somaliName: p.somaliName,
+        arabicName: p.arabicName,
+        timeStr: prayerTimesService.formatTime(p.hour, p.minute),
+      })),
+      featuredAyah: nextPrayer
+        ? {
+            prayerName: nextPrayer.somaliName,
+            arabic: nextPrayer.quranAyahArabic,
+            somali: nextPrayer.quranAyahSomali,
+            ref: nextPrayer.quranSurahRef,
+          }
+        : null,
+    });
+  });
+
+  app.get('/api/app/history', async (req: Request, res: Response) => {
+    try {
+      const rawSessionId = String(req.query.sessionId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+      if (!rawSessionId) {
+        res.json({ status: 'ok', messages: [] });
+        return;
+      }
+      const target = await resolveAppTarget(req.query.tenantId, req.query.token);
+      const messages = await target.memory.getHistoryByRawIdentifier(`pwa_${rawSessionId}`, 50);
+      res.json({ status: 'ok', messages });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.delete('/api/app/history', async (req: Request, res: Response) => {
+    try {
+      const rawSessionId = String(req.query.sessionId || req.body?.sessionId || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '')
+        .slice(0, 64);
+      if (!rawSessionId) {
+        res.json({ status: 'ok', deleted: false });
+        return;
+      }
+      const target = await resolveAppTarget(
+        req.query.tenantId || req.body?.tenantId,
+        req.query.token || req.body?.token
+      );
+      const deleted = await target.memory.deleteHistoryByRawIdentifier(`pwa_${rawSessionId}`);
+      if (deleted) {
+        tenantManager?.markTenantDirty(target.tenantId, ['db'], false);
+      }
+      res.json({ status: 'ok', deleted });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/app/chat', async (req: Request, res: Response) => {
+    try {
+      const rawSessionId = String(req.body?.sessionId || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '')
+        .slice(0, 64);
+      const sessionKey = rawSessionId || 'guest';
+      const userMessage = String(req.body?.message || '').trim();
+      const senderName = String(req.body?.senderName || '').trim().slice(0, 60) || undefined;
+      const wantVoice = Boolean(req.body?.wantVoice);
+      const rawMedia = req.body?.media;
+
+      let mediaPayload:
+        | { type: 'image' | 'audio' | 'document' | 'video'; mimeType: string; dataBase64: string; fileName?: string }
+        | undefined;
+      if (rawMedia && typeof rawMedia === 'object' && typeof rawMedia.dataBase64 === 'string' && rawMedia.dataBase64.length > 0) {
+        const mType = rawMedia.type;
+        if (mType === 'image' || mType === 'audio' || mType === 'document' || mType === 'video') {
+          mediaPayload = {
+            type: mType,
+            mimeType: String(rawMedia.mimeType || (mType === 'image' ? 'image/jpeg' : 'audio/webm')),
+            dataBase64: rawMedia.dataBase64,
+            fileName: typeof rawMedia.fileName === 'string' ? rawMedia.fileName.slice(0, 120) : undefined,
+          };
+        }
+      }
+
+      if (!userMessage && !mediaPayload) {
+        res.status(400).json({ status: 'error', message: 'Fariintu ma bannaana' });
+        return;
+      }
+
+      const target = await resolveAppTarget(req.body?.tenantId, req.body?.token);
+      const output = await target.engine.processMessage({
+        rawSenderId: `pwa_${sessionKey}`,
+        chatId: `pwa_chat_${sessionKey}`,
+        isGroup: false,
+        content: userMessage || (mediaPayload?.type === 'audio' ? '🎙️ Fariin cod ah' : '📷 Sawir'),
+        senderName,
+        media: mediaPayload,
+        forceVoiceReply: false,
+        forbidVoiceReply: true,
+      });
+
+      let replyMedia:
+        | { type: 'image' | 'audio' | 'document'; mimeType: string; dataBase64: string; caption?: string }
+        | undefined;
+
+      if (output.replyMedia && output.replyMedia.dataBuffer) {
+        replyMedia = {
+          type: output.replyMedia.type,
+          mimeType: output.replyMedia.mimeType,
+          dataBase64: output.replyMedia.dataBuffer.toString('base64'),
+          caption: output.replyMedia.caption,
+        };
+      } else if (wantVoice && output.replyText && output.replyText !== '[SILENCE]') {
+        const mp3 = await VoiceReplyService.synthesizeMp3ForWeb(output.replyText, output.language || 'so');
+        if (mp3) {
+          replyMedia = {
+            type: 'audio',
+            mimeType: mp3.mimeType,
+            dataBase64: mp3.buffer.toString('base64'),
+          };
+        }
+      }
+
+      tenantManager?.markTenantDirty(target.tenantId, ['db'], false);
+
+      res.json({
+        status: 'ok',
+        reply: output.replyText,
+        intent: output.intent,
+        language: output.language,
+        latencyMs: output.latencyMs,
+        replyMedia,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/app/tts', async (req: Request, res: Response) => {
+    try {
+      const text = String(req.body?.text || '').trim();
+      const language = String(req.body?.language || 'so').trim();
+      if (!text) {
+        res.status(400).json({ status: 'error', message: 'Qoraalku ma bannaana' });
+        return;
+      }
+      const audio = await VoiceReplyService.synthesizeMp3ForWeb(text, language);
+      if (!audio) {
+        res.status(503).json({ status: 'error', message: 'Codka hadda lama samayn karin — mar kale isku day' });
+        return;
+      }
+      res.setHeader('Content-Type', audio.mimeType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(audio.buffer);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
   app.get(['/health', '/healthz'], (req: Request, res: Response) => {
     res.json({
       status: 'ok',

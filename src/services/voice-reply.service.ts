@@ -166,6 +166,42 @@ export class VoiceReplyService {
     return null;
   }
 
+  /**
+   * Synthesizes a native MP3 buffer (audio/mpeg) directly from Edge Neural TTS for the
+   * installable Web/PWA App. Skips Ogg Opus transcoding so playback is faster and works
+   * reliably across iPhone Safari, Android Chrome, Windows Edge, and macOS.
+   */
+  public static async synthesizeMp3ForWeb(text: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: 'audio/mpeg' } | null> {
+    const clean = this.cleanTextForSpeech(text, language);
+    if (!clean) return null;
+
+    let voiceName = 'so-SO-MuuseNeural';
+    if (language === 'en') {
+      voiceName = 'en-US-ChristopherNeural';
+    } else if (language === 'ar') {
+      voiceName = 'ar-SA-HamedNeural';
+    } else if (language === 'fr') {
+      voiceName = 'fr-FR-HenriNeural';
+    } else if (language === 'tr') {
+      voiceName = 'tr-TR-AhmetNeural';
+    }
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await this.synthesizeSingleAttempt(clean, voiceName, language);
+        if (result && result.buffer.length > 0) {
+          return { buffer: result.buffer, mimeType: 'audio/mpeg' };
+        }
+      } catch (err) {
+        console.warn(`[VoiceReply] Web MP3 attempt ${attempt} failed:`, err);
+        if (attempt === 1) {
+          await new Promise(r => setTimeout(r, 350));
+        }
+      }
+    }
+    return null;
+  }
+
   public static getFfmpegPath(): string | undefined {
     return ffmpegInstaller?.path || undefined;
   }

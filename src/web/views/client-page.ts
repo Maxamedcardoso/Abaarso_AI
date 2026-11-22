@@ -1,10 +1,11 @@
 import { BotCategory } from '../../tenants/plan-catalog.js';
-import { COMMON_CLIENT_JS, SAAS_STYLES } from './styles.js';
+import { COMMON_CLIENT_JS, PWA_HEAD_TAGS, SAAS_STYLES } from './styles.js';
 
 export function renderClientPortalHTML(tenantId: string, token: string, category: BotCategory = 'business'): string {
   const safeId = JSON.stringify(tenantId);
   const safeToken = JSON.stringify(token);
   const isPersonalInitial = category === 'personal';
+  const tenantAppUrl = `/app?tenant=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`;
 
   return `<!DOCTYPE html>
 <html lang="so">
@@ -12,6 +13,7 @@ export function renderClientPortalHTML(tenantId: string, token: string, category
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CARDOSO AI — Portal-ka Macmiilka</title>
+  ${PWA_HEAD_TAGS}
   <style>${SAAS_STYLES}</style>
 </head>
 <body>
@@ -24,6 +26,8 @@ export function renderClientPortalHTML(tenantId: string, token: string, category
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;" id="headerBadges">
+      <a href="${tenantAppUrl}" class="btn btn-primary btn-sm">📱 Fur AI App</a>
+      <button type="button" class="btn btn-ghost btn-sm" data-pwa-install-btn onclick="triggerCardosoInstall()">📲 Install</button>
       <span class="pill pill-muted" id="subStatusPill">⏳ Waa la hubinayaa...</span>
       <span class="pill pill-cyan" id="daysLeftPill">--</span>
       <span class="pill pill-muted" id="waConnPill">WhatsApp: --</span>

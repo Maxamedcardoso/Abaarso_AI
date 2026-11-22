@@ -93,6 +93,8 @@ async function bootstrap() {
   } else if (config.messaging.mode === 'console') {
     console.log(`💻 [Transport] Starting Interactive Console Simulator...`);
     externalTransport = new ConsoleSimulatorTransport();
+  } else if (config.messaging.mode === 'app') {
+    console.log(`📲 [Transport] Standalone Installable PWA App Mode Active (No WhatsApp socket required).`);
   } else {
     console.log(`📱 [Transport] Multi-Tenant WhatsApp Multi-Device Mode (Baileys) Active.`);
   }
@@ -123,9 +125,10 @@ async function bootstrap() {
 
   server.listen(webPort, () => {
     console.log(`🌐 [Studio Server] CARDOSO AI SaaS running on port ${webPort}`);
-    console.log(`   👑 Admin Studio: http://localhost:${webPort}/`);
-    console.log(`   📝 Self-Signup:  http://localhost:${webPort}/join`);
-    console.log(`   🔑 Client Login: http://localhost:${webPort}/portal`);
+    console.log(`   📲 Installable App (PWA): http://localhost:${webPort}/app`);
+    console.log(`   👑 Admin Studio:          http://localhost:${webPort}/`);
+    console.log(`   📝 Self-Signup:           http://localhost:${webPort}/join`);
+    console.log(`   🔑 Client Login:          http://localhost:${webPort}/portal`);
   });
 
   // Render Anti-Sleep Keep-Alive (pings itself every 10 minutes if RENDER_EXTERNAL_URL is set)

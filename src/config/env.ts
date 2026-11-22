@@ -20,7 +20,7 @@ export interface AppConfig {
     model: string;
   };
   messaging: {
-    mode: 'console' | 'baileys' | 'webhook';
+    mode: 'console' | 'baileys' | 'webhook' | 'app';
     groupResponseMode: 'mention_only' | 'all';
     prefix: string;
   };
@@ -76,7 +76,7 @@ export const config: AppConfig = {
     model: process.env.LOCAL_FALLBACK_MODEL || 'llama-3.2-3b',
   },
   messaging: {
-    mode: (process.env.MESSAGING_MODE as 'console' | 'baileys' | 'webhook') || 'console',
+    mode: (process.env.MESSAGING_MODE as 'console' | 'baileys' | 'webhook' | 'app') || 'console',
     groupResponseMode: (process.env.GROUP_RESPONSE_MODE as 'mention_only' | 'all') || 'mention_only',
     prefix: process.env.BOT_PREFIX || '!cardoso',
   },

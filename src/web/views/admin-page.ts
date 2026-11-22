@@ -1,4 +1,4 @@
-import { COMMON_CLIENT_JS, SAAS_STYLES } from './styles.js';
+import { COMMON_CLIENT_JS, PWA_HEAD_TAGS, SAAS_STYLES } from './styles.js';
 
 export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): string {
   return `<!DOCTYPE html>
@@ -7,6 +7,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CARDOSO AI — Super Admin SaaS Control Center</title>
+  ${PWA_HEAD_TAGS}
   <style>${SAAS_STYLES}</style>
 </head>
 <body>
@@ -20,6 +21,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
     </div>
     <div style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;">
       <span class="pill pill-violet">👑 ${escapeAdminHtml(adminLabel)}</span>
+      <a href="/app" class="btn btn-primary btn-sm">📱 Fur App-ka (/app)</a>
+      <button type="button" class="btn btn-ghost btn-sm" data-pwa-install-btn onclick="triggerCardosoInstall()">📲 Install App</button>
       <a href="/join" target="_blank" class="btn btn-ghost btn-sm">🔗 Bogga Isdiiwaangelinta (/join)</a>
       <span class="pill pill-amber" id="ownerWaBadge">Owner WhatsApp: --</span>
       <button onclick="logoutAdmin()" class="btn btn-ghost btn-sm" style="color:#f87171;">🚪 Ka Bax</button>

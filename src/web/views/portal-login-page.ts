@@ -1,4 +1,4 @@
-import { COMMON_CLIENT_JS, SAAS_STYLES } from './styles.js';
+import { COMMON_CLIENT_JS, PWA_HEAD_TAGS, SAAS_STYLES } from './styles.js';
 
 export function renderPortalLoginHTML(): string {
   return `<!DOCTYPE html>
@@ -7,6 +7,7 @@ export function renderPortalLoginHTML(): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CARDOSO AI — Galitaanka Dashboard-ka Macmiilka (/portal)</title>
+  ${PWA_HEAD_TAGS}
   <style>${SAAS_STYLES}</style>
 </head>
 <body>
@@ -18,7 +19,9 @@ export function renderPortalLoginHTML(): string {
         <p>Dib u Fur Dashboard-kaaga adigoon mar labaad isdiiwaangelin</p>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:0.65rem;">
+    <div style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;">
+      <a href="/app" class="btn btn-primary btn-sm">📱 Fur App-ka (/app)</a>
+      <button type="button" class="btn btn-ghost btn-sm" data-pwa-install-btn onclick="triggerCardosoInstall()">📲 Install App</button>
       <a href="/join" class="btn btn-ghost btn-sm">📝 Isdiiwaangeli (Cusub)</a>
     </div>
   </header>

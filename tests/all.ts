@@ -16,6 +16,7 @@ const testFiles = [
   'tests/multi-tenant.test.ts',
   'tests/error-log.test.ts',
   'tests/status-engine.test.ts',
+  'tests/pwa-app.test.ts',
 ];
 
 console.log(`\n================================================================`);

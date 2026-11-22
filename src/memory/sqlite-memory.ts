@@ -246,6 +246,33 @@ export class SQLiteStudentMemory implements IStudentMemory {
     return true;
   }
 
+  /**
+   * Read-only lookup of conversation history by raw identifier (e.g. PWA session ID)
+   * without creating a student profile row if the user has never chatted yet.
+   */
+  public async getHistoryByRawIdentifier(rawIdentifier: string, limit: number = 40): Promise<StoredMessage[]> {
+    if (!this.db) throw new Error('Database not initialized');
+    const idHash = this.hashIdentifier(rawIdentifier);
+    const existing = this.db
+      .prepare('SELECT student_id FROM students WHERE identifier_hash = ?')
+      .get(idHash) as { student_id?: string } | undefined;
+    if (!existing?.student_id) return [];
+    return this.getConversationHistory(existing.student_id, limit);
+  }
+
+  /**
+   * Deletes all conversation history and profile for a raw identifier if present.
+   */
+  public async deleteHistoryByRawIdentifier(rawIdentifier: string): Promise<boolean> {
+    if (!this.db) throw new Error('Database not initialized');
+    const idHash = this.hashIdentifier(rawIdentifier);
+    const existing = this.db
+      .prepare('SELECT student_id FROM students WHERE identifier_hash = ?')
+      .get(idHash) as { student_id?: string } | undefined;
+    if (!existing?.student_id) return false;
+    return this.deleteStudentHistory(existing.student_id);
+  }
+
   public async purgeStaleData(retentionDays: number = 30): Promise<number> {
     if (!this.db) throw new Error('Database not initialized');
 
