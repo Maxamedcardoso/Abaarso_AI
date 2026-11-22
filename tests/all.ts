@@ -18,6 +18,7 @@ const testFiles = [
   'tests/status-engine.test.ts',
   'tests/pwa-app.test.ts',
   'tests/views-hub.test.ts',
+  'tests/podcast.test.ts',
 ];
 
 console.log(`\n================================================================`);

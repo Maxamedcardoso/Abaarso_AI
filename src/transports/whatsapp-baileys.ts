@@ -18,7 +18,11 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { IMessagingTransport, IncomingMessage, OutgoingMessageOptions, OutgoingMedia } from './transport.interface.js';
 import { MediaProcessorService } from '../services/media-processor.service.js';
-import { VoiceReplyService } from '../services/voice-reply.service.js';
+import {
+  VoiceReplyService,
+  generateSpeechWaveform,
+  getOggOpusDurationSeconds,
+} from '../services/voice-reply.service.js';
 import { OutboundQueue } from './outbound-queue.js';
 import { broadcastService, BroadcastService, normalizePhoneNumber } from '../services/broadcast.service.js';
 import { whatsappManagerService, WhatsAppManagerService } from '../services/whatsapp-manager.service.js';
@@ -1803,15 +1807,35 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
             );
           }
         } else if (media.type === 'audio') {
-          // Send authentic playable voice note for WhatsApp with waveform (PTT)
+          // Send authentic playable WhatsApp Voice Note (PTT with green/blue waveform, NOT a generic audio file!)
           const isPtt = media.ptt ?? true;
-          const isOgg = (media.mimeType && media.mimeType.includes('ogg')) || media.dataBuffer.slice(0, 4).toString() === 'OggS';
+          let audioBuf = media.dataBuffer;
+          let isOgg =
+            audioBuf.length >= 4 && audioBuf.slice(0, 4).toString('ascii') === 'OggS';
+
+          // WhatsApp Android & iOS strictly require Ogg Opus ("OggS") for playable PTT Voice Notes!
+          if (isPtt && !isOgg) {
+            try {
+              audioBuf = await VoiceReplyService.convertMediaToOggOpusStrict(audioBuf);
+              isOgg = audioBuf.length >= 4 && audioBuf.slice(0, 4).toString('ascii') === 'OggS';
+            } catch (convErr: any) {
+              console.warn('[WhatsAppBaileys] PTT Opus conversion notice:', convErr?.message || convErr);
+            }
+          }
+
           const audioPayload: any = {
-            audio: media.dataBuffer,
+            audio: audioBuf,
             mimetype: isOgg ? 'audio/ogg; codecs=opus' : (media.mimeType || 'audio/mpeg'),
             ptt: isPtt,
           };
-          if (!isPtt && media.fileName) {
+
+          if (isPtt && isOgg) {
+            audioPayload.seconds = media.seconds || getOggOpusDurationSeconds(audioBuf);
+            audioPayload.waveform = media.waveform || generateSpeechWaveform(audioBuf);
+            try {
+              await this.socket?.sendPresenceUpdate('recording', chatId);
+            } catch {}
+          } else if (!isPtt && media.fileName) {
             audioPayload.fileName = media.fileName;
           }
 
@@ -1827,6 +1851,12 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
               chatId,
               audioPayload
             );
+          } finally {
+            if (isPtt) {
+              try {
+                await this.socket?.sendPresenceUpdate('paused', chatId);
+              } catch {}
+            }
           }
         } else if (media.type === 'document') {
           const docPayload: any = {

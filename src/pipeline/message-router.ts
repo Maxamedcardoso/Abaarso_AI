@@ -6,7 +6,10 @@ import { AppConfig } from '../config/env.js';
 import { broadcastService, BroadcastService } from '../services/broadcast.service.js';
 import { whatsappManagerService, WhatsAppManagerService } from '../services/whatsapp-manager.service.js';
 import { statusReactorService, StatusReactorService } from '../services/status-reactor.service.js';
-import { VoiceReplyService } from '../services/voice-reply.service.js';
+import {
+  DEFAULT_CARDOSO_PROMO_DIALOGUE,
+  VoiceReplyService,
+} from '../services/voice-reply.service.js';
 import { IStudentMemory } from '../memory/memory.interface.js';
 import { UserProfiler } from '../services/user-profiler.service.js';
 import { PlanGuard } from '../tenants/plan-catalog.js';
@@ -697,6 +700,84 @@ SHURUUCDA DUGSIIYA:
     if (this.viewsHub && isViewsGroupAdminCmd) {
       const vgRes = await this.handleViewsGroupCommand(message, transport, isAdminUser);
       if (vgRes.handled) return vgRes;
+    }
+
+    // `!podcast` (alone -> CARDOSO AI promo; `!podcast <Mawduuc/Title>` -> AI writes lively Muuse & Ubax Somali conversation!)
+    // Always sent as a 100% playable native WhatsApp Voice Note (PTT Ogg Opus with waveform & exact duration — NEVER audio file!)
+    const isPodcastCmd = /^[!./#]podcast(?:\s+([\s\S]+))?$/i.test(text);
+    if (isPodcastCmd && (isAdminUser || !message.isGroup)) {
+      const podMatch = text.match(/^[!./#]podcast(?:\s+([\s\S]+))?$/i);
+      const rawArg = (podMatch?.[1] || '').trim();
+
+      try {
+        let audioResult = null;
+
+        if (!rawArg) {
+          // `!podcast` alone -> Official CARDOSO AI Muuse & Ubax Voice Note!
+          await transport.sendMessage(
+            message.chatId,
+            '🎙️ *Muuse & Ubax — Sharraxaadda CARDOSO AI Voice Note ayaa soo socota...*',
+            { replyToMessageId: message.id }
+          );
+          audioResult = await VoiceReplyService.getCardosoPromoVoiceNote();
+        } else if (VoiceReplyService.isExplicitDialogueScript(rawArg)) {
+          // Explicit multi-line `Ubax: ... \n Muuse: ...` script
+          const turns = VoiceReplyService.parseDialogueScript(rawArg);
+          await transport.sendMessage(
+            message.chatId,
+            `🎙️ *Muuse & Ubax Voice Note waa la duubayaa (${turns.length} qaybood)...* Fadlan sug ilbiriqsiyo yar!`,
+            { replyToMessageId: message.id }
+          );
+          audioResult = await VoiceReplyService.synthesizeSomaliDialogue(turns, { outputFormat: 'ogg' });
+        } else {
+          // `!podcast <Title / Topic>` -> Gemini AI writes a lively, clear Somali Muuse & Ubax dialogue on that topic!
+          await transport.sendMessage(
+            message.chatId,
+            `🎙️ *Muuse & Ubax waxay ka wada hadlayaan:* "${rawArg}"\n⏳ Fadlan sug ilbiriqsiyo yar inta Voice Note-ka la duubayo...`,
+            { replyToMessageId: message.id }
+          );
+          const aiTurns = await VoiceReplyService.generateTopicDialogueTurns(
+            rawArg,
+            this.engine?.getAIOrchestrator?.()
+          );
+          audioResult = await VoiceReplyService.synthesizeSomaliDialogue(aiTurns, {
+            outputFormat: 'ogg',
+            defaultPauseMs: 300,
+          });
+        }
+
+        if (audioResult && typeof transport.sendMedia === 'function') {
+          await transport.sendMedia(
+            message.chatId,
+            {
+              type: 'audio',
+              dataBuffer: audioResult.buffer,
+              mimeType: 'audio/ogg; codecs=opus',
+              ptt: true,
+              seconds: audioResult.seconds,
+              waveform: audioResult.waveform,
+            },
+            { replyToMessageId: message.id }
+          );
+          return {
+            handled: true,
+            reason: `Podcast Voice Note PTT sent (${audioResult.turnCount} turns, ${audioResult.seconds}s)`,
+          };
+        }
+
+        await transport.sendMessage(
+          message.chatId,
+          '⚠️ Voice Note-ka Podcast-ka hadda lama samayn karin — mar kale isku day.',
+          { replyToMessageId: message.id }
+        );
+      } catch (podErr: any) {
+        await transport.sendMessage(
+          message.chatId,
+          `⚠️ Cilad Podcast Voice Note: ${podErr?.message || podErr}`,
+          { replyToMessageId: message.id }
+        );
+      }
+      return { handled: true, reason: 'Podcast command finished' };
     }
 
     const isViewsGroupCmd = message.isGroup && /^[!./#](?:views|vcf)(?:\s+(.*))?$/i.test(text);

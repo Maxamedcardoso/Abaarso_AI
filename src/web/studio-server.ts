@@ -8,7 +8,11 @@ import { WhatsAppBaileysTransport } from '../transports/whatsapp-baileys.js';
 import { BroadcastService, broadcastService } from '../services/broadcast.service.js';
 import { WhatsAppManagerService, whatsappManagerService } from '../services/whatsapp-manager.service.js';
 import { StatusReactorService, statusReactorService } from '../services/status-reactor.service.js';
-import { VoiceReplyService } from '../services/voice-reply.service.js';
+import {
+  DEFAULT_CARDOSO_PROMO_DIALOGUE,
+  DialogueTurn,
+  VoiceReplyService,
+} from '../services/voice-reply.service.js';
 import { MediaUrlDownloaderService } from '../services/media-url-downloader.service.js';
 import { PrayerTimesService } from '../services/prayer-times.service.js';
 import { ViewsHubError, ViewsHubService } from '../services/views-hub.service.js';
@@ -603,6 +607,41 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       res.send(audio.buffer);
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/app/podcast', async (req: Request, res: Response) => {
+    try {
+      const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+      const rawScript = typeof req.body?.script === 'string' ? req.body.script.trim() : '';
+      const rawTurns = Array.isArray(req.body?.turns) ? (req.body.turns as DialogueTurn[]) : null;
+      const format = req.body?.format === 'ogg' ? 'ogg' : 'mp3';
+
+      let turns: DialogueTurn[] = DEFAULT_CARDOSO_PROMO_DIALOGUE;
+      if (topic) {
+        const { engine } = getOwnerRefs();
+        turns = await VoiceReplyService.generateTopicDialogueTurns(topic, engine?.getAIOrchestrator?.());
+      } else if (rawTurns && rawTurns.length > 0) {
+        turns = rawTurns;
+      } else if (rawScript) {
+        turns = VoiceReplyService.isExplicitDialogueScript(rawScript)
+          ? VoiceReplyService.parseDialogueScript(rawScript)
+          : await VoiceReplyService.generateTopicDialogueTurns(rawScript, getOwnerRefs().engine?.getAIOrchestrator?.());
+      }
+
+      const audio = await VoiceReplyService.synthesizeSomaliDialogue(turns, { outputFormat: format });
+      if (!audio) {
+        res.status(503).json({ status: 'error', message: 'Podcast-ka hadda lama samayn karin — mar kale isku day' });
+        return;
+      }
+      const ext = format === 'ogg' ? 'ogg' : 'mp3';
+      res.setHeader('Content-Type', audio.mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="cardoso-ai-muuse-ubax-podcast.${ext}"`);
+      res.setHeader('Content-Length', String(audio.buffer.length));
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(audio.buffer);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message || 'Khalad ayaa ka dhacay samaynta podcast-ka' });
     }
   });
 

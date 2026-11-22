@@ -44,6 +44,8 @@ export interface OutgoingMedia {
   mimeType: string;
   caption?: string;
   ptt?: boolean; // When true, rendered as authentic WhatsApp Voice Note
+  seconds?: number; // Exact audio duration in seconds for playable WhatsApp PTT Voice Note
+  waveform?: Uint8Array; // 64-byte speech waveform for WhatsApp Voice Note player
   fileName?: string;
 }
 

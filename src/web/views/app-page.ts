@@ -908,7 +908,8 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
               <div class="form-row">
                 <label class="field-label">Luqadda Codka</label>
                 <select class="field" id="ttsLangSelect">
-                  <option value="so">🇸🇴 Af-Soomaali (Muuse Neural)</option>
+                  <option value="so">🇸🇴 Af-Soomaali — Muuse (Wiil Neural)</option>
+                  <option value="so_female">🇸🇴 Af-Soomaali — Ubax (Gabadh Neural)</option>
                   <option value="en">🇬🇧 English (Christopher Neural)</option>
                   <option value="ar">🇸🇦 العربية (Hamed Neural)</option>
                 </select>
@@ -922,6 +923,33 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
                 <a id="ttsDownloadLink" class="btn btn-emerald btn-sm" style="display:none;" download="cardoso-voice.mp3">⬇️ Soo Deji MP3</a>
               </div>
               <audio id="ttsPreviewAudio" controls class="msg-audio" style="display:none;margin-top:0.85rem;"></audio>
+            </div>
+
+            <!-- Muuse & Ubax Two-Voice Dialogue Podcast Studio -->
+            <div class="card" style="border-color:rgba(139,92,246,0.42);">
+              <h3>🎧 Muuse &amp; Ubax Podcast Studio (Laba Cod oo Hal Audio ah!)</h3>
+              <p class="sub">Geli <b>Mawduuc/Title</b> si AI-gu ugu qoro sheeko dabiici ah oo Muuse &amp; Ubax wada hadlayaan, ama wax ka beddel qoraalka CARDOSO AI ee hoose!</p>
+              <div class="form-row">
+                <label class="field-label">✨ Mawduuc / Title (Ikhtiyaari — haddii aad buuxiso AI ayaa qoraya sheekada!)</label>
+                <input class="field" id="podcastTopicInput" placeholder="Tusaale: Faa iidada waxbarashada, Ganacsiga Online-ka, ama Dukaankaaga..." />
+              </div>
+              <div class="form-row">
+                <label class="field-label">Qoraalka Wada-Sheekeysiga (haddii mawduuca kore bannaanyahay)</label>
+                <textarea class="field" id="podcastScriptInput" rows="7">Ubax: Assalaamu calaykum Muuse! War ma maqashay barnaamijka cusub ee dadkoo dhan maanta ka hadlayaan ee la dhaho CARDOSO AI?
+Muuse: Wa calaykumus salaam Ubax! Haa walaal, aad baan u maqlay, xataa anigaa maalin kasta isticmaala. Waa kaaliye casri ah oo Af-Soomaali dabiici ah ku hadla.
+Ubax: Alla! Oo muxuu qabtaa? Ma qoraal kaliya ayuu kaga jawaabaa su aalaha?
+Muuse: Maya Ubax, waxyaabo cajiib ah ayuu qabtaa! Su aal kasta oo waxbarasho, ganacsi, ama barashada koodhka ah ayuu Af-Soomaali fudud kuugu sharxaa, sawirro cusub ayuu kuu sameeyaa, cod Soomaali ah ayuu kuugu hadlaa, waqtiga salaaddana wuu ku xasuusiyaa!
+Ubax: Masha Allaah! Oo ma WhatsApp kaliya ayaa laga isticmaalaa mise App u gaar ah ayuu leeyahay?
+Muuse: Labadaba! Waxaad toos ugala sheekeysan kartaa WhatsApp, sidoo kalena wuxuu leeyahay App casri ah oo aad telefoonkaaga ku install gareysan karto!
+Ubax: Hadda ayaan tijaabinayaa aniguba! Asxaabey, adinkuna ha moogaanina CARDOSO AI — barasho, ganacsi, iyo horumar hal meel ku wada jira!
+Muuse: Ku soo dhawaada CARDOSO AI! Nabad gelyo!</textarea>
+              </div>
+              <div style="display:flex;gap:0.55rem;flex-wrap:wrap;align-items:center;">
+                <button class="btn btn-primary" id="podcastGenMp3Btn" onclick="generateMuuseUbaxPodcast('mp3')">🎧 Samee Podcast (MP3)</button>
+                <button class="btn btn-ghost btn-sm" id="podcastGenOggBtn" onclick="generateMuuseUbaxPodcast('ogg')">🎙️ WhatsApp Voice (.ogg)</button>
+                <a id="podcastDownloadLink" class="btn btn-emerald btn-sm" style="display:none;" download="cardoso-ai-muuse-ubax.mp3">⬇️ Soo Deji Codka</a>
+              </div>
+              <audio id="podcastPreviewAudio" controls class="msg-audio" style="display:none;margin-top:0.85rem;"></audio>
             </div>
 
             <!-- Image Creator Quick Card -->
@@ -1877,6 +1905,52 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       } finally {
         btn.disabled = false;
         btn.textContent = '🎙️ Samee Cod (MP3)';
+      }
+    }
+
+    async function generateMuuseUbaxPodcast(format) {
+      const topicEl = document.getElementById('podcastTopicInput');
+      const scriptEl = document.getElementById('podcastScriptInput');
+      const mp3Btn = document.getElementById('podcastGenMp3Btn');
+      const oggBtn = document.getElementById('podcastGenOggBtn');
+      const audio = document.getElementById('podcastPreviewAudio');
+      const dl = document.getElementById('podcastDownloadLink');
+      const topic = String(topicEl ? topicEl.value : '').trim();
+      const script = String(scriptEl ? scriptEl.value : '').trim();
+      if (!topic && !script) {
+        showToast('Fadlan geli mawduuc ama qor wada-sheekeysiga Muuse iyo Ubax', true);
+        return;
+      }
+      const fmt = format === 'ogg' ? 'ogg' : 'mp3';
+      mp3Btn.disabled = true;
+      oggBtn.disabled = true;
+      mp3Btn.textContent = topic ? '⏳ AI + Muuse & Ubax waa la duubayaa...' : '⏳ Muuse & Ubax waa la duubayaa...';
+      try {
+        const res = await fetch('/api/app/podcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(topic ? { topic: topic, format: fmt } : { script: script, format: fmt })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(function() { return {}; });
+          throw new Error(err.message || 'Podcast-ka lama samayn karin');
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        audio.src = url;
+        audio.style.display = 'block';
+        audio.play().catch(function() {});
+        dl.href = url;
+        dl.download = 'cardoso-ai-muuse-ubax.' + fmt;
+        dl.textContent = '⬇️ Soo Deji (' + fmt.toUpperCase() + ')';
+        dl.style.display = 'inline-flex';
+        showToast('🎧 Podcast-ka Muuse & Ubax waa diyaar!');
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Khalad ayaa dhacay'), true);
+      } finally {
+        mp3Btn.disabled = false;
+        oggBtn.disabled = false;
+        mp3Btn.textContent = '🎧 Samee Podcast (MP3)';
       }
     }
 
