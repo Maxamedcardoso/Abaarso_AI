@@ -17,10 +17,11 @@ try {
  * - Highpass 75Hz removes low-end rumble
  * - Warm vocal body boost (+2.2dB @ 180Hz)
  * - Presence/clarity boost (+2.0dB @ 3.2kHz) for crystal-clear Somali consonants
+ * - Micro Studio Booth Ambience (18ms tiny acoustic room reflection putting Safa & Mohamed in the same room)
  * - Gentle broadcast compressor + brickwall peak limiter (zero clipping)
  */
 export const STUDIO_VOICE_MASTER_FILTER =
-  'highpass=f=75,equalizer=f=180:t=q:w=1.2:g=2.2,equalizer=f=3200:t=q:w=1.4:g=2.0,acompressor=threshold=-18dB:ratio=2.8:attack=15:release=140:makeup=2,alimiter=limit=0.95';
+  'highpass=f=75,equalizer=f=180:t=q:w=1.2:g=2.2,equalizer=f=3200:t=q:w=1.4:g=2.0,aecho=0.8:0.88:18:0.055,acompressor=threshold=-18dB:ratio=2.8:attack=15:release=140:makeup=2,alimiter=limit=0.95';
 
 /**
  * Creates a pure-Node 16-bit PCM WAV buffer (mono or stereo) from Float32 samples (-1..1).
@@ -71,11 +72,10 @@ export function createSilentWav(durationMs: number, sampleRate: number = 48000):
   return encodePcmWav(new Float32Array(numSamples), sampleRate);
 }
 
-/**
- * Synthesizes a warm, modern, broadcast-quality Podcast Intro / Outro Studio Chime
- * (soft Rhodes/marimba harmonic chord progression, zero copyright, zero network).
- */
-export function createStudioChimeWav(kind: 'intro' | 'outro', sampleRate: number = 48000): Buffer {
+export function createStudioChimeSamples(kind: 'intro' | 'outro', sampleRate: number = 48000): {
+  left: Float32Array;
+  right: Float32Array;
+} {
   const durationSec = kind === 'intro' ? 1.85 : 2.1;
   const totalSamples = Math.round(sampleRate * durationSec);
   const left = new Float32Array(totalSamples);
@@ -133,6 +133,15 @@ export function createStudioChimeWav(kind: 'intro' | 'outro', sampleRate: number
     }
   }
 
+  return { left, right };
+}
+
+/**
+ * Synthesizes a warm, modern, broadcast-quality Podcast Intro / Outro Studio Chime
+ * (soft Rhodes/marimba harmonic chord progression, zero copyright, zero network).
+ */
+export function createStudioChimeWav(kind: 'intro' | 'outro', sampleRate: number = 48000): Buffer {
+  const { left, right } = createStudioChimeSamples(kind, sampleRate);
   return encodePcmWav(left, sampleRate, right);
 }
 
@@ -524,5 +533,343 @@ export async function splitAudioIntoVoiceStatusClips(
     for (const p of chunkPaths) {
       await fs.promises.unlink(p).catch(() => {});
     }
+  }
+}
+
+// ─── Human-Realism Audio Engine (Trim Dead TTS Gaps + Real Voice Overlap + Studio Room Tone + Sidechain Ducking) ───
+
+function parseMono16BitPcmWav(wavBuf: Buffer): Float32Array {
+  if (!wavBuf || wavBuf.length < 44) return new Float32Array(0);
+  // Locate the "data" subchunk cleanly (FFmpeg WAV headers may include a LIST/INFO chunk before "data")
+  let offset = 12;
+  let dataOffset = 44;
+  let dataSize = wavBuf.length - 44;
+  while (offset + 8 <= wavBuf.length) {
+    const chunkId = wavBuf.toString('ascii', offset, offset + 4);
+    const chunkSize = wavBuf.readUInt32LE(offset + 4);
+    if (chunkId === 'data') {
+      dataOffset = offset + 8;
+      dataSize = Math.min(chunkSize, wavBuf.length - dataOffset);
+      break;
+    }
+    offset += 8 + chunkSize + (chunkSize % 2);
+  }
+  const numSamples = Math.floor(Math.max(0, dataSize) / 2);
+  const out = new Float32Array(numSamples);
+  for (let i = 0; i < numSamples; i++) {
+    out[i] = wavBuf.readInt16LE(dataOffset + i * 2) / 32768;
+  }
+  return out;
+}
+
+/**
+ * Decodes ANY audio turn (MP3/WAV/OGG) to 48kHz mono Float32 PCM while trimming
+ * Edge TTS's artificial leading & trailing dead silence (~350-450ms) via FFmpeg
+ * `silenceremove` + `areverse` (preserving mid-sentence pauses 100%).
+ */
+export async function decodeTrimmedMonoPcm48k(audioBuffer: Buffer): Promise<Float32Array> {
+  const tmpBase = `cardoso_turn_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const inPath = path.join(os.tmpdir(), `${tmpBase}.in`);
+  const trimmedPath = path.join(os.tmpdir(), `${tmpBase}_trim.wav`);
+  const rawPath = path.join(os.tmpdir(), `${tmpBase}_raw.wav`);
+
+  const runDecode = (outPath: string, trimSilence: boolean): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const cmd = ffmpeg(inPath).noVideo().audioFrequency(48000).audioChannels(1).audioCodec('pcm_s16le').format('wav');
+      if (trimSilence) {
+        cmd.audioFilters(
+          'silenceremove=start_periods=1:start_duration=0.015:start_threshold=-40dB,areverse,silenceremove=start_periods=1:start_duration=0.015:start_threshold=-40dB,areverse'
+        );
+      }
+      cmd.on('end', () => resolve()).on('error', (err) => reject(err)).save(outPath);
+    });
+
+  try {
+    await fs.promises.writeFile(inPath, audioBuffer);
+    try {
+      await runDecode(trimmedPath, true);
+      const trimmedWav = await fs.promises.readFile(trimmedPath);
+      const samples = parseMono16BitPcmWav(trimmedWav);
+      // Guard: if clip was super short/quiet and got over-trimmed (<120ms), fall back to raw untrimmed decode
+      if (samples.length >= 48000 * 0.12) {
+        return samples;
+      }
+    } catch {}
+
+    await runDecode(rawPath, false);
+    const rawWav = await fs.promises.readFile(rawPath);
+    return parseMono16BitPcmWav(rawWav);
+  } finally {
+    await fs.promises.unlink(inPath).catch(() => {});
+    await fs.promises.unlink(trimmedPath).catch(() => {});
+    await fs.promises.unlink(rawPath).catch(() => {});
+  }
+}
+
+/**
+ * Generates ultra-quiet velvety pink-filtered studio room tone (~ -48dB)
+ * so transitions between speakers feel like a live recording room — zero dead digital vacuum!
+ */
+export function generateStudioRoomToneSamples(numSamples: number): Float32Array {
+  const out = new Float32Array(numSamples);
+  // Deterministic Paul Kellet pink-noise approximation (fast, smooth, warm low-end air)
+  let seed = 0x13579bdf;
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (let i = 0; i < numSamples; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const white = (seed / 2147483648) - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.96900 * b2 + white * 0.1538520;
+    b3 = 0.86650 * b3 + white * 0.3104856;
+    b4 = 0.55000 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.0168980;
+    const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.00055; // ~ -48dB warm studio room air
+    b6 = white * 0.115926;
+    out[i] = pink;
+  }
+  return out;
+}
+
+export interface HumanMixSegment {
+  speaker: 'safa' | 'mohamed';
+  emotion: 'neutral' | 'laugh' | 'debate' | 'excited' | 'calm' | 'whisper' | 'backchannel';
+  samples: Float32Array;
+  pauseAfterMs?: number;
+}
+
+/**
+ * Mixes Safa & Mohamed's trimmed PCM turns onto a sample-accurate 48kHz Studio Timeline with:
+ * - REAL HUMAN VOICE OVERLAP (-140ms to -220ms interruption on heated [debate], [laugh], and [backchannel]!)
+ * - Smooth 8ms edge micro-fades (zero clicks/pops)
+ * - Overlapping Radio Intro/Outro Studio Chimes
+ * - Subtle Stereo Host Placement (Safa slightly left, Mohamed slightly right on stereo MP3)
+ * - Continuous -48dB Studio Room Tone (zero robotic digital vacuum)
+ * - True Sidechain Auto-Ducking Ambient Bed (when soundMode === 'ambient')
+ */
+export function mixHumanPodcastTimeline(
+  segments: HumanMixSegment[],
+  options?: {
+    isStereo?: boolean;
+    soundMode?: 'chime' | 'ambient' | 'clean';
+    defaultPauseMs?: number;
+  }
+): { wavBuffer: Buffer; totalSeconds: number; overlapCount: number } {
+  const sampleRate = 48000;
+  const isStereo = Boolean(options?.isStereo);
+  const soundMode = options?.soundMode || 'chime';
+  const defaultPauseMs = options?.defaultPauseMs ?? 110;
+  const useChimes = soundMode === 'chime' || soundMode === 'ambient';
+
+  const intro = useChimes ? createStudioChimeSamples('intro', sampleRate) : null;
+  const outro = useChimes ? createStudioChimeSamples('outro', sampleRate) : null;
+
+  // 1. Place each turn on the timeline with organic human overlaps & micro-pauses
+  const placements: Array<{ start: number; seg: HumanMixSegment }> = [];
+  // Overlap Safa's first word gently into the last 420ms of the intro chime decay (authentic radio feel!)
+  let cursor = intro ? Math.max(0, intro.left.length - Math.round(sampleRate * 0.42)) : Math.round(sampleRate * 0.06);
+  let overlapCount = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (i > 0) {
+      const prev = segments[i - 1];
+      const speakerChanged = prev.speaker !== seg.speaker;
+      const prevLen = prev.samples.length;
+
+      let gapMs: number;
+      if (typeof prev.pauseAfterMs === 'number') {
+        gapMs = prev.pauseAfterMs;
+      } else if (speakerChanged && seg.emotion === 'backchannel') {
+        // Real human quick interruption ("War been badanaa!", "Haa-haa!") overlaps by ~210ms!
+        gapMs = -210;
+      } else if (speakerChanged && (seg.emotion === 'debate' || seg.emotion === 'laugh')) {
+        // Lively debate/laughter jumps in 135-175ms before previous host finishes trailing syllable!
+        gapMs = -(135 + ((i * 23) % 45));
+      } else if (speakerChanged && seg.emotion === 'excited') {
+        gapMs = 35;
+      } else if (seg.emotion === 'calm' || seg.emotion === 'whisper') {
+        gapMs = 200;
+      } else if (!speakerChanged) {
+        gapMs = 150;
+      } else {
+        gapMs = Math.min(130, defaultPauseMs);
+      }
+
+      // Never overlap more than 32% of the previous turn so short turns remain 100% intelligible
+      const maxOverlapMs = Math.floor(((prevLen / sampleRate) * 1000) * 0.32);
+      if (gapMs < 0) {
+        gapMs = -Math.min(Math.abs(gapMs), maxOverlapMs);
+        if (gapMs <= -40) overlapCount++;
+      }
+
+      cursor = Math.max(0, cursor + Math.round((gapMs / 1000) * sampleRate));
+    }
+
+    placements.push({ start: cursor, seg });
+    cursor += seg.samples.length;
+  }
+
+  const speechEndSample = placements.reduce((m, p) => Math.max(m, p.start + p.seg.samples.length), cursor);
+  const outroStart = outro ? Math.max(0, speechEndSample - Math.round(sampleRate * 0.30)) : speechEndSample;
+  const totalSamples = Math.max(
+    sampleRate,
+    (outro ? outroStart + outro.left.length : speechEndSample) + Math.round(sampleRate * 0.12)
+  );
+
+  const left = new Float32Array(totalSamples);
+  const right = isStereo ? new Float32Array(totalSamples) : undefined;
+  const voiceActivity = soundMode === 'ambient' ? new Float32Array(totalSamples) : null;
+
+  // 2. Layer continuous subtle Studio Room Tone (-48dB pink air) across full timeline
+  const roomTone = generateStudioRoomToneSamples(totalSamples);
+  for (let i = 0; i < totalSamples; i++) {
+    left[i] = roomTone[i];
+    if (right) right[i] = roomTone[i];
+  }
+
+  // 3. Mix Intro Chime
+  if (intro) {
+    for (let i = 0; i < intro.left.length && i < totalSamples; i++) {
+      if (right) {
+        left[i] += intro.left[i];
+        right[i] += intro.right[i];
+      } else {
+        left[i] += (intro.left[i] + intro.right[i]) * 0.5;
+      }
+    }
+  }
+
+  // 4. Mix all speech turns with 8ms click-free fades & studio stereo placement
+  const fadeSamples = Math.round(sampleRate * 0.008);
+  for (const { start, seg } of placements) {
+    const src = seg.samples;
+    const len = src.length;
+    const gainL = isStereo ? (seg.speaker === 'safa' ? 0.92 : 0.74) : 1.0;
+    const gainR = isStereo ? (seg.speaker === 'safa' ? 0.74 : 0.92) : 1.0;
+
+    for (let i = 0; i < len; i++) {
+      const dstIdx = start + i;
+      if (dstIdx >= totalSamples) break;
+      let env = 1.0;
+      if (i < fadeSamples) env = i / fadeSamples;
+      else if (i > len - fadeSamples) env = (len - i) / fadeSamples;
+      const s = src[i] * env;
+      left[dstIdx] += s * gainL;
+      if (right) right[dstIdx] += s * gainR;
+      if (voiceActivity) voiceActivity[dstIdx] = Math.max(voiceActivity[dstIdx], Math.abs(s));
+    }
+  }
+
+  // 5. Mix Outro Chime
+  if (outro) {
+    for (let i = 0; i < outro.left.length && outroStart + i < totalSamples; i++) {
+      const dstIdx = outroStart + i;
+      if (right) {
+        left[dstIdx] += outro.left[i];
+        right[dstIdx] += outro.right[i];
+      } else {
+        left[dstIdx] += (outro.left[i] + outro.right[i]) * 0.5;
+      }
+    }
+  }
+
+  // 6. Optional Soft Ambient Pad with TRUE Sidechain Auto-Ducking!
+  if (soundMode === 'ambient' && voiceActivity) {
+    const chord = [130.81, 196.0, 246.94, 329.63];
+    const fadeIn = Math.floor(Math.min(1.4, totalSamples / sampleRate * 0.15) * sampleRate);
+    const fadeOut = Math.floor(Math.min(1.8, totalSamples / sampleRate * 0.18) * sampleRate);
+    let smoothEnv = 0;
+    let duckGain = 1.0;
+
+    for (let i = 0; i < totalSamples; i++) {
+      const v = voiceActivity[i];
+      smoothEnv = v > smoothEnv ? smoothEnv * 0.992 + v * 0.008 : smoothEnv * 0.9996 + v * 0.0004;
+      const targetDuck = smoothEnv > 0.018 ? 0.32 : 1.0; // Duck down ~10dB smoothly while speaking!
+      duckGain = duckGain * 0.999 + targetDuck * 0.001;
+
+      const t = i / sampleRate;
+      const breath = 0.82 + 0.18 * Math.sin(2 * Math.PI * 0.14 * t);
+      let aL = 0;
+      let aR = 0;
+      for (let c = 0; c < chord.length; c++) {
+        const f = chord[c];
+        aL += Math.sin(2 * Math.PI * f * t + c * 0.9) * 0.011;
+        aR += Math.sin(2 * Math.PI * (f * 1.002) * t + c * 1.3) * 0.011;
+      }
+      let edgeEnv = breath * duckGain;
+      if (i < fadeIn) edgeEnv *= i / fadeIn;
+      if (i > totalSamples - fadeOut) edgeEnv *= (totalSamples - i) / fadeOut;
+
+      if (right) {
+        left[i] += aL * edgeEnv;
+        right[i] += aR * edgeEnv;
+      } else {
+        left[i] += (aL + aR) * 0.5 * edgeEnv;
+      }
+    }
+  }
+
+  // 7. Gentle soft-clip protection before FFmpeg broadcast mastering
+  for (let i = 0; i < totalSamples; i++) {
+    left[i] = Math.tanh(left[i] * 0.95);
+    if (right) right[i] = Math.tanh(right[i] * 0.95);
+  }
+
+  return {
+    wavBuffer: encodePcmWav(left, sampleRate, right),
+    totalSeconds: Math.max(1, Math.round(totalSamples / sampleRate)),
+    overlapCount,
+  };
+}
+
+/**
+ * Encodes a mixed Studio WAV buffer through the Broadcast Mastering chain (Warm EQ +
+ * 18ms Studio Booth Ambience + Broadcast Compressor + Limiter) to Stereo MP3 or strict OggS Opus PTT.
+ */
+export async function encodeMasteredPodcastAudio(
+  mixedWavBuffer: Buffer,
+  options: { outputFormat: 'mp3' | 'ogg'; masterAudio?: boolean }
+): Promise<Buffer> {
+  const fmt = options.outputFormat === 'ogg' ? 'ogg' : 'mp3';
+  const master = options.masterAudio !== false;
+  const tmpBase = `cardoso_master_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const inPath = path.join(os.tmpdir(), `${tmpBase}.wav`);
+  const outPath = path.join(os.tmpdir(), `${tmpBase}.${fmt}`);
+
+  try {
+    await fs.promises.writeFile(inPath, mixedWavBuffer);
+    await new Promise<void>((resolve, reject) => {
+      const cmd = ffmpeg(inPath).noVideo();
+      if (master) {
+        cmd.audioFilters(STUDIO_VOICE_MASTER_FILTER);
+      }
+      if (fmt === 'ogg') {
+        cmd
+          .audioCodec('libopus')
+          .audioBitrate('48k')
+          .audioFrequency(48000)
+          .audioChannels(1)
+          .outputOptions(['-application', 'voip', '-vbr', 'on'])
+          .format('ogg');
+      } else {
+        cmd
+          .audioCodec('libmp3lame')
+          .audioBitrate('128k')
+          .audioFrequency(44100)
+          .audioChannels(2)
+          .format('mp3');
+      }
+      cmd.on('end', () => resolve()).on('error', (err) => reject(err)).save(outPath);
+    });
+
+    const outBuf = await fs.promises.readFile(outPath);
+    if (!outBuf || outBuf.length < 256) {
+      throw new Error('Faylka podcast-ka ee mastered-ka ah wuu madhan yahay');
+    }
+    return outBuf;
+  } finally {
+    await fs.promises.unlink(inPath).catch(() => {});
+    await fs.promises.unlink(outPath).catch(() => {});
   }
 }

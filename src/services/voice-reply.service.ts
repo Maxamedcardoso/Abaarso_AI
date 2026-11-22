@@ -6,10 +6,10 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import {
-  STUDIO_VOICE_MASTER_FILTER,
-  createAmbientPadWav,
-  createSilentWav,
-  createStudioChimeWav,
+  HumanMixSegment,
+  decodeTrimmedMonoPcm48k,
+  encodeMasteredPodcastAudio,
+  mixHumanPodcastTimeline,
   renderPodcastVideoAudiogram,
 } from './podcast-studio.service.js';
 
@@ -664,33 +664,111 @@ export class VoiceReplyService {
     }
   }
 
-  private static prosodyForEmotion(emotion: PodcastEmotion): { rate: string; pitch: string } {
+  public static prosodyForEmotion(emotion: PodcastEmotion, turnIndex: number = 0): { rate: string; pitch: string } {
+    // Organic per-turn micro-jitter so consecutive sentences never sound identically flat!
+    const rateJitter = [0, 2, -1, 1, -2, 2][Math.abs(turnIndex) % 6];
+    const pitchJitter = [0, 1, -1, 1, 0, -1][Math.abs(turnIndex) % 6];
+    const fmtRate = (base: number) => `${base >= 0 ? '+' : ''}${base}%`;
+    const fmtPitch = (base: number) => `${base >= 0 ? '+' : ''}${base}Hz`;
+
     switch (emotion) {
       case 'laugh':
-        return { rate: '+5%', pitch: '+4Hz' };
+        return { rate: fmtRate(5 + rateJitter), pitch: fmtPitch(4 + pitchJitter) };
       case 'debate':
-        return { rate: '+4%', pitch: '+2Hz' };
+        return { rate: fmtRate(4 + rateJitter), pitch: fmtPitch(2 + pitchJitter) };
       case 'excited':
-        return { rate: '+3%', pitch: '+3Hz' };
+        return { rate: fmtRate(3 + rateJitter), pitch: fmtPitch(3 + pitchJitter) };
       case 'backchannel':
-        return { rate: '+5%', pitch: '+2Hz' };
+        return { rate: fmtRate(6 + rateJitter), pitch: fmtPitch(2 + pitchJitter) };
       case 'calm':
-        return { rate: '-5%', pitch: '-1Hz' };
+        return { rate: fmtRate(-5 + rateJitter), pitch: fmtPitch(-1 + pitchJitter) };
       case 'whisper':
-        return { rate: '-8%', pitch: '-2Hz' };
+        return { rate: fmtRate(-8 + rateJitter), pitch: fmtPitch(-2 + pitchJitter) };
       default:
-        return { rate: '-2%', pitch: '+0Hz' };
+        return { rate: fmtRate(-1 + rateJitter), pitch: fmtPitch(0 + pitchJitter) };
     }
+  }
+
+  /**
+   * Detects natural opposing sides for debate & comparison topics so Safa & Mohamed
+   * take clear, passionate, culturally grounded stances (e.g. Gender debates: Safa defends Women,
+   * Mohamed defends Men; Comparison debates "X iyo Y": Safa vs Mohamed take opposing sides!).
+   */
+  public static detectPodcastDebateContext(topic: string): {
+    isGenderDebate: boolean;
+    isComparison: boolean;
+    safaSide?: string;
+    mohamedSide?: string;
+    directive: string;
+  } {
+    const clean = String(topic || '').trim();
+    const lower = clean.toLowerCase();
+
+    const hasMen = /\b(?:rag|raga|ragga|niman|nimanka|wiil|wiilasha|nin|ninka|aabe|aabaha)\b/i.test(lower);
+    const hasWomen = /\b(?:dumar|dumarka|hablo|hablaha|gabadh|gabadha|gabdho|gabdhaha|naag|naagaha|hooyo|xaas|xaaska)\b/i.test(lower);
+    const isRelationshipGender =
+      (hasMen && hasWomen) ||
+      ((hasMen || hasWomen) && /\b(?:khiyaano|qayaano|jacayl|guur|masayr|hinaaso|shukaansi|daacad|lacag|furin|xiriir|beenta|qalbi|xanaaq)\b/i.test(lower));
+
+    if (isRelationshipGender) {
+      return {
+        isGenderDebate: true,
+        isComparison: true,
+        safaSide: 'Dumarka & Hablaha (difaaca dumarka, doodda ka dhanka ah ragga)',
+        mohamedSide: 'Ragga & Wiilasha (difaaca ragga, doodda ka dhanka ah dumarka)',
+        directive: `XEERKA GAARKA AH EE DOODDA RAGGA IYO DUMARKA (AAD U MUHIIM AH):
+- Mawduucani wuxuu ku saabsan yahay **RAGGA IYO DUMARKA** ("${clean}").
+- **Safa** WAA INAY 100% U DOODDAA DUMARKA oo ay eedda / caddaymaha saarto **RAGGA**! (Tusaale: haddii la is weydiiyo "Ragga iyo Dumarka yaa khiyaano badan?", Safa waxay si cad u leedahay **RAGGA ayaa khiyaano badan!** Waxayna keentaa tusaalayaal dhab ah oo bulshada Soomaalida ka jira sida ballamo been ah, taleefanka la qariyo, laba-wejiilenimo, "saaxiibkay baan la joogaa", iwm).
+- **Mohamed** WAA INUU 100% U DOODAA RAGGA oo uu eedda / caddaymaha saaro **DUMARKA**! (Tusaale: Mohamed wuxuu si cad u leeyahay **DUMARKA ayaa ka daran!** Wuxuuna keenaa tusaalayaal dhab ah oo bulshada Soomaalida ka jira sida qarsiga, xulashada jeebka/lacagta, "backup/friendzone", aamusnaan lagu khiyaamo qofka, iwm).
+- Labadoodu si DHAB AH oo kulul balse xushmad iyo kaftan Soomaaliyeed leh ha u murmaan, ha u qoslaan ("Haa-haa war Mohamed beenta jooji!", "Sug sug Safa ha xanaaqin, runtaan kuu hayaa!"), tusaalayaal dhab ah oo dhaqanka iyo nolosha Soomaalida yaqaana ha soo qaataan — marna midkoodna si fudud ha isugu dhiibin kan kale ilaa dhammaadka!`,
+      };
+    }
+
+    // Generic comparison detection: "X iyo Y", "X vs Y", "yaa ... badan", "midkee ka fiican"
+    const vsMatch = clean.match(/^(.{2,45}?)\s+(?:iyo|vs\.?|mise|ama)\s+(.{2,45}?)(?:\s+(?:ayaa|yaa|keebaa|midkee|maxaa).*)?$/i);
+    const isComparison = Boolean(vsMatch) || /\b(?:ayaa\s+\w+\s+badan|yaa\s+\w+\s+badan|midkee|keebaa|ka\s+fiican|ka\s+muhiimsan|ka\s+daran)\b/i.test(lower);
+
+    if (isComparison) {
+      const sideA = vsMatch?.[1]?.trim();
+      const sideB = vsMatch?.[2]?.trim();
+      return {
+        isGenderDebate: false,
+        isComparison: true,
+        safaSide: sideA || 'Dhinaca 1-aad',
+        mohamedSide: sideB || 'Dhinaca 2-aad',
+        directive: `XEERKA DOODDA IS-BARBARDHIGGA ("${clean}"):
+- Mawduucani waa is-barbardhig cad! Labada daadihiye WAA INAY KALA QAATAAN LABADA DHINAC OO SI ADAG U DOODAAN:
+${sideA && sideB ? `- **Safa** waxay taageeraysaa / u doodaysaa dhinaca: **"${sideA}"** (waxayna si adag uga hor imanaysaa "${sideB}").
+- **Mohamed** wuxuu taageerayaa / u doodayaa dhinaca: **"${sideB}"** (wuxuuna si adag uga hor imanayaa "${sideA}").` : `- **Safa** iyo **Mohamed** mid walba mowqif ka soo horjeeda kan kale ha qaato oo si adag ha u difaaco!`}
+- Mid kasta ha keeno tusaalayaal nololeed oo dhab ah oo ka dhaca bulshada Soomaalida (suuqa, qoyska, shaqada, baraha bulshada, dhalinyarada) — qosol, muran caqli leh, iyo doodo nool oo aan AI loo malayn karin!`,
+      };
+    }
+
+    return {
+      isGenderDebate: false,
+      isComparison: false,
+      directive: `XEERKA KU XIDHNAANTA MAWDUUCA ("${clean}"):
+- Sadar kasta WAA inuu 100% si toos ah uga hadlo **"${clean}"** — ha ku leexan wax guud ama wacdi aan mawduuca ku saabsanayn!
+- **Safa** iyo **Mohamed** ha yeeshaan laba aragti oo kala duwan oo ku saabsan "${clean}", iyagoo tusaalayaal dhab ah oo dhaqanka & bulshada Soomaalida ka yimid isku celcelinaya!`,
+    };
   }
 
   /**
    * Parses human-written or AI-generated dialogue lines like:
    *   Safa: [excited] Assalaamu calaykum Mohamed!
    *   Mohamed: [laugh] Wa calaykumus salaam Safa!
-   * (Also remains 100% compatible with legacy Ubax:/Muuse: scripts.)
+   * Handles collapsed single-line AI outputs, markdown bolding (**Safa:**), bullets (- Safa:),
+   * and remains 100% compatible with legacy Ubax:/Muuse: scripts.
    */
   public static parseDialogueScript(rawScript: string): DialogueTurn[] {
-    const lines = String(rawScript || '')
+    // Pre-normalize markdown bolding/bullets and split inline speaker labels if newlines were ever collapsed
+    let normalized = String(rawScript || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\*{1,2}\s*(safa|mohamed|maxamed|muuse|ubax|gabadh|wiil|female|male|girl|boy)\s*\*{0,2}\s*[:\-–]\s*\*{0,2}/gi, '\n$1: ')
+      .replace(/(?:^|\s)[•\-\*]\s*(safa|mohamed|maxamed|muuse|ubax|gabadh|wiil|female|male|girl|boy)\s*[:\-–]\s*/gi, '\n$1: ')
+      .replace(/([^\n])\s+\b(safa|mohamed|maxamed|muuse|ubax)\s*:\s*/gi, '$1\n$2: ');
+
+    const lines = normalized
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
@@ -728,15 +806,15 @@ export class VoiceReplyService {
       .filter(Boolean);
     if (lines.length < 2) return false;
     const labeledLines = lines.filter((l) =>
-      /^(safa|mohamed|maxamed|muuse|ubax|gabadh|wiil|female|male|girl|boy)\s*[:\-–]\s*.+/i.test(l)
+      /^(?:\*{0,2})(safa|mohamed|maxamed|muuse|ubax|gabadh|wiil|female|male|girl|boy)(?:\*{0,2})\s*[:\-–]\s*.+/i.test(l)
     );
     return labeledLines.length >= 2;
   }
 
   /**
    * Generates a world-class, ultra-natural Somali Podcast conversation between
-   * Safa (female) & Mohamed (male) with real disagreement, debate, laughter, deep topic
-   * mastery, and exact duration scaling (0.5 to 5 minutes) — zero robotic AI vibe!
+   * Safa (female) & Mohamed (male) with real disagreement, gender/comparison side-taking,
+   * Somali cultural fluency, laughter, and exact duration scaling (0.5 to 5 minutes)!
    */
   public static async generateTopicDialogueTurns(
     topic: string,
@@ -756,19 +834,21 @@ export class VoiceReplyService {
       return DEFAULT_CARDOSO_PROMO_DIALOGUE;
     }
 
+    const debateCtx = this.detectPodcastDebateContext(cleanTopic);
+
     // Scale turns and word budget precisely to requested minutes (~155 Somali spoken words/minute)
     const targetTurns = Math.max(6, Math.min(36, Math.round(durationMinutes * 7.2)));
     const minTurns = Math.max(6, targetTurns - 2);
     const maxTurns = Math.min(38, targetTurns + 2);
     const targetWords = Math.round(durationMinutes * 155);
-    const maxOutputTokens = Math.min(3400, Math.max(1000, Math.round(targetWords * 3.2)));
+    const maxOutputTokens = Math.min(3600, Math.max(1200, Math.round(targetWords * 3.4)));
 
     const styleDirectiveMap: Record<PodcastStyle, string> = {
-      debate: `QAABKA: DOOD KULUL & KALA ARAGTI DUWANAAN (WORLD-CLASS SOMALI DEBATE PODCAST)
-- Safa iyo Mohamed WAA INAY KALA ARAGTI DUWANAADAAN oo dood caqli leh, muran saaxiibtinimo leh, iyo kaftan/qosol dhex mara!
-- Safa: geesiyad, aragti casri ah, su'aalo adag weydiisa, Mohamed way ku adkaysaa oo mararka qaar way ku qoslaysaa ("Haa-haa, sug Mohamed, taas kugu ma raacsani!", "War iga daa sheekadaas!").
-- Mohamed: deggan, xikmad leh, tusaalayaal dhab ah oo nolosha Soomaalida ah keena (Hargeysa, Muqdisho, Jigjiga, suuqa, dhalinyarada), Safa wuu ka difaacaa mowqifkiisa ("Maya Safa, ha i jarin bal i dhagayso!", "Waa runtaa qayb ahaan, laakiin hal wax baad illoowday!").
-- Ku dar 2-3 jawaabood oo aad u gaaban oo degdeg ah ([backchannel]) sida "Haa sax!", "Maya wallaahi!", "Haa-haa waa run!" si loo dareemo laba qof oo dhab ahaan is dhexgelaya.`,
+      debate: `QAABKA: DOOD KULUL & MURAN DHAB AH OO BULSHADA SOOMAALIDA KU SALAYSAN
+- Safa iyo Mohamed WAA INAY KALA ARAGTI DUWANAADAAN — mid walba dhinaciisa si xamaasad, caddeyn, iyo kaftan leh ha u difaaco!
+- Safa: geesiyad, af-tahanad, bulshada iyo dhaqanka si fiican u taqaanna, Mohamed way ku qoslaysaa oo way ku qabsanaysaa ("Haa-haa, war Mohamed beenta jooji!", "Sug sug, taas bulshadu way ogtahay!").
+- Mohamed: wiil af-tahan ah, kaftan yaqaan, xaqiiqooyin iyo tusaalayaal maalinle ah oo bulshada Soomaalida ah keena ("Maya Safa, ha caroonin bal i dhagayso!", "Wallaahi taa anigaa caddayn u haya!").
+- Ku dar 2-3 jawaabood oo gaaban oo degdeg ah ([backchannel]) sida "Haa-haa waa been!", "Maya wallaahi!", "Sug sug!" si loo dareemo laba qof oo dhab ahaan studio ku wada murmaya!`,
       study: `QAABKA: CASHAR & IMTIXAAN DIYAARIN (NOTEBOOKLM STUDY PODCAST)
 - Safa waa ardayad fariid ah oo su'aalo caqli leh weydiisa, mararka qaar qalad yar oo caan ah sheegta si Mohamed u saxo, kadibna qosol yar iyo faham cusub muujisa.
 - Mohamed waa macallin saaxiib ah oo tusaalayaal maalinle ah oo fudud ku sharxa qodob kasta si qofku hal dhageysi ugu xifdiyo.`,
@@ -781,42 +861,52 @@ export class VoiceReplyService {
     };
 
     if (ai && typeof ai.generateResponse === 'function') {
-      const systemInstruction = `Waxaad tahay Agaasime iyo Qoraa Heer Caalami ah oo Somali Radio & Podcast Studio ah (Sida BBC Somali + Google NotebookLM).
-Qor wada-sheekeysi 100% DHAB U EEG, NOOL, MACAAN, oo u dhexeeya LABA QOF OO SOOMAALI AH:
-- **Safa** (Gabadh cod furfuran, fariid ah, aragti adag, kaftan iyo qosol dabiici ah leh)
-- **Mohamed** (Wiil cod culus oo xikmad leh, deggen balse difaaca fikirkiisa, tusaalayaal nololeed keena)
+      const systemInstruction = `Waxaad tahay Agaasime & Qoraa Heer Caalami ah oo Somali Podcast & Radio Studio ah.
+Qor wada-sheekeysi 100% DHAB U EEG, NOOL, XIISO LEH, oo u dhexeeya LABA QOF OO SOOMAALI AH oo dhaqanka iyo nolosha bulshada si fiican u yaqaanna:
+- **Safa** (Gabadh furfuran, af-tahanad, dhiirran, kaftan & qosol dabiici ah leh)
+- **Mohamed** (Wiil cod culus, af-tahan, xikmad iyo kaftan leh, tusaalayaal dhab ah keena)
 
 ${styleDirectiveMap[style]}
 
+${debateCtx.directive}
+
 XEERARKA ADAG EE HEERKA CAALAMIGA AH (WAA WAAJIB):
-1. DHERERKA SAXDA AH: Qor u dhexeeya ${minTurns} ilaa ${maxTurns} sadar (wadarta ereyada ~${targetWords} erey oo Af-Soomaali ah) si codku u socdo qiyaastii ${durationMinutes} daqiiqo!
-2. QAABKA SADARKA: Sadar kasta WAA inuu ku bilaabmaa KELIYA \`Safa: [emotion] ...\` ama \`Mohamed: [emotion] ...\`
+1. FAHAMKA TITLE-KA & KU XIDHNAANTA 100%:
+   - Si qoto dheer u faham ciwaanka/su'aasha la siiyay ("${cleanTopic}").
+   - Sadar kasta WAA inuu toos uga jawaabo ama uga doodo ciwaankaas — MARNABA ha ka leexan ciwaanka, hana qorin wacdi guud oo aan mawduuca ku saabsanayn!
+   - Keen tusaalayaal DHAB AH oo ka dhaca bulshada Soomaalida maanta (sheekooyinka maalinlaha ah, dhaqanka, qoyska, suuqa, baraha bulshada, dhalinyarada).
+2. DHERERKA SAXDA AH: Qor u dhexeeya ${minTurns} ilaa ${maxTurns} sadar (wadarta ereyada ~${targetWords} erey oo Af-Soomaali ah) si codku u socdo qiyaastii ${durationMinutes} daqiiqo!
+3. QAABKA SADARKA: Sadar kasta hal layn gaar ah ku qor oo ku bilow KELIYA \`Safa: [emotion] ...\` ama \`Mohamed: [emotion] ...\`
    - Emotion tags la ogol yahay: \`[excited]\`, \`[debate]\`, \`[laugh]\`, \`[calm]\`, \`[backchannel]\`.
-3. HA U EKAANIN AI MARNABA:
-   - Waa MAMNUUC jumladaha robot-ka sida "Mawduucan waa mid muhiim ah", "Ugu dambeyn waxaan soo gabagabeynaynaa", "Su'aal fiican baad weydiisay".
-   - Toos ugu bood hadal xiiso leh (Hook) ama kala aragti duwanaan laga billaabo sadarka 1-aad!
-   - Isticmaal lahjad Soomaali dhab ah oo qof walba fahmo oo ku raaxaysto ("Wallaahi", "Bal eeg", "Sug sug", "Haa-haa", "Runtii", "Taasi waa qodob culus", "Aan kuu sheego...").
-   - Mawduuca si QOTO DHEER u faham: keen xaqiiqooyin dhab ah, caqabado, xalal, iyo tusaalayaal nolosha Soomaalida ku xidhan!
-4. NAADIIFINTA CODKA (TTS SAFE):
-   - HA ISTICMAALIN emojis, xiddigo (*), hashtags (#), qawsyo dheeraad ah, ama qoraal markdown ah (marka laga reebo hal emotion tag oo bilowga ah).
+4. HA U EKAANIN AI MARNABA (SIRTA BINI'AADAMKA DHABTA AH):
+   - Waa MAMNUUC jumladaha robot-ka sida "Mawduucan waa mid muhiim ah", "Ugu dambeyn waxaan soo gabagabeynaynaa", "Su'aal fiican baad weydiisay", "Qorshe cad iyo joogteyn".
+   - Toos ugu bood su'aasha & doodda laga billaabo sadarka 1-aad!
+   - Isku dar DHERERRO KALA DUWAN (Burstiness): mar sadar aad u gaaban oo 2-5 erey ah ([backchannel] qofka kale ka dhex galaya sida "War been badanaa!", "Maya, maya, maya!", "Haa-haa sug!"), marna sheeko yar oo nool oo bulshada ka dhacday (2-3 jumladood)!
+   - Isticmaal lahjad & eray-bixin dadka dhabta ahi ku hadlaan maalin walba: "Maxamedow!", "Safaay!", "Horta...", "I dhagayso...", "Sug, sug, sug!", "Ma garatay?", "Wallaahi", "Alla beerka!", "War iga daa!", "Taasi waa run balse...".
+5. NAADIIFINTA CODKA (TTS SAFE):
+   - HA ISTICMAALIN emojis, xiddigo (*), hashtags (#), ama markdown bold (**).
    - Qosolka u qor "Haa-haa!" ama "Hehe!" si codku si dabiici ah ugu dhawaaqo.
-5. HA QORIN wax hordhac ah ama sharraxaad bannaanka ah — toos u qor sadarrada Safa: iyo Mohamed: oo keliya!`;
+6. HA QORIN wax hordhac ah ama sharraxaad bannaanka ah — toos u qor sadarrada Safa: iyo Mohamed: oo keliya!`;
 
       const contextBlock = options?.sourceText
         ? `\n\nXOGTA / MAQAALKA / DUKUMENTIGA AY KA WADA HADLAYAAN:\n"""\n${options.sourceText.slice(0, 4800)}\n"""`
         : '';
 
       const userPrompt =
-        `Mawduuca Podcast-ka maanta waa: "${cleanTopic || 'Dukumentiga/Sawirka la soo diray'}".` +
+        `CIWAANKA / MAWDUUCA PODCAST-KA MAANTA WAA: "${cleanTopic || 'Dukumentiga/Sawirka la soo diray'}".` +
         `\nMuddada la rabo: ${durationMinutes} daqiiqo (${minTurns}-${maxTurns} sadar, ~${targetWords} erey).` +
+        (debateCtx.isGenderDebate
+          ? `\nXUSUUSIN: Safa waxay u doodaysaa DUMARKA (oo ragga ku doodaysaa), Mohamed-na wuxuu u doodayaa RAGGA (oo dumarka ku doodaya)! Si dhab ah ha u murmaan oo tusaalayaal bulsho ha keenaan!`
+          : '') +
         `${contextBlock}` +
-        `\nFadlan qor wada-sheekeysiga Safa iyo Mohamed oo heer caalami ah — sidii laba qof oo dhab ahaan studio ku wada doodaya, qoslaya, oo si qoto dheer u fahamsan mawduucan!`;
+        `\nHadda toos u qor sadarrada Safa: iyo Mohamed: — 100% ku xidhan ciwaanka "${cleanTopic}", qosol, muran dhab ah, iyo dhaqan Soomaaliyeed oo nool!`;
 
       try {
         const result = await ai.generateResponse(userPrompt, [], {
           systemInstruction,
-          temperature: style === 'diini' ? 0.65 : 0.88,
+          temperature: style === 'diini' ? 0.65 : 0.9,
           maxOutputTokens,
+          timeoutMs: 35000,
           ...(options?.sourceMedia ? { media: options.sourceMedia } : {}),
         });
         const rawOut = String(result?.text || '').trim();
@@ -825,71 +915,129 @@ XEERARKA ADAG EE HEERKA CAALAMIGA AH (WAA WAAJIB):
           rawOut.includes('Zero-Cost Safeguard') ||
           rawOut.includes('No AI provider is active') ||
           rawOut.includes('CARDOSO AI Error') ||
-          rawOut.includes('Gemini API request failed');
+          rawOut.includes('Gemini API request failed') ||
+          rawOut.includes('server-ka AI ayaa mashquul') ||
+          rawOut.includes('server-ka Gemini AI ayaa hadda') ||
+          rawOut.includes('xiriirka wuu yara mashquulsan yahay');
 
         if (!isErrorMsg) {
           const parsed = this.parseDialogueScript(rawOut).filter((t) => t.text.length >= 4);
           if (parsed.length >= 4) {
             return parsed.slice(0, 40);
           }
+          console.warn(`[VoiceReply] AI output for "${cleanTopic}" parsed only ${parsed.length} turn(s); using topic-aware fallback.`);
+        } else {
+          console.warn(`[VoiceReply] AI unavailable/quota for "${cleanTopic}": ${rawOut.slice(0, 100)}`);
         }
       } catch (err: any) {
         console.warn(`[VoiceReply] AI topic dialogue fallback for "${cleanTopic}":`, err?.message || err);
       }
     }
 
-    // World-class natural Somali debate fallback (scales cleanly with durationMinutes even offline!)
+    // Topic-aware Somali debate fallback (handles Men-vs-Women & comparisons naturally even if AI quota is exhausted!)
     const topicLabel = cleanTopic || 'mawduuca maanta';
+    if (debateCtx.isGenderDebate) {
+      const genderFallback: DialogueTurn[] = [
+        {
+          speaker: 'safa',
+          emotion: 'excited',
+          text: `Assalaamu calaykum Mohamed! Maanta dood kulul baa ina sugaysa — ${topicLabel}! Runta aan isku sheegno, jawaabtu way iska cad dahay, raggaa ku horreeya!`,
+        },
+        {
+          speaker: 'mohamed',
+          emotion: 'laugh',
+          text: `Wa calaykumus salaam Safa! Haa-haa, war maanta dagaal culus baad la soo kalahday! Sug sug, sidee ragga u eedaysay adigoon xataa dumarka eegin? Wallaahi dumarkaa ka qarsoon oo ka daran!`,
+        },
+        {
+          speaker: 'safa',
+          emotion: 'debate',
+          text: `War Mohamed beenta jooji! Bal bulshada Soomaalida eeg! Nin baa hal mar saddex qof ballan u qaadaya, taleefankiisana password adag ku xidhaya, haddana wuxuu ku leeyahay saaxiibkay baan la fadhiyaa!`,
+        },
+        {
+          speaker: 'mohamed',
+          emotion: 'debate',
+          text: `Maya Safa, ha igu soo ordin! Ninku ugu yaraan haddii uu qalad galo waa la qabtaa oo wuu is kashifaa! Laakiin gabadhu intay kuu dhoolla-caddaynayso ayay qalbigeeda iyo sheekadeeda qarsataa — ilaa aad maalin qura aragto iyadoo qof kale la guursatay!`,
+        },
+        {
+          speaker: 'safa',
+          emotion: 'backchannel',
+          text: `Haa-haa! Wallaahi taasi waa been cad Mohamed!`,
+        },
+        {
+          speaker: 'safa',
+          emotion: 'debate',
+          text: `Gabadhu markay daacad u tahay qofka, qalbigeeda oo dhan bay siisaa oo way u dulqaadataa! Waxa dumarka niyad-jebiya ee beddela waa marka raggu ballankii iyo kalsoonidii jabiyaan!`,
+        },
+        {
+          speaker: 'mohamed',
+          emotion: 'laugh',
+          text: `Haa-haa, mar walba eedda ragga uun baa la saaraa miyaa Safa? Bal imisa nin oo daacad ah oo shaqaysta ayaa intuu qof jeclaaday, markii nin ka lacag badan yimid laga tagay? Taasna ma raggaa leh?!`,
+        },
+        {
+          speaker: 'safa',
+          emotion: 'excited',
+          text: `Wallaahi mararka qaar taasi way dhacdaa, qiranayaa, laakiin marka la is barbar dhigo ${topicLabel}, weli dumarku waxay kaga fiican yihiin daacadnimada iyo ilaalinta qoyska!`,
+        },
+        {
+          speaker: 'mohamed',
+          emotion: 'debate',
+          text: `Aniguna waxaan leeyahay raggu waa tiirka daacadnimada marka la helo qof qaddarinaysa! Dhageystayaasha sharafta leh, idinka ha kala saareen dooddan — Safa iyo Mohamed yaa saxsan maanta?`,
+        },
+        {
+          speaker: 'safa',
+          emotion: 'laugh',
+          text: `Haa-haa, comment-ga noogu qora cidda aad taageersan tihiin — Dumarka mise Ragga! Nabad gelyo asxaabey!`,
+          pauseAfterMs: 0,
+        },
+      ];
+      return genderFallback;
+    }
+
     const baseFallback: DialogueTurn[] = [
       {
         speaker: 'safa',
         emotion: 'excited',
-        text: `Assalaamu calaykum Mohamed! Maanta waxaan rabaa inaan si daacad ah uga doodno ${topicLabel} — run ahaantii dad badan baa si qaldan u fahma arrintan!`,
+        text: `Assalaamu calaykum Mohamed! Maanta waxaan fadhiga u soo qaadannay dood aad u kulul oo ku saabsan ${topicLabel} — aniguna mowqif cad baan ka taaganahay!`,
       },
       {
         speaker: 'mohamed',
         emotion: 'laugh',
-        text: `Wa calaykumus salaam Safa! Haa-haa, maanta dagaal baad u soo diyaar garowday ayaan u malaynayaa! Bal ii sheeg, maxaad u aragtaa qaladka ugu weyn ee dadku ka galaan ${topicLabel}?`,
+        text: `Wa calaykumus salaam Safa! Haa-haa, mar walba dooddaada waan ka baqaa! Bal ii sheeg, maxaad si gaar ah uga aaminsan tahay ${topicLabel}?`,
       },
       {
         speaker: 'safa',
         emotion: 'debate',
-        text: `Bal eeg Mohamed, dadku waxay moodaan in ${topicLabel} uu hal maalin ku hirgalo iyadoon wax qorshe ah la samayn. Kadibna markay caqabad yar la kulmaan way is dhiibaan!`,
+        text: `Bal bulshada Soomaalida maanta eeg Mohamed! Marka laga hadlayo ${topicLabel}, dad badan baa dusha sare uun ka arka iyagoon eegin xaqiiqada dhabta ah ee hooseysa!`,
       },
       {
         speaker: 'mohamed',
         emotion: 'debate',
-        text: `Maya Safa, sug sug! Taasi waa qayb ka mid ah runta, laakiin anigu waxaan qabaa in dhibku aanu ahayn qorshe la'aan keliya — ee dad badan baa ka baqa inay tallaabada ugu horreysa qaadaan!`,
+        text: `Maya Safa, sug sug! Taas kugu ma raacsani boqolkiiba boqol! Sababtoo ah dadka maanta jooga way ka feejigan yihiin sidii hore, tusaalayaal nool baana muujinaya in ${topicLabel} uu laba weji leeyahay!`,
       },
       {
         speaker: 'safa',
         emotion: 'backchannel',
-        text: `Haa-haa, wallaahi taasi waa qodob culus!`,
-      },
-      {
-        speaker: 'mohamed',
-        emotion: 'calm',
-        text: `Sax! Qofka raba inuu guul dhab ah ka gaaro ${topicLabel} wuxuu u baahan yahay saddex shay: faham sax ah, joogteyn maalinle ah, iyo inuu ka barto khaladaadkii hore.`,
-      },
-      {
-        speaker: 'safa',
-        emotion: 'debate',
-        text: `Laakiin Mohamed, maxaad ku leedahay qofka dhaha waqti ma haysto ama duruuftaa igu adag? Ma sahlan tahay inaad iska tiraahdo joogtee?`,
+        text: `Haa-haa, bal ii sheeg wejiga aad sheegayso!`,
       },
       {
         speaker: 'mohamed',
         emotion: 'excited',
-        text: `Su'aal aad u fiican Safa! Xataa labaatan daqiiqo maalintii haddii aad geliso ${topicLabel}, bil gudaheed isbeddel muuqda ayaad arkaysaa. Waxa guusha keena ma aha buuq badan, ee waa tallaabo yar oo joogto ah!`,
+        text: `Fiiri, marka qofku si deggan uga fiirsado ${topicLabel} oo uu tusaale ka qaato wixii bulshada hore u soo maray, wuxuu arkayaa in go'aanka caqligu ka fiican yahay degdegga!`,
       },
       {
         speaker: 'safa',
-        emotion: 'laugh',
-        text: `Haa-haa, maanta waad iga adkaatay Mohamed! Runtii dhageystayaasha waxaan kula talinaynaa inay maanta ka bilaabaan hal tallaabo oo cad oo ku saabsan ${topicLabel}.`,
+        emotion: 'debate',
+        text: `Laakiin Mohamed, run ahaantii mararka qaar dadku way ogyihiin runta ku saabsan ${topicLabel}, waxaase dhib ah ku dhaqankeeda iyo is-faham la'aanta bulshada dhexdeeda!`,
       },
       {
         speaker: 'mohamed',
+        emotion: 'laugh',
+        text: `Haa-haa, qodobkaas waad ku saxan tahay Safa! Dhageystayaasha sharafta leh, idinkuna aragtidiinna nala wadaaga — sidee u aragtaan ${topicLabel}?`,
+      },
+      {
+        speaker: 'safa',
         emotion: 'calm',
-        text: `Mahadsanid Safa dooddan xiisaha leh! Dhageystayaasha sharafta lehna waxaan u rajaynaynaa guul iyo horumar wacan. Nabad gelyo!`,
+        text: `Waa dood xiiso badan oo qof walba taabanaysa! Mahadsanid Mohamed, asxaabeyna nabad gelyo iyo kulan dambe oo xiiso leh!`,
         pauseAfterMs: 0,
       },
     ];
@@ -899,22 +1047,17 @@ XEERARKA ADAG EE HEERKA CAALAMIGA AH (WAA WAAJIB):
         {
           speaker: 'safa',
           emotion: 'debate',
-          text: `Intaynaan xidhin Mohamed, aan tusaale dhab ah keeno! Dhalinyarada maanta joogta Hargeysa, Muqdisho, iyo Jigjiga qaarkood waxay haystaan telefoon iyo internet, balse sidii saxda ahayd ugama faa'iidaystaan ${topicLabel}.`,
+          text: `Intaynaan xidhin Mohamed, dhalinyarada maanta joogta Hargeysa, Muqdisho, iyo Jigjiga aad bay uga doodaan ${topicLabel} baraha bulshada — adigu sideed u aragtaa saameynta baraha bulshada?`,
         },
         {
           speaker: 'mohamed',
           emotion: 'excited',
-          text: `Waa runtaa boqolkiiba boqol Safa! Qofka intuu saacado badan daawasho bilaa faa'iido ah ku lumiyo, haddii uu xoogga saaro barashada iyo dhaqan-gelinta ${topicLabel}, noloshiisa oo dhan baa is beddeli karta!`,
+          text: `Wallaahi baraha bulshadu doodda ${topicLabel} aad bay u kululeeyeen! Qof walba aragtidiisa ayuu soo dhigaa, waxaase muhiim ah in xaqiiqada iyo dhaqanka wanaagsan la eego!`,
         },
         {
           speaker: 'safa',
           emotion: 'backchannel',
-          text: `Wallaahi sax! Taasi waa fariinta ugu muhiimsan maanta!`,
-        },
-        {
-          speaker: 'mohamed',
-          emotion: 'calm',
-          text: `Haa walaal, qof walba wuxuu awoodaa inuu maanta go'aan geesinimo leh qaato oo uu naftiisa ku maalgeliyo aqoon iyo camal suuban.`,
+          text: `Wallaahi sax! Taasi waa run!`,
         },
       ];
       baseFallback.splice(baseFallback.length - 2, 0, ...extraDepth);
@@ -1012,208 +1155,79 @@ XEERARKA ADAG EE HEERKA CAALAMIGA AH (WAA WAAJIB):
 
     const outputFormat = options?.outputFormat === 'ogg' ? 'ogg' : 'mp3';
     const isStereo = outputFormat === 'mp3';
-    const defaultPauseMs = Math.max(0, Math.min(1200, options?.defaultPauseMs ?? 220));
+    const defaultPauseMs = Math.max(0, Math.min(1200, options?.defaultPauseMs ?? 110));
     const soundMode: PodcastSoundMode = options?.soundMode || 'chime';
     const masterAudio = options?.masterAudio !== false;
 
-    const tmpBase = `cardoso_podcast_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const tempFiles: string[] = [];
-    const outPath = path.join(os.tmpdir(), `${tmpBase}_final.${outputFormat}`);
+    // 1. Synthesize each dialogue turn with per-turn micro-prosody jitter & trim Edge TTS dead silence!
+    const mixSegments: HumanMixSegment[] = [];
 
-    try {
-      // 1. Synthesize each dialogue turn using Safa (UbaxNeural) or Mohamed (MuuseNeural) + dynamic emotion prosody
-      const segmentEntries: Array<{
-        filePath: string;
-        speaker: CanonicalPodcastSpeaker;
-        pauseSec: number;
-      }> = [];
+    for (let i = 0; i < validTurns.length; i++) {
+      const turn = validTurns[i];
+      const voiceName = turn.speaker === 'safa' ? 'so-SO-UbaxNeural' : 'so-SO-MuuseNeural';
+      const prosody = this.prosodyForEmotion(turn.emotion, i);
+      let audioBuf: Buffer | null = null;
 
-      for (let i = 0; i < validTurns.length; i++) {
-        const turn = validTurns[i];
-        const voiceName = turn.speaker === 'safa' ? 'so-SO-UbaxNeural' : 'so-SO-MuuseNeural';
-        const prosody = this.prosodyForEmotion(turn.emotion);
-        let audioBuf: Buffer | null = null;
-
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          const res = await this.synthesizeSingleAttempt(turn.text, voiceName, 'so', prosody);
-          if (res && res.buffer.length > 0) {
-            audioBuf = res.buffer;
-            break;
-          }
-          if (attempt === 1) await new Promise((r) => setTimeout(r, 350));
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const res = await this.synthesizeSingleAttempt(turn.text, voiceName, 'so', prosody);
+        if (res && res.buffer.length > 0) {
+          audioBuf = res.buffer;
+          break;
         }
-
-        if (!audioBuf || audioBuf.length === 0) {
-          throw new Error(`Codka qaybta #${i + 1} (${turn.speaker}) lama samayn karin`);
-        }
-
-        const segPath = path.join(os.tmpdir(), `${tmpBase}_seg_${i}.audio`);
-        await fs.promises.writeFile(segPath, audioBuf);
-        tempFiles.push(segPath);
-
-        const autoPauseMs = this.defaultPauseForEmotion(turn.emotion, defaultPauseMs);
-        const pauseMs = i === validTurns.length - 1 ? 0 : (turn.pauseAfterMs ?? autoPauseMs);
-        segmentEntries.push({
-          filePath: segPath,
-          speaker: turn.speaker,
-          pauseSec: Math.max(0, pauseMs) / 1000,
-        });
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 350));
       }
 
-      // 2. Build ordered timeline: [Intro Chime] + [Turns with snappy human pauses] + [Outro Chime]
-      type TimelineItem = { filePath: string; kind: 'chime' | 'safa' | 'mohamed' | 'silence' };
-      const orderedInputs: TimelineItem[] = [];
-
-      if (soundMode === 'chime' || soundMode === 'ambient') {
-        const introPath = path.join(os.tmpdir(), `${tmpBase}_intro.wav`);
-        await fs.promises.writeFile(introPath, createStudioChimeWav('intro', 48000));
-        tempFiles.push(introPath);
-        orderedInputs.push({ filePath: introPath, kind: 'chime' });
+      if (!audioBuf || audioBuf.length === 0) {
+        throw new Error(`Codka qaybta #${i + 1} (${turn.speaker}) lama samayn karin`);
       }
 
-      for (let i = 0; i < segmentEntries.length; i++) {
-        const seg = segmentEntries[i];
-        orderedInputs.push({ filePath: seg.filePath, kind: seg.speaker });
-        if (seg.pauseSec > 0.02) {
-          const silPath = path.join(os.tmpdir(), `${tmpBase}_sil_${i}.wav`);
-          await fs.promises.writeFile(silPath, createSilentWav(Math.round(seg.pauseSec * 1000), 48000));
-          tempFiles.push(silPath);
-          orderedInputs.push({ filePath: silPath, kind: 'silence' });
-        }
+      const trimmedPcm = await decodeTrimmedMonoPcm48k(audioBuf);
+      if (trimmedPcm.length === 0) {
+        throw new Error(`Codka qaybta #${i + 1} (${turn.speaker}) wuu madhan yahay`);
       }
 
-      if (soundMode === 'chime' || soundMode === 'ambient') {
-        const tailPausePath = path.join(os.tmpdir(), `${tmpBase}_tail_sil.wav`);
-        await fs.promises.writeFile(tailPausePath, createSilentWav(200, 48000));
-        tempFiles.push(tailPausePath);
-        orderedInputs.push({ filePath: tailPausePath, kind: 'silence' });
-
-        const outroPath = path.join(os.tmpdir(), `${tmpBase}_outro.wav`);
-        await fs.promises.writeFile(outroPath, createStudioChimeWav('outro', 48000));
-        tempFiles.push(outroPath);
-        orderedInputs.push({ filePath: outroPath, kind: 'chime' });
-      }
-
-      // Optional subtle studio ambient pad for `soundMode === 'ambient'`
-      let ambientInputIndex = -1;
-      if (soundMode === 'ambient') {
-        const estDurationSec = Math.max(15, Math.min(340, validTurns.length * 10 + 12));
-        const ambPath = path.join(os.tmpdir(), `${tmpBase}_ambient.wav`);
-        await fs.promises.writeFile(ambPath, createAmbientPadWav(estDurationSec, 48000));
-        tempFiles.push(ambPath);
-        ambientInputIndex = orderedInputs.length;
-        orderedInputs.push({ filePath: ambPath, kind: 'chime' });
-      }
-
-      const concatCount = ambientInputIndex >= 0 ? orderedInputs.length - 1 : orderedInputs.length;
-
-      await new Promise<void>((resolve, reject) => {
-        const cmd = ffmpeg();
-        for (const inp of orderedInputs) {
-          cmd.input(inp.filePath);
-        }
-
-        const filterParts: string[] = [];
-        const concatLabels: string[] = [];
-
-        for (let i = 0; i < concatCount; i++) {
-          const item = orderedInputs[i];
-          const label = `a${i}`;
-          if (isStereo) {
-            if (item.kind === 'safa') {
-              // Subtle studio stereo placement: Safa slightly left
-              filterParts.push(
-                `[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,pan=stereo|c0=0.86*c0|c1=0.68*c0[${label}]`
-              );
-            } else if (item.kind === 'mohamed') {
-              // Subtle studio stereo placement: Mohamed slightly right
-              filterParts.push(
-                `[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,pan=stereo|c0=0.68*c0|c1=0.86*c0[${label}]`
-              );
-            } else {
-              filterParts.push(`[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[${label}]`);
-            }
-          } else {
-            filterParts.push(`[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono[${label}]`);
-          }
-          concatLabels.push(`[${label}]`);
-        }
-
-        filterParts.push(`${concatLabels.join('')}concat=n=${concatCount}:v=0:a=1[joined]`);
-
-        let currentLabel = 'joined';
-        if (masterAudio) {
-          filterParts.push(`[${currentLabel}]${STUDIO_VOICE_MASTER_FILTER}[mastered]`);
-          currentLabel = 'mastered';
-        }
-
-        if (ambientInputIndex >= 0) {
-          const ambLayout = isStereo ? 'stereo' : 'mono';
-          filterParts.push(
-            `[${ambientInputIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=${ambLayout}[amb]`
-          );
-          filterParts.push(
-            `[${currentLabel}][amb]amix=inputs=2:duration=first:dropout_transition=2[outa]`
-          );
-          currentLabel = 'outa';
-        }
-
-        cmd.complexFilter(filterParts, currentLabel);
-
-        if (outputFormat === 'ogg') {
-          cmd
-            .noVideo()
-            .audioCodec('libopus')
-            .audioBitrate('48k')
-            .audioFrequency(48000)
-            .audioChannels(1)
-            .outputOptions(['-application', 'voip', '-vbr', 'on'])
-            .format('ogg');
-        } else {
-          cmd
-            .noVideo()
-            .audioCodec('libmp3lame')
-            .audioBitrate('128k')
-            .audioFrequency(44100)
-            .audioChannels(2)
-            .format('mp3');
-        }
-
-        cmd
-          .on('end', () => resolve())
-          .on('error', (err) => reject(err))
-          .save(outPath);
+      mixSegments.push({
+        speaker: turn.speaker,
+        emotion: turn.emotion,
+        samples: trimmedPcm,
+        pauseAfterMs: turn.pauseAfterMs,
       });
-
-      let finalBuf: Buffer = await fs.promises.readFile(outPath);
-      if (!finalBuf || finalBuf.length < 256) {
-        throw new Error('Faylka podcast-ka ee la isku daray wuu madhan yahay');
-      }
-
-      if (outputFormat === 'ogg' && finalBuf.slice(0, 4).toString('ascii') !== 'OggS') {
-        finalBuf = await this.convertMediaToOggOpusStrict(finalBuf);
-      }
-
-      const seconds =
-        outputFormat === 'ogg'
-          ? getOggOpusDurationSeconds(finalBuf)
-          : Math.max(1, Math.round(finalBuf.length / 16000));
-
-      return {
-        buffer: finalBuf,
-        mimeType: outputFormat === 'ogg' ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
-        turnCount: segmentEntries.length,
-        seconds,
-        waveform: generateSpeechWaveform(finalBuf),
-        transcript: this.formatPodcastTranscript(validTurns),
-        turns: validTurns,
-      };
-    } finally {
-      for (const f of tempFiles) {
-        await fs.promises.unlink(f).catch(() => {});
-      }
-      await fs.promises.unlink(outPath).catch(() => {});
     }
+
+    // 2. Assemble sample-accurate Human Timeline:
+    //    - Real human voice overlap (-140ms..-210ms) on [debate], [laugh], & [backchannel]
+    //    - Continuous -48dB velvety Studio Room Tone (zero digital vacuum!)
+    //    - Overlapping Intro/Outro Studio Chimes & Sidechain Auto-Ducking Ambient Bed
+    const mixed = mixHumanPodcastTimeline(mixSegments, {
+      isStereo,
+      soundMode,
+      defaultPauseMs,
+    });
+
+    // 3. Single fast Broadcast Mastering Pass (Warm EQ + 18ms Studio Booth Ambience + Compressor + Limiter)
+    let finalBuf: Buffer = await encodeMasteredPodcastAudio(mixed.wavBuffer, {
+      outputFormat,
+      masterAudio,
+    });
+
+    if (outputFormat === 'ogg' && finalBuf.slice(0, 4).toString('ascii') !== 'OggS') {
+      finalBuf = await this.convertMediaToOggOpusStrict(finalBuf);
+    }
+
+    const seconds =
+      outputFormat === 'ogg'
+        ? getOggOpusDurationSeconds(finalBuf)
+        : mixed.totalSeconds;
+
+    return {
+      buffer: finalBuf,
+      mimeType: outputFormat === 'ogg' ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
+      turnCount: mixSegments.length,
+      seconds,
+      waveform: generateSpeechWaveform(finalBuf),
+      transcript: this.formatPodcastTranscript(validTurns),
+      turns: validTurns,
+    };
   }
 
   public static getFfmpegPath(): string | undefined {

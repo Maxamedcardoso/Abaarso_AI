@@ -180,9 +180,10 @@ export class GeminiProvider implements IAIProvider {
                 }
               })();
 
-              // Fast 12s timeout per model to prevent hanging
+              // Fast 12s default timeout (overrideable via options.timeoutMs e.g. 35s for long podcasts)
+              const effectiveTimeoutMs = Math.max(5000, Math.min(60000, options.timeoutMs ?? 12000));
               const timeoutPromise = new Promise<string>((_, reject) => {
-                setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than 12000ms`)), 12000);
+                setTimeout(() => reject(new Error(`Timeout: ${currentModelName} took longer than ${effectiveTimeoutMs}ms`)), effectiveTimeoutMs);
               });
 
               return await Promise.race([callPromise, timeoutPromise]);
@@ -199,8 +200,14 @@ export class GeminiProvider implements IAIProvider {
             }
           );
 
-          // Record successful request for quota tracking
-          const cleanResponseText = responseText.replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '').replace(/\s+/g, ' ').trim();
+          // Record successful request for quota tracking (PRESERVE line breaks so multi-line lists & podcast scripts stay intact!)
+          const cleanResponseText = responseText
+            .replace(/\bqaali(?:ga|da|yey|yahow)?\b/gi, '')
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/[ \t]*\n[ \t]*/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
           const estimatedTokens = Math.ceil((userPrompt.length + cleanResponseText.length) / 4);
           this.quotaTracker.recordRequest(estimatedTokens);
 

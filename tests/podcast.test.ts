@@ -11,8 +11,10 @@ import {
 import {
   createAmbientPadWav,
   createStudioChimeWav,
+  decodeTrimmedMonoPcm48k,
   encodePcmWav,
   generatePodcastCoverPng,
+  mixHumanPodcastTimeline,
   splitAudioIntoVoiceStatusClips,
 } from '../src/services/podcast-studio.service.js';
 import { WhatsAppManagerService } from '../src/services/whatsapp-manager.service.js';
@@ -104,45 +106,102 @@ async function runPodcastTests(): Promise<void> {
   assert(!teaser.includes('Muuse') && !teaser.includes('Ubax'), 'Teaser must NOT use legacy Muuse/Ubax names');
   console.log('  ✅ PASS: Sleek radio broadcast teaser verified ("Goor dhow la soco", Safa & Mohamed)');
 
-  // 4. AI topic generator (with minute scaling) + lively Somali debate fallback
+  // 4. AI topic generator (with minute scaling) + Gender/Comparison side-taking + collapsed-line recovery
   let capturedPrompt = '';
+  let capturedSystem = '';
   const mockAi = {
-    generateResponse: async (prompt: string) => {
+    generateResponse: async (prompt: string, _h?: any[], opts?: any) => {
       capturedPrompt = prompt;
+      capturedSystem = String(opts?.systemInstruction || '');
+      // Intentionally simulate markdown bolding + single-line collapsed response to prove parser resilience!
       return {
-        text: [
-          'Safa: [excited] Assalaamu calaykum Mohamed! Maanta waxaan ka doodnaynaa ganacsiga online-ka!',
-          'Mohamed: [laugh] Wa calaykumus salaam Safa! Haa-haa, sug bal maxaad ka diiddan tahay ganacsiga online-ka?',
-          'Safa: [debate] Dad badan baa lacag ku khasaara iyagoon baran suuq-geynta!',
-          'Mohamed: [debate] Maya Safa, taasi ma aha ciladda internet-ka ee waa qorshe la\'aan!',
-          'Safa: [backchannel] Haa-haa waa run!',
-          'Mohamed: [calm] Qofkii si daacad ah ugu adeega macaamiisha wuu guulaystaa.',
-        ].join('\n'),
+        text:
+          '**Safa:** [excited] Assalaamu calaykum Mohamed! Maanta dooddu waa Ragga iyo Dumarka ayaa khiyaano badan — raggaa ku horreeya! ' +
+          '**Mohamed:** [laugh] Wa calaykumus salaam Safa! Haa-haa maya walaal, dumarkaa ka qarsoon! ' +
+          'Safa: [debate] War Mohamed beenta jooji, bulshada Soomaalida eeg! ' +
+          'Mohamed: [debate] Sug sug Safa ha caroonin, tusaale nool baan kuu hayaa! ' +
+          'Safa: [backchannel] Haa-haa waa been! ' +
+          'Mohamed: [calm] Dhageystayaasha ha kala saareen maanta!',
       };
     },
   };
-  const aiTurns = await VoiceReplyService.generateTopicDialogueTurns('ganacsiga online-ka', mockAi, {
+  const aiTurns = await VoiceReplyService.generateTopicDialogueTurns('Ragga iyo Dumarka ayaa khiyaano badan', mockAi, {
     style: 'debate',
     durationMinutes: 3,
   });
   assert(capturedPrompt.includes('3 daqiiqo'), 'AI prompt must pass requested minutes');
-  assert(aiTurns.length === 6 && aiTurns[0].speaker === 'safa' && aiTurns[1].speaker === 'mohamed', 'AI turns must alternate Safa & Mohamed');
+  assert(
+    capturedSystem.includes('U DOODDAA DUMARKA') && capturedSystem.includes('U DOODAA RAGGA'),
+    'Gender debate must instruct Safa to defend Women and Mohamed to defend Men'
+  );
+  assert(
+    aiTurns.length === 6 && aiTurns[0].speaker === 'safa' && aiTurns[1].speaker === 'mohamed',
+    `Collapsed/bolded AI output must still parse cleanly into 6 Safa/Mohamed turns, got ${aiTurns.length}`
+  );
+
+  const genderCtx = VoiceReplyService.detectPodcastDebateContext('Ragga iyo Dumarka ayaa khiyaano badan');
+  assert(genderCtx.isGenderDebate === true, 'Must detect Men vs Women debate');
+
+  const cmpCtx = VoiceReplyService.detectPodcastDebateContext('Jacaylka iyo Lacagta midkee muhiimsan');
+  assert(cmpCtx.isComparison === true && cmpCtx.safaSide === 'Jacaylka' && cmpCtx.mohamedSide === 'Lacagta', `Comparison sides mismatch: ${JSON.stringify(cmpCtx)}`);
+
+  const genderFallback = await VoiceReplyService.generateTopicDialogueTurns('Ragga iyo Dumarka ayaa khiyaano badan', undefined, {
+    style: 'debate',
+    durationMinutes: 2,
+  });
+  assert(
+    genderFallback.length >= 10 &&
+      genderFallback.some((t) => t.speaker === 'safa' && /rag/i.test(t.text)) &&
+      genderFallback.some((t) => t.speaker === 'mohamed' && /dumar|gabadh/i.test(t.text)),
+    'Gender fallback must have Safa arguing against men and Mohamed arguing against women on the real topic'
+  );
 
   const fallbackLong = await VoiceReplyService.generateTopicDialogueTurns('waxbarashada', undefined, {
     style: 'debate',
     durationMinutes: 3,
   });
-  assert(fallbackLong.length >= 12, `3-min fallback should expand depth (>=12 turns), got ${fallbackLong.length}`);
+  assert(fallbackLong.length >= 11, `3-min fallback should expand depth (>=11 turns), got ${fallbackLong.length}`);
   assert(fallbackLong.every((t) => t.speaker === 'safa' || t.speaker === 'mohamed'), 'Fallback must use Safa & Mohamed exclusively');
-  console.log('  ✅ PASS: AI dialogue writer (minute-scaled) & lively Somali debate fallback verified');
+  console.log('  ✅ PASS: AI dialogue writer (newline-safe, gender/comparison side-taking & topic lock) verified');
 
-  // 5. Pure-Node Studio Chime, Ambient Pad, Cover PNG + REAL FFmpeg Broadcast Mastering + Stereo MP3 + OGG PTT + MP4 Video Audiogram!
+  // 5. Pure-Node Studio Chime, Ambient Pad, Cover PNG + Silence Trimming + Real Human Voice Overlap + Room Tone + FFmpeg Mastering & Video!
   const introWav = createStudioChimeWav('intro');
   const ambientWav = createAmbientPadWav(4);
   const coverPng = generatePodcastCoverPng(540, 960);
   assert(introWav.slice(0, 4).toString('ascii') === 'RIFF', 'Intro chime must be valid WAV');
   assert(ambientWav.slice(0, 4).toString('ascii') === 'RIFF', 'Ambient pad must be valid WAV');
   assert(coverPng.subarray(0, 8).toString('hex') === '89504e470d0a1a0a', 'Studio cover must be valid PNG');
+
+  // Verify leading/trailing dead TTS silence trimming (0.4s dead silence + 0.5s tone + 0.4s dead silence -> ~0.5s!)
+  const sr = 24000;
+  const paddedSamples = new Float32Array(Math.round(sr * 1.3));
+  for (let i = Math.round(sr * 0.4); i < Math.round(sr * 0.9); i++) {
+    paddedSamples[i] = 0.3 * Math.sin((2 * Math.PI * 300 * i) / sr);
+  }
+  const trimmedPcm = await decodeTrimmedMonoPcm48k(encodePcmWav(paddedSamples, sr));
+  const trimmedSec = trimmedPcm.length / 48000;
+  assert(trimmedSec >= 0.35 && trimmedSec <= 0.72, `Expected dead silence trimmed to ~0.5s, got ${trimmedSec.toFixed(2)}s`);
+
+  // Verify real human voice overlap (-135..-210ms) + per-turn prosody jitter
+  const p0 = VoiceReplyService.prosodyForEmotion('debate', 0);
+  const p1 = VoiceReplyService.prosodyForEmotion('debate', 1);
+  assert(p0.rate !== p1.rate || p0.pitch !== p1.pitch, 'Per-turn micro-prosody jitter should vary across turns');
+
+  const segA = new Float32Array(48000); // 1.0s
+  const segB = new Float32Array(48000); // 1.0s
+  segA.fill(0.15);
+  segB.fill(0.15);
+  const mixedOverlap = mixHumanPodcastTimeline(
+    [
+      { speaker: 'safa', emotion: 'excited', samples: segA },
+      { speaker: 'mohamed', emotion: 'debate', samples: segB },
+      { speaker: 'safa', emotion: 'backchannel', samples: segA.subarray(0, 24000) },
+    ],
+    { isStereo: true, soundMode: 'clean' }
+  );
+  assert(mixedOverlap.overlapCount === 2, `Expected 2 real human voice overlaps (debate + backchannel), got ${mixedOverlap.overlapCount}`);
+  assert(mixedOverlap.wavBuffer.length > 1000, 'Mixed timeline WAV must be valid');
+  console.log(`  ✅ PASS: TTS silence trimming (${trimmedSec.toFixed(2)}s), real voice overlap (${mixedOverlap.overlapCount}x), room tone & prosody jitter verified`);
 
   // Temporarily stub Edge TTS single attempt with pure-Node synthetic WAV so FFmpeg Mastering + Video Audiogram run 100% offline!
   const origAttempt = (VoiceReplyService as any).synthesizeSingleAttempt;
