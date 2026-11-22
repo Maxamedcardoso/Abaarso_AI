@@ -1744,12 +1744,26 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.get('/api/owner/groups', async (req: Request, res: Response) => {
     try {
       const { whatsappManager, transport } = getOwnerRefs();
+      const isTransportConnected = Boolean((transport as any)?.isConnected);
       if (!whatsappManager.hasSocket() && transport && typeof (transport as any).getSocket === 'function') {
         const sock = (transport as any).getSocket();
         if (sock) whatsappManager.setSocket(sock);
       }
-      const groups = await whatsappManager.listParticipatingGroups();
-      res.json({ status: 'ok', groups });
+      const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+      const result = await whatsappManager.listParticipatingGroupsDetailed({
+        forceRefresh,
+        isTransportConnected,
+      });
+      if (result.refreshedLive && result.groups.length > 0) {
+        tenantManager?.markTenantDirty('owner', ['auth'], false);
+      }
+      res.json({
+        status: 'ok',
+        groups: result.groups,
+        connected: result.connected,
+        source: result.source,
+        warning: result.warning || null,
+      });
     } catch (err: any) {
       res.status(500).json({ status: 'error', message: err.message, groups: [] });
     }

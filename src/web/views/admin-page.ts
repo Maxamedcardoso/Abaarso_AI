@@ -355,9 +355,9 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         <section class="glass-card">
           <div class="card-title">
             <span>👥 Dooro Kooxaha (Dhammaan Groups-ka)</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="loadGroupsForVoice()">🔄 Refresh</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="loadGroupsForVoice(true)">🔄 Refresh</button>
           </div>
-          <div class="card-sub">Dooro kooxaha aad rabto (waxaa ku jira kooxaha aad Admin-ka ka tahay iyo kuwa aad Member ka tahayba):</div>
+          <div class="card-sub" id="voiceGroupsStatusSub">Dooro kooxaha aad rabto (waxaa ku jira kooxaha aad Admin-ka ka tahay iyo kuwa aad Member ka tahayba):</div>
 
           <div style="margin-bottom:0.75rem;display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;background:rgba(6,182,212,0.1);border-radius:8px;flex-wrap:wrap;justify-content:space-between;">
             <div style="display:flex;align-items:center;gap:0.5rem;">
@@ -1366,19 +1366,48 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       }).join('');
     }
 
-    async function loadGroupsForVoice() {
+    async function loadGroupsForVoice(forceRefresh) {
       const box = document.getElementById('voiceGroupsListBox');
+      const sub = document.getElementById('voiceGroupsStatusSub');
       if (!box) return;
-      box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Waa la soo rarayaa dhammaan kooxaha...</div>';
+      box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">⏳ Waa la soo rarayaa dhammaan kooxaha WhatsApp...</div>';
       try {
-        const res = await fetch('/api/owner/groups');
-        const data = await res.json();
-        if (!data.groups || data.groups.length === 0) {
-          box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Koox la heli waayay. WhatsApp ma xiran yahay ama kooxo kuma jiro?</div>';
+        const url = '/api/owner/groups' + (forceRefresh ? '?refresh=1' : '');
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (res.status === 401) {
+          box.innerHTML = '<div style="color:#fbbf24;font-size:0.85rem;padding:0.5rem;">🔒 Session-kii maamulka wuu dhacay — fadlan <a href="/admin-login" style="color:#22d3ee;text-decoration:underline;">dib u gal Admin Login</a>.</div>';
+          return;
+        }
+        const text = await res.text();
+        let data = {};
+        try {
+          data = JSON.parse(text);
+        } catch (parseErr) {
+          throw new Error('Jawaab aan JSON ahayn (HTTP ' + res.status + ')');
+        }
+        if (!res.ok) {
+          throw new Error(data.message || ('HTTP ' + res.status));
+        }
+
+        const groups = Array.isArray(data.groups) ? data.groups : [];
+        if (sub) {
+          const modeLabel = data.source === 'live' ? '🟢 Live' : (data.source === 'live+cache' ? '🟢 Live + Cache' : '⚡ Cache');
+          const warnHtml = data.warning ? (' <span style="color:#fbbf24;">· ' + escapeAdminHtml(data.warning) + '</span>') : '';
+          sub.innerHTML = 'Wadarta: <strong>' + groups.length + ' kooxood</strong> (' + modeLabel + ')' + warnHtml;
+        }
+
+        if (groups.length === 0) {
+          const reason = data.warning
+            ? escapeAdminHtml(data.warning)
+            : (data.connected === false
+                ? 'WhatsApp-ka mulkiiluhu hadda waa Offline. Fadlan ka hubi tab-ka "Bot-kaaga (Owner Studio)".'
+                : 'Koox la heli waayay. Hubi in lambarka bot-ku kooxo ku jiro kadibna guji Refresh.');
+          box.innerHTML = '<div style="color:#fbbf24;font-size:0.85rem;padding:0.5rem;">⚠️ ' + reason +
+            '<div style="margin-top:0.55rem;"><button type="button" class="btn btn-primary btn-sm" onclick="loadGroupsForVoice(true)">🔄 Dib u Raadi Kooxaha</button></div></div>';
           return;
         }
 
-        _allGroupsCache = data.groups;
+        _allGroupsCache = groups;
         _allGroupsCache.forEach(function(g) {
           if (g.isManaged) _checkedGroupJids.add(g.id);
         });
@@ -1387,7 +1416,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
 
         const select = document.getElementById('autoAddGroupSelect');
         if (select) {
-          select.innerHTML = data.groups.map(function(g) {
+          select.innerHTML = groups.map(function(g) {
             const role = g.isAdmin ? ' [👑 Admin]' : ' [👤 Member]';
             const mg = g.isManaged ? ' [🤖 Managed]' : '';
             return '<option value="' + escapeAdminHtml(g.id) + '">' + escapeAdminHtml(g.name || g.id) + role + mg + '</option>';
@@ -1397,7 +1426,8 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
           }
         }
       } catch (err) {
-        box.innerHTML = '<div style="color:#f87171;font-size:0.85rem;">Cilad ayaa dhacday: ' + err.message + '</div>';
+        box.innerHTML = '<div style="color:#f87171;font-size:0.85rem;padding:0.5rem;">❌ Cilad ayaa dhacday: ' + escapeAdminHtml(err.message) +
+          '<div style="margin-top:0.55rem;"><button type="button" class="btn btn-primary btn-sm" onclick="loadGroupsForVoice(true)">🔄 Dib u Isku Day</button></div></div>';
       }
     }
 

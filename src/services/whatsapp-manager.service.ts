@@ -7,6 +7,7 @@ import { AIOrchestrator } from '../ai/ai-orchestrator.js';
 import { OutgoingMedia, IMessagingTransport } from '../transports/transport.interface.js';
 import { groupGovernorService, GroupGovernorService } from './group-governor.service.js';
 import { prayerTimesService, PrayerTimesService, PrayerDefinition, PrayerKey } from './prayer-times.service.js';
+import { generateSpeechWaveform, getOggOpusDurationSeconds } from './voice-reply.service.js';
 
 export interface WhatsAppManagerOptions {
   authDir?: string;
@@ -64,6 +65,24 @@ export interface AutoAddGroupConfig {
   attemptedJids: string[];
 }
 
+export interface ParticipatingGroupItem {
+  id: string;
+  name: string;
+  participantsCount: number;
+  isManaged: boolean;
+  isAdmin: boolean;
+  role: 'admin' | 'superadmin' | 'member';
+}
+
+interface KnownGroupRecord {
+  id: string;
+  name: string;
+  participantsCount: number;
+  isAdmin: boolean;
+  role: 'admin' | 'superadmin' | 'member';
+  updatedAt: number;
+}
+
 export class WhatsAppManagerService {
   private socket: WASocket | null = null;
   private autoViewStatus: boolean = true;
@@ -91,7 +110,11 @@ export class WhatsAppManagerService {
   private readonly botControlStoragePath: string;
   private readonly autoGroupStoragePath: string;
   private readonly autoAddStoragePath: string;
+  private readonly knownGroupsStoragePath: string;
   private autoManagedGroups: Map<string, { jid: string; name: string; enabledAt: number }> = new Map();
+  private knownGroups: Map<string, KnownGroupRecord> = new Map();
+  private lastLiveGroupsFetchAt: number = 0;
+  private lastGroupsFetchError: string | null = null;
   private autoAddConfig: Map<string, AutoAddGroupConfig> = new Map();
   private readonly governor: GroupGovernorService = groupGovernorService;
   private readonly prayerTimes: PrayerTimesService = prayerTimesService;
@@ -107,6 +130,7 @@ export class WhatsAppManagerService {
     this.botControlStoragePath = path.join(this.authDir, 'bot-control-config.json');
     this.autoGroupStoragePath = path.join(this.authDir, 'auto-managed-groups.json');
     this.autoAddStoragePath = path.join(this.authDir, 'auto-add-members-config.json');
+    this.knownGroupsStoragePath = path.join(this.authDir, 'discovered-groups-cache.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
@@ -116,6 +140,7 @@ export class WhatsAppManagerService {
     this.loadBotControlConfig();
     this.loadAutoGroupConfig();
     this.loadAutoAddConfig();
+    this.loadKnownGroupsCache();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -3112,77 +3137,232 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     return this.socket !== null;
   }
 
-  /**
-   * Lists all WhatsApp groups where the bot is currently participating,
-   * indicating whether the bot/owner is an Admin, superadmin, or regular member.
-   */
-  public async listParticipatingGroups(): Promise<Array<{
-    id: string;
-    name: string;
-    participantsCount: number;
-    isManaged: boolean;
-    isAdmin: boolean;
-    role: 'admin' | 'superadmin' | 'member';
-  }>> {
-    const list: Array<{
-      id: string;
-      name: string;
-      participantsCount: number;
-      isManaged: boolean;
-      isAdmin: boolean;
-      role: 'admin' | 'superadmin' | 'member';
-    }> = [];
-    const seen = new Set<string>();
-
-    const botPhone = this.socket?.user?.id ? this.socket.user.id.split(':')[0].split('@')[0] : '';
-    const botLid = (this.socket?.user as any)?.lid ? String((this.socket?.user as any).lid).split(':')[0].split('@')[0] : '';
-    const adminPhones = (this.configuredAdminPhones || []).map(p => p.replace(/[^0-9]/g, ''));
-
-    if (this.socket && typeof (this.socket as any).groupFetchAllParticipating === 'function') {
-      try {
-        const groups = await (this.socket as any).groupFetchAllParticipating();
-        for (const g of Object.values(groups) as any[]) {
-          if (g && g.id) {
-            seen.add(g.id);
-            let isAdmin = false;
-            let role: 'admin' | 'superadmin' | 'member' = 'member';
-
-            if (Array.isArray(g.participants)) {
-              for (const p of g.participants) {
-                const pNum = (p.id || '').split('@')[0].split(':')[0];
-                const isMatch = (botPhone && pNum === botPhone) || (botLid && pNum === botLid) || adminPhones.includes(pNum);
-                if (isMatch) {
-                  if (p.admin === 'admin' || p.admin === 'superadmin') {
-                    isAdmin = true;
-                    role = p.admin;
-                    break;
-                  }
-                }
-              }
+  private loadKnownGroupsCache(): void {
+    try {
+      if (fs.existsSync(this.knownGroupsStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.knownGroupsStoragePath, 'utf8'));
+        if (Array.isArray(raw)) {
+          for (const item of raw) {
+            if (item?.id && typeof item.id === 'string' && item.id.endsWith('@g.us')) {
+              this.knownGroups.set(item.id, {
+                id: item.id,
+                name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : item.id,
+                participantsCount: typeof item.participantsCount === 'number' ? item.participantsCount : 0,
+                isAdmin: Boolean(item.isAdmin),
+                role: item.role === 'superadmin' || item.role === 'admin' ? item.role : 'member',
+                updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : Date.now(),
+              });
             }
-
-            list.push({
-              id: g.id,
-              name: g.subject || g.id,
-              participantsCount: Array.isArray(g.participants) ? g.participants.length : 0,
-              isManaged: this.isGroupAutoManaged(g.id),
-              isAdmin,
-              role,
-            });
           }
         }
-      } catch (err: any) {
-        console.warn(`[WhatsAppManager] Error listing participating groups: ${err?.message}`);
+      }
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to load known groups cache: ${e?.message}`);
+    }
+  }
+
+  private saveKnownGroupsCache(): void {
+    try {
+      const dir = path.dirname(this.knownGroupsStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const list = Array.from(this.knownGroups.values());
+      fs.writeFileSync(this.knownGroupsStoragePath, JSON.stringify(list, null, 2), 'utf8');
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to save known groups cache: ${e?.message}`);
+    }
+  }
+
+  private isRealGroupName(name?: string, jid?: string): boolean {
+    const clean = String(name || '').trim();
+    if (!clean) return false;
+    if (clean.endsWith('@g.us')) return false;
+    if (jid && clean === jid) return false;
+    return true;
+  }
+
+  private detectRoleInParticipants(participants: any[]): { isAdmin: boolean; role: 'admin' | 'superadmin' | 'member' } {
+    const botPhone = this.socket?.user?.id
+      ? this.socket.user.id.split(':')[0].split('@')[0].replace(/\D/g, '')
+      : this.botJid.replace(/\D/g, '');
+    const botLid = (this.socket?.user as any)?.lid
+      ? String((this.socket?.user as any).lid).split(':')[0].split('@')[0].replace(/\D/g, '')
+      : '';
+    const adminPhones = (this.configuredAdminPhones || []).map(p => p.replace(/[^0-9]/g, '')).filter(Boolean);
+
+    for (const p of participants) {
+      if (!p) continue;
+      const candidateNums = [p.id, p.phoneNumber, p.jid, p.lid]
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .map(v => v.split('@')[0].split(':')[0].replace(/\D/g, ''))
+        .filter(Boolean);
+
+      const isMatch = candidateNums.some(
+        n => (botPhone && n === botPhone) || (botLid && n === botLid) || adminPhones.includes(n)
+      );
+      if (isMatch && (p.admin === 'admin' || p.admin === 'superadmin')) {
+        return { isAdmin: true, role: p.admin };
       }
     }
+    return { isAdmin: false, role: 'member' };
+  }
 
-    // Add any from autoManagedGroups not already caught
+  /**
+   * Records a group discovered via Baileys events (groups.upsert, groups.update,
+   * messaging-history.set, chats.upsert, groupFetchAllParticipating, or incoming messages).
+   * Preserves known real group names and never overwrites them with blank or raw JIDs.
+   */
+  public recordDiscoveredGroup(raw: any, persist: boolean = false): boolean {
+    const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
+    if (!id || !id.endsWith('@g.us')) return false;
+
+    const existing = this.knownGroups.get(id);
+    const rawName = String(raw?.subject || raw?.name || raw?.conversationName || '').trim();
+    const nextName = this.isRealGroupName(rawName, id)
+      ? rawName
+      : (existing && this.isRealGroupName(existing.name, id) ? existing.name : (rawName || existing?.name || id));
+
+    const hasParticipants = Array.isArray(raw?.participants) && raw.participants.length > 0;
+    const rawSize = typeof raw?.size === 'number' && raw.size > 0 ? raw.size : 0;
+    const rawCount = typeof raw?.participantsCount === 'number' && raw.participantsCount > 0 ? raw.participantsCount : 0;
+    const nextCount = hasParticipants
+      ? raw.participants.length
+      : (rawSize || rawCount || existing?.participantsCount || 0);
+
+    let isAdmin = existing?.isAdmin || false;
+    let role: 'admin' | 'superadmin' | 'member' = existing?.role || 'member';
+    if (hasParticipants) {
+      const detected = this.detectRoleInParticipants(raw.participants);
+      isAdmin = detected.isAdmin;
+      role = detected.role;
+    } else if (typeof raw?.isAdmin === 'boolean') {
+      isAdmin = raw.isAdmin;
+      role = raw.role === 'superadmin' || raw.role === 'admin' ? raw.role : (isAdmin ? 'admin' : 'member');
+    }
+
+    const changed =
+      !existing ||
+      existing.name !== nextName ||
+      existing.participantsCount !== nextCount ||
+      existing.isAdmin !== isAdmin ||
+      existing.role !== role;
+
+    this.knownGroups.set(id, {
+      id,
+      name: nextName,
+      participantsCount: nextCount,
+      isAdmin,
+      role,
+      updatedAt: Date.now(),
+    });
+
+    if (changed && persist) {
+      this.saveKnownGroupsCache();
+    }
+    return changed;
+  }
+
+  public recordDiscoveredGroups(rawGroups: any[], persist: boolean = true): number {
+    if (!Array.isArray(rawGroups) || rawGroups.length === 0) return 0;
+    let changedCount = 0;
+    for (const g of rawGroups) {
+      if (this.recordDiscoveredGroup(g, false)) {
+        changedCount++;
+      }
+    }
+    if (changedCount > 0 && persist) {
+      this.saveKnownGroupsCache();
+    }
+    return changedCount;
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Lists all WhatsApp groups with smart live refresh, timeout protection, persistent cache
+   * fallback, and automatic missing-name resolution via groupMetadata() so group names ALWAYS appear.
+   */
+  public async listParticipatingGroupsDetailed(options?: {
+    forceRefresh?: boolean;
+    isTransportConnected?: boolean;
+  }): Promise<{
+    groups: ParticipatingGroupItem[];
+    source: 'live' | 'cache' | 'live+cache';
+    connected: boolean;
+    warning?: string;
+    refreshedLive: boolean;
+  }> {
+    const connected = Boolean(this.socket) && options?.isTransportConnected !== false;
+    const forceRefresh = Boolean(options?.forceRefresh);
+    const cacheFresh = this.knownGroups.size > 0 && (Date.now() - this.lastLiveGroupsFetchAt) < 45_000;
+    let refreshedLive = false;
+    let liveCount = 0;
+    let warning: string | undefined;
+
+    if (connected && typeof (this.socket as any).groupFetchAllParticipating === 'function' && (forceRefresh || !cacheFresh)) {
+      try {
+        const groupsObj = await this.withTimeout(
+          (this.socket as any).groupFetchAllParticipating(),
+          15_000,
+          'groupFetchAllParticipating'
+        );
+        const values = groupsObj && typeof groupsObj === 'object' ? Object.values(groupsObj) : [];
+        liveCount = values.length;
+        if (values.length > 0) {
+          this.recordDiscoveredGroups(values, true);
+        }
+        this.lastLiveGroupsFetchAt = Date.now();
+        this.lastGroupsFetchError = null;
+        refreshedLive = true;
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        this.lastGroupsFetchError = errMsg;
+        console.warn(`[WhatsAppManager] Error listing participating groups (falling back to ${this.knownGroups.size} cached groups): ${errMsg}`);
+        warning = this.knownGroups.size > 0
+          ? `WhatsApp live refresh wuu gaabiyay (${errMsg}) — waxaa la soo bandhigay liiska kaydsan (${this.knownGroups.size} kooxood).`
+          : `WhatsApp kooxaha lama soo qaadi karin hadda (${errMsg}). Hubi in WhatsApp-ku online yahay kadibna guji Refresh.`;
+      }
+    } else if (!connected) {
+      warning = this.knownGroups.size > 0
+        ? `WhatsApp-ka mulkiiluhu hadda waa Offline — waxaa muuqda liiskii u dambeeyay ee kaydsanaa (${this.knownGroups.size} kooxood).`
+        : 'WhatsApp-ka mulkiiluhu hadda waa Offline — ku xidh Owner Studio kadibna guji Refresh.';
+    }
+
+    // Merge knownGroups + autoManagedGroups into one deduplicated map
+    const merged = new Map<string, ParticipatingGroupItem>();
+    for (const g of this.knownGroups.values()) {
+      merged.set(g.id, {
+        id: g.id,
+        name: g.name || g.id,
+        participantsCount: g.participantsCount || 0,
+        isManaged: this.isGroupAutoManaged(g.id),
+        isAdmin: g.isAdmin,
+        role: g.role,
+      });
+    }
+
     for (const [jid, info] of this.autoManagedGroups.entries()) {
-      if (!seen.has(jid)) {
-        seen.add(jid);
-        list.push({
+      const existing = merged.get(jid);
+      if (existing) {
+        existing.isManaged = true;
+        if (!this.isRealGroupName(existing.name, jid) && this.isRealGroupName(info.name, jid)) {
+          existing.name = info.name;
+        }
+      } else {
+        merged.set(jid, {
           id: jid,
-          name: info.name,
+          name: this.isRealGroupName(info.name, jid) ? info.name : jid,
           participantsCount: 0,
           isManaged: true,
           isAdmin: false,
@@ -3191,7 +3371,74 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       }
     }
 
-    return list;
+    // Resolve any remaining raw-JID group names via socket.groupMetadata() (up to 10 per call, 3s each)
+    if (connected && typeof (this.socket as any).groupMetadata === 'function') {
+      const missingNameJids = Array.from(merged.values())
+        .filter(g => !this.isRealGroupName(g.name, g.id))
+        .slice(0, 10)
+        .map(g => g.id);
+
+      let resolvedAny = false;
+      for (const jid of missingNameJids) {
+        try {
+          const meta = await this.withTimeout(
+            (this.socket as any).groupMetadata(jid),
+            3_500,
+            `groupMetadata(${jid})`
+          );
+          if (meta && (meta as any).id) {
+            this.recordDiscoveredGroup(meta, false);
+            const updated = this.knownGroups.get(jid);
+            const item = merged.get(jid);
+            if (updated && item) {
+              item.name = updated.name;
+              item.participantsCount = updated.participantsCount;
+              item.isAdmin = updated.isAdmin;
+              item.role = updated.role;
+              resolvedAny = true;
+            }
+          }
+        } catch {
+          // Ignore single group metadata failure and keep moving
+        }
+      }
+      if (resolvedAny) {
+        this.saveKnownGroupsCache();
+      }
+    }
+
+    const list = Array.from(merged.values()).sort((a, b) => {
+      if (a.isManaged !== b.isManaged) return a.isManaged ? -1 : 1;
+      if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+      return a.name.localeCompare(b.name, 'so', { sensitivity: 'base' });
+    });
+
+    const source: 'live' | 'cache' | 'live+cache' =
+      refreshedLive && liveCount >= list.length
+        ? 'live'
+        : refreshedLive
+          ? 'live+cache'
+          : 'cache';
+
+    return {
+      groups: list,
+      source,
+      connected,
+      warning,
+      refreshedLive,
+    };
+  }
+
+  /**
+   * Lists all WhatsApp groups where the bot is currently participating,
+   * indicating whether the bot/owner is an Admin, superadmin, or regular member.
+   */
+  public async listParticipatingGroups(options?: {
+    forceRefresh?: boolean;
+    isTransportConnected?: boolean;
+  }): Promise<ParticipatingGroupItem[]> {
+    const detailed = await this.listParticipatingGroupsDetailed(options);
+    return detailed.groups;
   }
 
   /**
@@ -3214,20 +3461,27 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
         }
       }
 
-      // 2. Deliver as authentic WhatsApp Voice Note (PTT)
+      const seconds = getOggOpusDurationSeconds(audioBuffer);
+      const waveform = generateSpeechWaveform(audioBuffer);
+
+      // 2. Deliver as authentic WhatsApp Voice Note (PTT) with exact duration & waveform
       if (transport?.sendMedia) {
         await transport.sendMedia(groupJid, {
           type: 'audio',
           dataBuffer: audioBuffer,
           mimeType: 'audio/ogg; codecs=opus',
           ptt: true,
+          seconds,
+          waveform,
         });
       } else if (this.socket) {
         await this.socket.sendMessage(groupJid, {
           audio: audioBuffer,
           mimetype: 'audio/ogg; codecs=opus',
           ptt: true,
-        });
+          seconds,
+          waveform,
+        } as any);
       }
 
       return { success: true };

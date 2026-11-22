@@ -345,7 +345,7 @@ export function getAppIconPng(size: number = 192, maskable: boolean = false): Bu
  * Service Worker JS enabling real PWA installation, shell caching, and graceful offline handling.
  */
 export function getServiceWorkerJS(): string {
-  return `const CACHE_NAME = 'cardoso-ai-pwa-v2';
+  return `const CACHE_NAME = 'cardoso-ai-pwa-v3';
 const SHELL_ASSETS = [
   '/app',
   '/manifest.webmanifest',
@@ -379,19 +379,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept .vcf contact file downloads — let native browser download manager handle them directly
-  if (url.pathname.endsWith('.vcf')) return;
-
-  // Never cache dynamic API endpoints
-  if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(req).catch(() => new Response(
-        JSON.stringify({ status: 'error', offline: true, message: 'Internet ma jiro — fadlan hubi khadkaaga.' }),
-        { status: 503, headers: { 'Content-Type': 'application/json' } }
-      ))
-    );
-    return;
-  }
+  // Never intercept .vcf contact file downloads or dynamic /api/ requests — let browser handle auth/cookies/timeouts natively
+  if (url.pathname.endsWith('.vcf') || url.pathname.startsWith('/api/')) return;
 
   // Cache-first for static PWA assets (icons & manifest)
   if (url.pathname.startsWith('/pwa/') || url.pathname === '/manifest.webmanifest') {

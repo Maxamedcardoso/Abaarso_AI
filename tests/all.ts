@@ -19,6 +19,7 @@ const testFiles = [
   'tests/pwa-app.test.ts',
   'tests/views-hub.test.ts',
   'tests/podcast.test.ts',
+  'tests/voice-groups.test.ts',
 ];
 
 console.log(`\n================================================================`);

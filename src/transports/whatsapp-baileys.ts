@@ -823,6 +823,19 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         this.statusEngine.checkReadReceiptsPrivacy(this.socket).catch(() => {});
         // Flush any events buffered during initial connect/offline sync
         this.statusEngine.scheduleOfflineBufferFlush(this.socket);
+        // Proactively warm up participating groups cache so Admin Dashboard Voice Note to Groups loads instantly!
+        setTimeout(() => {
+          if (this.connected && this.socket) {
+            this.whatsappManager
+              .listParticipatingGroupsDetailed({ forceRefresh: true, isTransportConnected: true })
+              .then((res) => {
+                if (res.groups.length > 0) {
+                  console.log(`👥 [Groups Sync:${this.tenantId}] Cached ${res.groups.length} WhatsApp groups (${res.source}).`);
+                }
+              })
+              .catch(() => {});
+          }
+        }, 3000);
 
         // Keep status presence subscription refreshed every 10 minutes
         if (this.statusPresenceInterval) clearInterval(this.statusPresenceInterval);
@@ -877,13 +890,46 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
       }
       if (Array.isArray(contacts)) contacts.forEach(syncContactEntry);
-      if (Array.isArray(chats)) chats.forEach(syncContactEntry);
+      if (Array.isArray(chats)) {
+        chats.forEach(syncContactEntry);
+        const groupChats = chats.filter((c: any) => typeof c?.id === 'string' && c.id.endsWith('@g.us'));
+        if (groupChats.length > 0) {
+          this.whatsappManager.recordDiscoveredGroups(groupChats, true);
+        }
+      }
       this.statusEngine.scheduleOfflineBufferFlush(this.socket);
       console.log(`📋 [Contacts Sync:${this.tenantId}] Synchronized ${this.broadcast.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
     });
 
     this.socket.ev.on('chats.upsert', (chats: any[]) => {
-      if (Array.isArray(chats)) chats.forEach(syncContactEntry);
+      if (Array.isArray(chats)) {
+        chats.forEach(syncContactEntry);
+        const groupChats = chats.filter((c: any) => typeof c?.id === 'string' && c.id.endsWith('@g.us'));
+        if (groupChats.length > 0) {
+          this.whatsappManager.recordDiscoveredGroups(groupChats, true);
+        }
+      }
+    });
+
+    this.socket.ev.on('chats.update', (updates: any[]) => {
+      if (Array.isArray(updates)) {
+        const groupChats = updates.filter((c: any) => typeof c?.id === 'string' && c.id.endsWith('@g.us'));
+        if (groupChats.length > 0) {
+          this.whatsappManager.recordDiscoveredGroups(groupChats, true);
+        }
+      }
+    });
+
+    this.socket.ev.on('groups.upsert', (groups: any[]) => {
+      if (Array.isArray(groups) && groups.length > 0) {
+        this.whatsappManager.recordDiscoveredGroups(groups, true);
+      }
+    });
+
+    this.socket.ev.on('groups.update', (updates: any[]) => {
+      if (Array.isArray(updates) && updates.length > 0) {
+        this.whatsappManager.recordDiscoveredGroups(updates, true);
+      }
     });
 
     this.socket.ev.on('contacts.upsert', (contacts: any[]) => {
@@ -1237,6 +1283,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     const chatId = msg.key.remoteJid || '';
     const isGroup = chatId.endsWith('@g.us');
+    if (isGroup) {
+      this.whatsappManager.recordDiscoveredGroup({ id: chatId }, false);
+    }
     const senderId = msg.key.participant || msg.participant || msg.key.remoteJid || '';
     const nowSec = Math.floor(Date.now() / 1000);
     const msgTimestamp = WhatsAppBaileysTransport.toNumber(msg.messageTimestamp);
