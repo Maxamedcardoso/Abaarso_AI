@@ -335,6 +335,111 @@ async function runViewsHubTests(): Promise<void> {
     assert(sentDocs[1].content.includes('+251911223344'), 'Private .vcf must include previously joined +251 group member');
     console.log('  ✅ PASS: WhatsApp Group `!views` (0 cold DMs + anti-flood cooldown) & Private `views` auto-.vcf verified');
 
+    // 11. `!views-group on / drop / off` + Auto-Capture Existing Members + Auto-Drop .vcf on Join Fill!
+    // Reset target=4 in locked mode to verify auto-capture existing (2) + new joiners (2) -> fills Batch & auto-drops .vcf!
+    await invokeServer('PUT', '/api/admin/views/config', {
+      headers: { Authorization: adminAuth },
+      body: { downloadMode: 'locked', batchTarget: 4 },
+    });
+
+    // Clear existing contacts so we start cleanly in a fresh batch test
+    const curAdminList = (await invokeServer('GET', '/api/admin/views/overview', { headers: { Authorization: adminAuth } })).json();
+    for (const c of curAdminList.contacts) {
+      if (!c.isVip) {
+        await invokeServer('DELETE', `/api/admin/views/contacts/${c.id}`, { headers: { Authorization: adminAuth } });
+      }
+    }
+
+    const vgJid = '120363999888777666@g.us';
+    const vgSentTexts: Array<{ chatId: string; text: string }> = [];
+    const vgSentDocs: Array<{ chatId: string; fileName: string; content: string; caption: string }> = [];
+    const mockGroupSocket: any = {
+      user: { id: '252634949642:0@s.whatsapp.net' },
+      groupMetadata: async () => ({
+        subject: 'CARDOSO Views Batch 1',
+        participants: [
+          { id: '252634949642@s.whatsapp.net' }, // Bot self -> MUST be excluded!
+          { id: '252631001001@s.whatsapp.net', notify: 'Existing One' },
+          { id: '251911001002@s.whatsapp.net', notify: 'Existing Jigjiga' },
+          { id: '998877665544@lid' }, // Hidden LID -> counted as privacy, NOT stored as fake phone!
+        ],
+      }),
+    };
+    const mockVgTransport: any = {
+      name: 'mock-vg',
+      isConnected: true,
+      getSocket: () => mockGroupSocket,
+      sendMessage: async (chatId: string, text: string) => {
+        vgSentTexts.push({ chatId, text });
+        return true;
+      },
+      sendMedia: async (chatId: string, media: any) => {
+        vgSentDocs.push({
+          chatId,
+          fileName: media.fileName || '',
+          content: media.dataBuffer ? media.dataBuffer.toString('utf8') : '',
+          caption: media.caption || '',
+        });
+        return true;
+      },
+    };
+
+    // Admin runs `!views-group on` -> captures 2 existing members (skips bot self & hidden LID)
+    const vgOn = await router.handleIncomingMessage(
+      {
+        id: 'vg_on_1',
+        senderId: '252634949642@s.whatsapp.net',
+        senderPhone: '252634949642',
+        chatId: vgJid,
+        isGroup: true,
+        content: '!views-group on',
+        rawTimestamp: Date.now(),
+        isMentioned: false,
+        isFromMe: true,
+      },
+      mockVgTransport
+    );
+    assert(vgOn.handled === true, '!views-group on must be handled');
+    assert(vgSentTexts.length === 1 && vgSentTexts[0].text.includes('2 qof'), 'Report must show 2 existing members captured');
+    assert(vgSentTexts[0].text.includes('Privacy/LID qarsoon: *1 qof*'), 'Report must note 1 hidden LID member');
+    assert(vgSentDocs.length === 0, 'Should NOT drop .vcf yet while 2/4');
+
+    // New joiner #3 arrives silently (0 messages sent to group, 0 cold DMs!)
+    const join3 = await router.handleGroupParticipantsAdded(vgJid, ['252611001003@s.whatsapp.net'], mockVgTransport);
+    assert(join3.captured === 1 && join3.completedBatches.length === 0, '3rd member captured silently without dropping yet');
+    assert(vgSentDocs.length === 0 && vgSentTexts.length === 1, 'Join #3 must be completely silent (0 spam)');
+
+    // New joiner #4 (+251 Ethiopia) fills Batch (4/4) -> AUTOMATICALLY drops full .vcf right into the group!
+    const join4 = await router.handleGroupParticipantsAdded(vgJid, [{ id: '251922001004@s.whatsapp.net', notify: 'Fourth Ethiopia' }], mockVgTransport);
+    assert(join4.captured === 1 && join4.completedBatches.length === 1, '4th member must complete the batch');
+    assert(vgSentDocs.length === 1 && vgSentDocs[0].chatId === vgJid, 'Completed batch must auto-drop .vcf directly into the group!');
+    assert(
+      vgSentDocs[0].content.includes('+251915998877') &&
+      vgSentDocs[0].content.includes('+252631001001') &&
+      vgSentDocs[0].content.includes('+251922001004') &&
+      !vgSentDocs[0].content.includes('+252634949642'),
+      'Auto-dropped .vcf must include VIP + all 4 members and exclude bot own number'
+    );
+
+    // Admin `!views-group drop` works on demand, and `!views-group off` stops future auto-capture
+    await router.handleIncomingMessage(
+      {
+        id: 'vg_off_1',
+        senderId: '252634949642@s.whatsapp.net',
+        senderPhone: '252634949642',
+        chatId: vgJid,
+        isGroup: true,
+        content: '!views-group off',
+        rawTimestamp: Date.now(),
+        isMentioned: false,
+        isFromMe: true,
+      },
+      mockVgTransport
+    );
+    const joinAfterOff = await router.handleGroupParticipantsAdded(vgJid, ['252639009009@s.whatsapp.net'], mockVgTransport);
+    assert(joinAfterOff.captured === 0, 'After !views-group off, new joiners must NOT be auto-captured');
+    console.log('  ✅ PASS: `!views-group on / drop / off` existing scan + silent join auto-capture + auto .vcf drop verified');
+
     console.log('\n🎉 All CARDOSO Views & .vcf Hub upgraded tests passed!\n');
   } finally {
     await memory.close?.();

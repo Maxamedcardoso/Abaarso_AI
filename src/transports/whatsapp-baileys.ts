@@ -36,6 +36,7 @@ export interface BaileysTransportOptions {
   statusReactor?: StatusReactorService;
   onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
   onCredsSaved?: () => void;
+  onGroupParticipantsAdd?: (groupJid: string, participants: any[]) => Promise<void>;
 }
 
 export class WhatsAppBaileysTransport implements IMessagingTransport {
@@ -57,6 +58,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
   private statusReactor: StatusReactorService;
   private onConnectionChange?: (state: { connected: boolean; phone?: string | null; error?: string }) => void;
   private onCredsSaved?: () => void;
+  private onGroupParticipantsAdd?: (groupJid: string, participants: any[]) => Promise<void>;
   private manualStopped: boolean = false;
   private suppressCloseReconnect: boolean = false;
   private contactsResyncAttempted: boolean = false;
@@ -105,6 +107,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       this.statusReactor = opts.statusReactor || statusReactorService;
       this.onConnectionChange = opts.onConnectionChange;
       this.onCredsSaved = opts.onCredsSaved;
+      this.onGroupParticipantsAdd = opts.onGroupParticipantsAdd;
     }
     this.statusReactor.setWhatsAppManager(this.whatsappManager);
     this.statusEngine = new StatusEngineService({
@@ -1016,11 +1019,16 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
-    // ─── Group Participants Updates (Auto-Welcome / Auto-Guard) ───────────────
+    // ─── Group Participants Updates (Auto-Welcome / Auto-Guard / Views Group Auto-Capture) ───
     this.socket.ev.on('group-participants.update', async ({ id, participants, action }: any) => {
       try {
-        if (action === 'add' && this.whatsappManager.isAutoGroupManaged(id)) {
-          await this.whatsappManager.handleAutoWelcome(id, participants, this);
+        if (action === 'add') {
+          if (this.whatsappManager.isAutoGroupManaged(id)) {
+            await this.whatsappManager.handleAutoWelcome(id, participants, this);
+          }
+          if (this.onGroupParticipantsAdd && Array.isArray(participants) && participants.length > 0) {
+            await this.onGroupParticipantsAdd(id, participants);
+          }
         }
       } catch (err: any) {
         console.warn(`[WhatsAppBaileys] Error handling group-participants.update: ${err?.message}`);

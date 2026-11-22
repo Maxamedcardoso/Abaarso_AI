@@ -422,6 +422,12 @@ export class TenantManager {
       onCredsSaved: () => {
         this.markTenantDirty(tenant.id, ['auth'], false);
       },
+      onGroupParticipantsAdd: paths.isOwner
+        ? async (groupJid, participants) => {
+            await router.handleGroupParticipantsAdded(groupJid, participants, transport);
+            this.markTenantDirty(tenant.id, ['db'], false);
+          }
+        : undefined,
     });
 
     transport.onMessage(async (msg) => {

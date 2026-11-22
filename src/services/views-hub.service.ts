@@ -252,6 +252,16 @@ export class ViewsHubService {
         total_vcf_downloads INTEGER DEFAULT 0,
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS views_hub_groups (
+        group_jid TEXT PRIMARY KEY,
+        group_name TEXT DEFAULT '',
+        enabled INTEGER DEFAULT 1,
+        captured_count INTEGER DEFAULT 0,
+        last_vcf_drop_at INTEGER DEFAULT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     // Safe forward migrations for existing databases deployed on Render
@@ -692,6 +702,161 @@ export class ViewsHubService {
     const conn = this.db();
     const res = conn.prepare('DELETE FROM views_hub_contacts WHERE id = ?').run(id);
     return Number(res.changes || 0) > 0;
+  }
+
+  // ─── Auto-Capture Views Groups (`!views-group on / drop / off`) ────────────
+
+  public setViewsGroup(groupJid: string, enabled: boolean, groupName?: string): {
+    groupJid: string;
+    groupName: string;
+    enabled: boolean;
+    capturedCount: number;
+  } {
+    const conn = this.db();
+    const jid = String(groupJid || '').trim();
+    const now = Date.now();
+    const existing = conn.prepare('SELECT * FROM views_hub_groups WHERE group_jid = ?').get(jid) as any;
+    if (existing) {
+      const nextName = (groupName || existing.group_name || '').trim().slice(0, 100);
+      conn
+        .prepare('UPDATE views_hub_groups SET enabled = ?, group_name = ?, updated_at = ? WHERE group_jid = ?')
+        .run(enabled ? 1 : 0, nextName, now, jid);
+      return {
+        groupJid: jid,
+        groupName: nextName,
+        enabled,
+        capturedCount: Number(existing.captured_count || 0),
+      };
+    }
+
+    const cleanName = (groupName || '').trim().slice(0, 100);
+    conn
+      .prepare(
+        `INSERT INTO views_hub_groups (group_jid, group_name, enabled, captured_count, last_vcf_drop_at, created_at, updated_at)
+         VALUES (?, ?, ?, 0, NULL, ?, ?)`
+      )
+      .run(jid, cleanName, enabled ? 1 : 0, now, now);
+    return {
+      groupJid: jid,
+      groupName: cleanName,
+      enabled,
+      capturedCount: 0,
+    };
+  }
+
+  public isViewsGroupEnabled(groupJid: string): boolean {
+    const conn = this.db();
+    const row = conn.prepare('SELECT enabled FROM views_hub_groups WHERE group_jid = ?').get(groupJid) as { enabled?: number } | undefined;
+    return Boolean(row?.enabled);
+  }
+
+  public getViewsGroup(groupJid: string): {
+    groupJid: string;
+    groupName: string;
+    enabled: boolean;
+    capturedCount: number;
+    lastVcfDropAt: number | null;
+  } | null {
+    const conn = this.db();
+    const row = conn.prepare('SELECT * FROM views_hub_groups WHERE group_jid = ?').get(groupJid) as any;
+    if (!row) return null;
+    return {
+      groupJid: String(row.group_jid),
+      groupName: String(row.group_name || ''),
+      enabled: Boolean(row.enabled),
+      capturedCount: Number(row.captured_count || 0),
+      lastVcfDropAt: row.last_vcf_drop_at != null ? Number(row.last_vcf_drop_at) : null,
+    };
+  }
+
+  public recordGroupVcfDrop(groupJid: string): void {
+    const conn = this.db();
+    const now = Date.now();
+    conn
+      .prepare('UPDATE views_hub_groups SET last_vcf_drop_at = ?, updated_at = ? WHERE group_jid = ?')
+      .run(now, now, groupJid);
+  }
+
+  /**
+   * Bulk-registers members from a WhatsApp Views Group (existing members on `!views-group on`
+   * OR newly joined members on `group-participants.update`).
+   * Strictly skips duplicates, invalid phones, and the bot's own number.
+   * Tracks every batch that filled up so the caller can automatically drop the completed .vcf into the group!
+   */
+  public bulkRegisterFromGroup(
+    groupJid: string,
+    members: Array<{ phone: string; name?: string }>,
+    excludePhones: string[] = []
+  ): {
+    added: number;
+    skippedDuplicates: number;
+    skippedInvalid: number;
+    completedBatches: number[];
+    currentBatch: number;
+    currentBatchFreeCount: number;
+    batchTarget: number;
+  } {
+    const conn = this.db();
+    const excludeSet = new Set(excludePhones.map((p) => normalizeViewsPhone(p)).filter(Boolean));
+
+    let added = 0;
+    let skippedDuplicates = 0;
+    let skippedInvalid = 0;
+    const completedBatches: number[] = [];
+
+    for (const m of members) {
+      const phone = normalizeViewsPhone(m.phone);
+      if (!phone || phone.length < 9 || phone.length > 15) {
+        skippedInvalid++;
+        continue;
+      }
+      if (excludeSet.has(phone)) {
+        continue;
+      }
+
+      const city = phone.startsWith('251')
+        ? 'Jigjiga'
+        : phone.startsWith('254')
+        ? 'Nairobi'
+        : 'Hargeysa';
+      const displayName = (m.name && m.name.trim().length >= 2 ? m.name.trim() : '') || `Xubin ${phone.slice(-4)}`;
+
+      try {
+        const res = this.joinContact({
+          name: displayName,
+          phone,
+          city,
+          category: 'personal',
+        });
+        added++;
+        if (res.batchCompleted && !completedBatches.includes(res.contact.batchNumber)) {
+          completedBatches.push(res.contact.batchNumber);
+        }
+      } catch (err: any) {
+        if (err instanceof ViewsHubError && err.code === 'DUPLICATE_PHONE') {
+          skippedDuplicates++;
+        } else {
+          skippedInvalid++;
+        }
+      }
+    }
+
+    if (added > 0) {
+      conn
+        .prepare('UPDATE views_hub_groups SET captured_count = captured_count + ?, updated_at = ? WHERE group_jid = ?')
+        .run(added, Date.now(), groupJid);
+    }
+
+    const cfg = this.getConfig();
+    return {
+      added,
+      skippedDuplicates,
+      skippedInvalid,
+      completedBatches,
+      currentBatch: cfg.currentBatch,
+      currentBatchFreeCount: this.getBatchFreeCount(cfg.currentBatch),
+      batchTarget: cfg.batchTarget,
+    };
   }
 
   public listAllContactsAdmin(): {

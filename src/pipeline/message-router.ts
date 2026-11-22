@@ -690,8 +690,15 @@ SHURUUCDA DUGSIIYA:
       }
     }
 
-    // 1c.0. Zero-Ban WhatsApp Views & .vcf Command (`!views` / `!vcf` in Groups; `views` / `!views` / `vcf` in Private Chat)
-    // 100% Inbound: NEVER sends unsolicited cold private DMs — always replies in the same chat (Group or Private).
+    // 1c.0. Zero-Ban WhatsApp Views & .vcf Commands:
+    // - `!views-group on / drop / off / status` (Admin only in Groups: auto-capture existing + new joiners & auto-drop .vcf on batch full!)
+    // - `!views` / `!vcf` in Groups; `views` / `!views` / `vcf` in Private Chat (100% Inbound, 0 Cold DMs!)
+    const isViewsGroupAdminCmd = message.isGroup && /^[!./#]views-group(?:\s+(.*))?$/i.test(text);
+    if (this.viewsHub && isViewsGroupAdminCmd) {
+      const vgRes = await this.handleViewsGroupCommand(message, transport, isAdminUser);
+      if (vgRes.handled) return vgRes;
+    }
+
     const isViewsGroupCmd = message.isGroup && /^[!./#](?:views|vcf)(?:\s+(.*))?$/i.test(text);
     const isViewsPrivateCmd =
       !message.isGroup &&
@@ -3172,6 +3179,304 @@ SHURUUCDA DUGSIIYA:
       mentions: mentionList,
     });
     return { handled: true, reason: 'Views command: registered (group cooldown concise reply)' };
+  }
+
+  /**
+   * Helper: extracts real phone + display name from a Baileys group participant object or JID string.
+   * Never treats an unresolved `@lid` identifier as a real phone number.
+   */
+  private extractParticipantPhoneAndName(p: any): { phone: string; name: string; isHiddenLid: boolean } {
+    if (!p) return { phone: '', name: '', isHiddenLid: false };
+
+    const rawCandidates: string[] = [];
+    let notifyName = '';
+
+    if (typeof p === 'string') {
+      rawCandidates.push(p);
+    } else if (typeof p === 'object') {
+      if (typeof p.phoneNumber === 'string') rawCandidates.push(p.phoneNumber);
+      if (typeof p.pn === 'string') rawCandidates.push(p.pn);
+      if (typeof p.jid === 'string') rawCandidates.push(p.jid);
+      if (typeof p.id === 'string') rawCandidates.push(p.id);
+      notifyName = String(p.notify || p.name || '').trim();
+    }
+
+    let sawLidOnly = false;
+    for (const cand of rawCandidates) {
+      const trimmed = String(cand || '').trim();
+      if (!trimmed) continue;
+      if (trimmed.endsWith('@lid')) {
+        sawLidOnly = true;
+        continue;
+      }
+      const digits = trimmed.split('@')[0].split(':')[0].replace(/\D/g, '');
+      const normalized = normalizeViewsPhone(digits);
+      if (normalized && normalized.length >= 9 && normalized.length <= 15) {
+        const knownName =
+          notifyName ||
+          this.broadcast.getContactName(`${normalized}@s.whatsapp.net`) ||
+          this.broadcast.getContactName(normalized) ||
+          '';
+        return { phone: normalized, name: knownName, isHiddenLid: false };
+      }
+    }
+
+    return { phone: '', name: notifyName, isHiddenLid: sawLidOnly };
+  }
+
+  private async dropBatchVcfToGroup(
+    groupJid: string,
+    batchNumber: number,
+    transport: IMessagingTransport,
+    options?: { completed?: boolean; nextBatch?: number; replyToMessageId?: string }
+  ): Promise<boolean> {
+    if (!this.viewsHub || typeof transport.sendMedia !== 'function') return false;
+    const cfg = this.viewsHub.getConfig();
+    const viewsUrl = this.publicBaseUrl ? `${this.publicBaseUrl}/views` : '';
+
+    try {
+      const generated = this.viewsHub.generateVcf({
+        scope: 'current',
+        batch: batchNumber,
+        isAdminBypass: true,
+      });
+
+      const caption = options?.completed
+        ? `🔥 *HAMBALYO! Batch #${batchNumber} (${cfg.batchTarget}/${cfg.batchTarget}) WUU BUUXSAMAY!* 🔥\n\n` +
+          `📥 Waa kan faylka *.vcf* oo dhammaystiran (*${generated.count} Contacts + ${generated.vipCount} VIP*).\n` +
+          `👆 *Guji faylkan ➔ Import All Contacts* (2 ilbiriqsi gudahood dhammaan dadka kooxda ayaa kuu save garoobaya!)\n\n` +
+          (options.nextBatch ? `📦 *Batch #${options.nextBatch}* hadda ayuu si toos ah u furmay!` : '') +
+          (viewsUrl ? `\n🔗 ${viewsUrl}` : '')
+        : `📥 *CARDOSO Views Hub — Batch #${batchNumber} (.vcf)*\n` +
+          `👥 *${generated.count} Contacts* (${generated.vipCount} VIP Pinned)\n` +
+          `👆 *Guji faylkan ➔ Import All Contacts* si dhammaan Contacts-ku 2 ilbiriqsi kuugu save garoobaan!` +
+          (viewsUrl ? `\n🔗 ${viewsUrl}` : '');
+
+      await transport.sendMedia(
+        groupJid,
+        {
+          type: 'document',
+          dataBuffer: Buffer.from(generated.vcfText, 'utf8'),
+          mimeType: 'text/vcard',
+          fileName: generated.filename,
+          caption,
+        },
+        options?.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : undefined
+      );
+      this.viewsHub.recordGroupVcfDrop(groupJid);
+      return true;
+    } catch (err: any) {
+      console.warn(`[ViewsGroup] Failed dropping .vcf for Batch #${batchNumber} in ${groupJid}: ${err?.message || err}`);
+      return false;
+    }
+  }
+
+  /**
+   * Admin command inside a WhatsApp Group:
+   * - `!views-group on`     -> Scans & auto-registers ALL existing group members + enables auto-capture on future joins.
+   * - `!views-group drop`   -> Drops the current batch .vcf file directly into the group immediately.
+   * - `!views-group off`    -> Disables auto-capture for this group.
+   * - `!views-group status` -> Shows status & stats.
+   */
+  private async handleViewsGroupCommand(
+    message: IncomingMessage,
+    transport: IMessagingTransport,
+    isAdminUser: boolean
+  ): Promise<{ handled: boolean; reason?: string }> {
+    if (!this.viewsHub) return { handled: false };
+    if (!isAdminUser) {
+      await transport.sendMessage(
+        message.chatId,
+        '⚠️ Amarka `!views-group` waa mid u gaar ah Admin-ka. Adigu qor `!views` si aad ugu biirto Views Hub!',
+        { replyToMessageId: message.id }
+      );
+      return { handled: true, reason: 'Views group admin-only guard' };
+    }
+
+    const match = message.content.trim().match(/^[!./#]views-group(?:\s+(\S+))?/i);
+    const sub = (match?.[1] || 'status').toLowerCase();
+    const viewsUrl = this.publicBaseUrl ? `${this.publicBaseUrl}/views` : '';
+
+    if (sub === 'off' || sub === 'stop' || sub === 'dami') {
+      this.viewsHub.setViewsGroup(message.chatId, false);
+      await transport.sendMessage(
+        message.chatId,
+        '🛑 *Views Group Mode waa la damiyay kooxdan.* (Xubnaha cusub si toos ah looguma dari doono Views Hub.)',
+        { replyToMessageId: message.id }
+      );
+      return { handled: true, reason: 'Views group disabled' };
+    }
+
+    if (sub === 'drop' || sub === 'vcf' || sub === 'send') {
+      const cfg = this.viewsHub.getConfig();
+      const targetBatch =
+        this.viewsHub.getBatchFreeCount(cfg.currentBatch) > 0 || cfg.currentBatch === 1
+          ? cfg.currentBatch
+          : cfg.currentBatch - 1;
+      const dropped = await this.dropBatchVcfToGroup(message.chatId, targetBatch, transport, {
+        replyToMessageId: message.id,
+      });
+      if (!dropped) {
+        await transport.sendMessage(
+          message.chatId,
+          '⚠️ Weli ma jiraan contacts ku jira Batch-kan oo la soo tuuro. Ku billow `!views-group on` ama `!views`.',
+          { replyToMessageId: message.id }
+        );
+      }
+      return { handled: true, reason: 'Views group manual .vcf drop' };
+    }
+
+    if (sub === 'on' || sub === 'start' || sub === 'shid') {
+      const sock = typeof transport.getSocket === 'function' ? transport.getSocket() : null;
+      let groupName = 'Views Group';
+      const extractedMembers: Array<{ phone: string; name?: string }> = [];
+      let hiddenLidCount = 0;
+
+      if (sock && typeof sock.groupMetadata === 'function') {
+        try {
+          const meta = await sock.groupMetadata(message.chatId);
+          if (meta?.subject) groupName = String(meta.subject);
+          for (const p of meta?.participants || []) {
+            const parsed = this.extractParticipantPhoneAndName(p);
+            if (parsed.phone) {
+              extractedMembers.push({ phone: parsed.phone, name: parsed.name });
+            } else if (parsed.isHiddenLid) {
+              hiddenLidCount++;
+            }
+          }
+        } catch (metaErr: any) {
+          console.warn(`[ViewsGroup] groupMetadata error for ${message.chatId}: ${metaErr?.message || metaErr}`);
+        }
+      }
+
+      const botOwnDigits = (
+        this.whatsappManager.getBotNumber() ||
+        (sock?.user?.id ? String(sock.user.id).split('@')[0].split(':')[0] : '')
+      ).replace(/\D/g, '');
+
+      this.viewsHub.setViewsGroup(message.chatId, true, groupName);
+      const bulk = this.viewsHub.bulkRegisterFromGroup(
+        message.chatId,
+        extractedMembers,
+        botOwnDigits ? [botOwnDigits] : []
+      );
+
+      let msg =
+        `✅ *CARDOSO Views Group Waa Shidan Yahay!*\n\n` +
+        `👥 *Xubnaha Horay Kooxda Ugu Jiray:*\n` +
+        `• Cusub oo la diiwaangeliyay: *${bulk.added} qof*\n` +
+        (bulk.skippedDuplicates > 0 ? `• Horay u diiwaangashanaa: *${bulk.skippedDuplicates} qof*\n` : '') +
+        (hiddenLidCount > 0
+          ? `• Privacy/LID qarsoon: *${hiddenLidCount} qof* _(waxay qori karaan \`!views\`${viewsUrl ? ` ama fur ${viewsUrl}` : ''})_\n`
+          : '') +
+        `\n📦 *Batch-ka Hadda:* #${bulk.currentBatch} (*${bulk.currentBatchFreeCount} / ${bulk.batchTarget} Qof*)\n` +
+        `🆕 Qof kasta oo cusub oo kooxda soo gala **si toos ah** ayaa loogu dari doonaa (0 typing, 0% Ban).\n` +
+        `🔥 Marka uu gaaro *${bulk.batchTarget} qof*, faylka *.vcf* toos ayaan kooxda ugu soo tuurayaa!`;
+
+      await transport.sendMessage(message.chatId, msg, { replyToMessageId: message.id });
+
+      // If existing members already filled 1 or more batches -> auto-drop each completed batch .vcf right away!
+      for (const completedBatchNum of bulk.completedBatches) {
+        await this.dropBatchVcfToGroup(message.chatId, completedBatchNum, transport, {
+          completed: true,
+          nextBatch: completedBatchNum + 1,
+        });
+      }
+      return { handled: true, reason: `Views group enabled (${bulk.added} captured)` };
+    }
+
+    // Status summary
+    const grp = this.viewsHub.getViewsGroup(message.chatId);
+    const cfg = this.viewsHub.getConfig();
+    const cnt = this.viewsHub.getBatchFreeCount(cfg.currentBatch);
+    const statusText =
+      `📈 *CARDOSO Views Group Status*\n` +
+      `• Xaaladda: ${grp?.enabled ? '✅ SHIDAN (ON)' : '🛑 DAMISAN (OFF)'}\n` +
+      `• Xubno laga qabtay kooxdan: *${grp?.capturedCount || 0}*\n` +
+      `• Batch-ka hadda: *#${cfg.currentBatch}* (*${cnt} / ${cfg.batchTarget} Qof*)\n\n` +
+      `*Amarrada:*\n` +
+      `• \`!views-group on\` — Shid + soo xaree xubnaha kooxda\n` +
+      `• \`!views-group drop\` — Hadda kooxda ku tuur faylka .vcf\n` +
+      `• \`!views-group off\` — Dami kooxdan`;
+
+    await transport.sendMessage(message.chatId, statusText, { replyToMessageId: message.id });
+    return { handled: true, reason: 'Views group status shown' };
+  }
+
+  /**
+   * Automatic hook fired by Baileys `group-participants.update` (`action === 'add'`).
+   * Silently auto-registers new joiners in enabled Views Groups (ZERO Cold DMs, ZERO welcome spam)
+   * and automatically drops the completed .vcf file into the group the instant the Batch fills!
+   */
+  public async handleGroupParticipantsAdded(
+    groupJid: string,
+    participants: any[],
+    transport: IMessagingTransport
+  ): Promise<{ captured: number; completedBatches: number[] }> {
+    if (!this.viewsHub || !this.viewsHub.isViewsGroupEnabled(groupJid)) {
+      return { captured: 0, completedBatches: [] };
+    }
+
+    const sock = typeof transport.getSocket === 'function' ? transport.getSocket() : null;
+    const resolved: Array<{ phone: string; name?: string }> = [];
+    const unresolvedLids: string[] = [];
+
+    for (const p of participants || []) {
+      const parsed = this.extractParticipantPhoneAndName(p);
+      if (parsed.phone) {
+        resolved.push({ phone: parsed.phone, name: parsed.name });
+      } else if (parsed.isHiddenLid) {
+        const lidId = typeof p === 'string' ? p : String(p?.id || '');
+        if (lidId) unresolvedLids.push(lidId);
+      }
+    }
+
+    // If any new joiner arrived as @lid, inspect groupMetadata once to see if phoneNumber is attached
+    if (unresolvedLids.length > 0 && sock && typeof sock.groupMetadata === 'function') {
+      try {
+        const meta = await sock.groupMetadata(groupJid);
+        const lidSet = new Set(unresolvedLids);
+        for (const mp of meta?.participants || []) {
+          if (mp && lidSet.has(String(mp.id || ''))) {
+            const parsed = this.extractParticipantPhoneAndName(mp);
+            if (parsed.phone) {
+              resolved.push({ phone: parsed.phone, name: parsed.name });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (resolved.length === 0) {
+      return { captured: 0, completedBatches: [] };
+    }
+
+    const botOwnDigits = (
+      this.whatsappManager.getBotNumber() ||
+      (sock?.user?.id ? String(sock.user.id).split('@')[0].split(':')[0] : '')
+    ).replace(/\D/g, '');
+
+    const bulk = this.viewsHub.bulkRegisterFromGroup(
+      groupJid,
+      resolved,
+      botOwnDigits ? [botOwnDigits] : []
+    );
+
+    if (bulk.added > 0) {
+      console.log(
+        `📈 [ViewsGroup] Silently auto-captured ${bulk.added} new joiner(s) in ${groupJid} (Batch #${bulk.currentBatch}: ${bulk.currentBatchFreeCount}/${bulk.batchTarget}).`
+      );
+    }
+
+    // Automatic .vcf drop into the group the exact second a Batch fills!
+    for (const completedBatchNum of bulk.completedBatches) {
+      await this.dropBatchVcfToGroup(groupJid, completedBatchNum, transport, {
+        completed: true,
+        nextBatch: completedBatchNum + 1,
+      });
+    }
+
+    return { captured: bulk.added, completedBatches: bulk.completedBatches };
   }
 
   public getStatus() {
