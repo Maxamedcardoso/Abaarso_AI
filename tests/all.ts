@@ -17,6 +17,7 @@ const testFiles = [
   'tests/error-log.test.ts',
   'tests/status-engine.test.ts',
   'tests/pwa-app.test.ts',
+  'tests/views-hub.test.ts',
 ];
 
 console.log(`\n================================================================`);

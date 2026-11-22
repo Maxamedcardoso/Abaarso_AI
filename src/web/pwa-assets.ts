@@ -61,6 +61,13 @@ export function buildWebManifest(options?: PwaManifestOptions) {
         icons: [{ src: '/pwa/icon-192.png', sizes: '192x192', type: 'image/png' }],
       },
       {
+        name: 'Status Views & .vcf Hub',
+        short_name: 'Views Hub',
+        description: 'Hel 200+ Status Views adigoon ban la kulmin (.vcf)',
+        url: '/views',
+        icons: [{ src: '/pwa/icon-192.png', sizes: '192x192', type: 'image/png' }],
+      },
+      {
         name: 'Client Portal',
         short_name: 'Portal',
         description: 'Maamul dashboard-ka macmiilka',

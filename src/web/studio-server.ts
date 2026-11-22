@@ -11,6 +11,7 @@ import { StatusReactorService, statusReactorService } from '../services/status-r
 import { VoiceReplyService } from '../services/voice-reply.service.js';
 import { MediaUrlDownloaderService } from '../services/media-url-downloader.service.js';
 import { PrayerTimesService } from '../services/prayer-times.service.js';
+import { ViewsHubService } from '../services/views-hub.service.js';
 import { AppConfig } from '../config/env.js';
 import { BotCategory, PlanTier } from '../tenants/plan-catalog.js';
 import { TenantManager } from '../tenants/tenant-manager.js';
@@ -29,6 +30,7 @@ import { renderAdminDashboardHTML } from './views/admin-page.js';
 import { renderPortalLoginHTML } from './views/portal-login-page.js';
 import { renderAdminLoginHTML } from './views/admin-login-page.js';
 import { renderPwaAppHTML } from './views/app-page.js';
+import { renderViewsHubHTML } from './views/views-hub-page.js';
 
 export interface StudioServerOptions {
   port: number | string;
@@ -140,8 +142,95 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     };
   };
 
-  // ─── 1. Public Health, Installable PWA App & Self-Signup Endpoints ─────────
+  // ─── 1. Public Health, Installable PWA App, Views Hub & Self-Signup ────────
   const prayerTimesService = new PrayerTimesService();
+  const viewsHub = new ViewsHubService(
+    () => getOwnerRefs().memory.getDatabase(),
+    config.security.adminPhoneNumbers[0] || ''
+  );
+  try {
+    viewsHub.initialize();
+  } catch (err: any) {
+    console.warn('[ViewsHub] Deferred initialization:', err?.message || err);
+  }
+
+  app.get('/views', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderViewsHubHTML());
+  });
+
+  app.get('/api/views/summary', (req: Request, res: Response) => {
+    try {
+      const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+      const summary = viewsHub.getPublicSummary({ city });
+      res.json({ status: 'ok', ...summary });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/views/join', (req: Request, res: Response) => {
+    try {
+      const { name, phone, city, category, tagline, referredBy } = req.body || {};
+      const result = viewsHub.joinContact({
+        name: String(name || ''),
+        phone: String(phone || ''),
+        city: typeof city === 'string' ? city : undefined,
+        category: typeof category === 'string' ? category : undefined,
+        tagline: typeof tagline === 'string' ? tagline : undefined,
+        referredBy: typeof referredBy === 'string' ? referredBy : undefined,
+      });
+      tenantManager?.markTenantDirty('owner', ['db'], false);
+      res.status(result.alreadyJoined ? 200 : 201).json({
+        status: 'ok',
+        alreadyJoined: result.alreadyJoined,
+        batchRolledOver: result.batchRolledOver,
+        contact: {
+          id: result.contact.id,
+          displayName: result.contact.displayName,
+          phone: result.contact.phone,
+          city: result.contact.city,
+          category: result.contact.category,
+          batchNumber: result.contact.batchNumber,
+          isVip: result.contact.isVip,
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err.message || 'Isdiiwaangelinta Views Hub way fashilantay' });
+    }
+  });
+
+  app.get('/api/views/download.vcf', (req: Request, res: Response) => {
+    try {
+      const scopeRaw = String(req.query.scope || 'current').trim();
+      const scope: 'current' | 'all' | 'vip' | 'single' =
+        scopeRaw === 'all' || scopeRaw === 'vip' || scopeRaw === 'single' ? scopeRaw : 'current';
+      const contactId = req.query.id ? Number(req.query.id) : undefined;
+      const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+      const batch = req.query.batch ? Number(req.query.batch) : undefined;
+      const excludePhone = typeof req.query.myPhone === 'string' ? req.query.myPhone : undefined;
+
+      const generated = viewsHub.generateVcf({
+        scope,
+        contactId,
+        city,
+        batch,
+        excludePhone,
+      });
+      if (generated.count > 0) {
+        tenantManager?.markTenantDirty('owner', ['db'], false);
+      }
+
+      res.setHeader('Content-Type', 'text/vcard; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${generated.filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Contacts-Count', String(generated.count));
+      res.setHeader('X-Vip-Count', String(generated.vipCount));
+      res.send(generated.vcfText);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
 
   const resolveAppTarget = async (tenantIdRaw?: unknown, tokenRaw?: unknown) => {
     const tid = String(tenantIdRaw || '').trim();
@@ -1048,6 +1137,108 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     }
     res.setHeader('Set-Cookie', 'cardoso_admin_session=; Path=/; Max-Age=0; SameSite=Lax');
     res.json({ status: 'ok', message: 'Logged out' });
+  });
+
+  // ─── 3b. Admin Views & .vcf Hub Management APIs ───────────────────────────
+  app.get('/api/admin/views/overview', (_req: Request, res: Response) => {
+    try {
+      const overview = viewsHub.listAllContactsAdmin();
+      res.json({ status: 'ok', ...overview });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/admin/views/vip', (req: Request, res: Response) => {
+    try {
+      const { name, phone, city, category, tagline, avatarUrl, durationDays, vipPriority } = req.body || {};
+      const contact = viewsHub.upsertVipContact({
+        name: String(name || ''),
+        phone: String(phone || ''),
+        city: typeof city === 'string' ? city : undefined,
+        category: typeof category === 'string' ? category : undefined,
+        tagline: typeof tagline === 'string' ? tagline : undefined,
+        avatarUrl: typeof avatarUrl === 'string' ? avatarUrl : undefined,
+        durationDays: durationDays !== undefined ? Number(durationDays) : 30,
+        vipPriority: vipPriority !== undefined ? Number(vipPriority) : 10,
+      });
+      tenantManager?.markTenantDirty('owner', ['db'], true);
+      res.status(201).json({
+        status: 'ok',
+        message: `👑 ${contact.displayName} waxaa lagu xiray VIP Pinned!`,
+        contact,
+      });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.patch('/api/admin/views/contacts/:id', (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const { isVip, durationDays, vipPriority, status } = req.body || {};
+      const updated = viewsHub.updateContactAdmin(id, {
+        ...(isVip !== undefined ? { isVip: Boolean(isVip) } : {}),
+        ...(durationDays !== undefined ? { durationDays: Number(durationDays) } : {}),
+        ...(vipPriority !== undefined ? { vipPriority: Number(vipPriority) } : {}),
+        ...(status === 'active' || status === 'banned' ? { status } : {}),
+      });
+      if (!updated) {
+        res.status(404).json({ status: 'error', message: 'Contact lama helin' });
+        return;
+      }
+      tenantManager?.markTenantDirty('owner', ['db'], true);
+      res.json({ status: 'ok', contact: updated });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.delete('/api/admin/views/contacts/:id', (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const deleted = viewsHub.deleteContact(id);
+      if (deleted) {
+        tenantManager?.markTenantDirty('owner', ['db'], true);
+      }
+      res.json({ status: 'ok', deleted });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.put('/api/admin/views/config', (req: Request, res: Response) => {
+    try {
+      const { hubTitle, contactPrefix, currentBatch, batchTarget, ownerVipPhone, vipPriceLabel, announcement } =
+        req.body || {};
+      const updated = viewsHub.updateConfig({
+        ...(hubTitle !== undefined ? { hubTitle: String(hubTitle) } : {}),
+        ...(contactPrefix !== undefined ? { contactPrefix: String(contactPrefix) } : {}),
+        ...(currentBatch !== undefined ? { currentBatch: Number(currentBatch) } : {}),
+        ...(batchTarget !== undefined ? { batchTarget: Number(batchTarget) } : {}),
+        ...(ownerVipPhone !== undefined ? { ownerVipPhone: String(ownerVipPhone) } : {}),
+        ...(vipPriceLabel !== undefined ? { vipPriceLabel: String(vipPriceLabel) } : {}),
+        ...(announcement !== undefined ? { announcement: String(announcement) } : {}),
+      });
+      tenantManager?.markTenantDirty('owner', ['db'], true);
+      res.json({ status: 'ok', config: updated, message: '✅ Dejinta Views Hub waa la keydiyay!' });
+    } catch (err: any) {
+      res.status(400).json({ status: 'error', message: err.message });
+    }
+  });
+
+  app.post('/api/admin/views/new-batch', (_req: Request, res: Response) => {
+    try {
+      const updated = viewsHub.startNewBatch();
+      tenantManager?.markTenantDirty('owner', ['db'], true);
+      res.json({
+        status: 'ok',
+        config: updated,
+        message: `📦 Batch cusub (#${updated.currentBatch}) waa la bilaabay!`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
   });
 
   // ─── 4. Super Admin SaaS Management APIs ───────────────────────────────────

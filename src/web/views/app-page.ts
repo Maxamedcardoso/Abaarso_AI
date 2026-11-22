@@ -614,10 +614,21 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       background: rgba(8, 13, 25, 0.96);
       backdrop-filter: blur(14px);
       border-top: 1px solid var(--border);
-      padding: 0.4rem 0.5rem calc(0.45rem + var(--safe-bottom));
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.35rem;
+      padding: 0.4rem 0.4rem calc(0.45rem + var(--safe-bottom));
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.25rem;
     }
+
+    .views-meter-track { height: 10px; border-radius: 999px; background: rgba(148, 163, 184, 0.14); overflow: hidden; margin: 0.45rem 0 0.75rem; }
+    .views-meter-fill { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #06b6d4, #10b981, #f59e0b); transition: width 0.4s ease; }
+    .mini-vip-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+    .mini-vip-card {
+      background: linear-gradient(155deg, rgba(30, 27, 18, 0.78), rgba(14, 21, 39, 0.92));
+      border: 1px solid rgba(245, 158, 11, 0.42);
+      border-radius: 14px; padding: 0.85rem;
+      display: flex; flex-direction: column; gap: 0.45rem;
+    }
+    @media (max-width: 680px) { .mini-vip-grid { grid-template-columns: 1fr; } }
     .bnav-btn {
       border: none; background: transparent; color: var(--muted);
       padding: 0.45rem 0.3rem; border-radius: 11px;
@@ -685,6 +696,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
 
       <nav class="side-nav">
         <button class="side-nav-btn active" data-tab="chat" onclick="switchAppTab('chat')">💬 Sheeko AI (Chat)</button>
+        <button class="side-nav-btn" data-tab="views" onclick="switchAppTab('views')">📈 Views &amp; .vcf Hub</button>
         <button class="side-nav-btn" data-tab="tools" onclick="switchAppTab('tools')">🛠️ Adeegyada &amp; Salaadda</button>
         <button class="side-nav-btn" data-tab="settings" onclick="switchAppTab('settings')">⚙️ Dejinta &amp; Install App</button>
       </nav>
@@ -692,6 +704,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       <div class="side-divider"></div>
 
       <div class="side-links">
+        <a href="/views" class="side-link">📈 Bogga Views Hub (/views)</a>
         <a href="/portal" class="side-link">🔑 Client Portal (/portal)</a>
         <a href="/join" class="side-link">📝 Isdiiwaangeli (/join)</a>
         <a href="/admin-login" class="side-link">👑 Admin Studio (/)</a>
@@ -788,6 +801,66 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
               <button class="comp-btn" id="micBtn" type="button" onclick="toggleVoiceRecord()" title="Duub fariin cod ah">🎙️</button>
               <textarea id="chatInput" rows="1" placeholder="Qor fariintaada Af-Soomaali ama English..."></textarea>
               <button class="comp-btn send-btn" id="sendBtn" type="button" onclick="sendChatMessage()" title="Dir fariinta">➤</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 1b: VIEWS & .VCF CONTACT EXCHANGE HUB -->
+      <section id="pane-views" class="view-pane">
+        <div class="scroll-pane">
+          <div class="scroll-inner">
+            <div class="card" style="border-color:rgba(16,185,129,0.38);background:linear-gradient(155deg,rgba(6,182,212,0.12),rgba(16,185,129,0.08));">
+              <h3>
+                <span>📈 CARDOSO Status Views Hub (0% Ban)</span>
+                <a href="/views" class="btn btn-ghost btn-sm">🔗 Bogga Buuxa</a>
+              </h3>
+              <p class="sub">Geli lambarkaaga -> Hal gujis ku soo deji faylka <b>.vcf</b> -> Dhammaan dadka Pool-ka si toos ah ayaad isku arki doontaan WhatsApp Status-ka!</p>
+              <div style="display:flex;justify-content:space-between;font-size:0.8rem;font-weight:700;">
+                <span id="appViewsMeterText">📦 Batch #1: 0 / 100 Qof</span>
+                <span style="color:#22d3ee;" id="appViewsTotalText">0 Contacts</span>
+              </div>
+              <div class="views-meter-track"><div class="views-meter-fill" id="appViewsMeterFill"></div></div>
+
+              <!-- Quick Join OR Unlocked Download -->
+              <form id="appViewsJoinForm" onsubmit="submitAppViewsJoin(event)">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.55rem;margin-bottom:0.65rem;">
+                  <input class="field" id="appViewsName" required placeholder="Magacaaga..." />
+                  <input class="field" id="appViewsPhone" required placeholder="Lambarka (063/061/252...)" />
+                  <select class="field" id="appViewsCity">
+                    <option value="Hargeysa">Hargeysa</option>
+                    <option value="Muqdisho">Muqdisho</option>
+                    <option value="Garowe">Garowe</option>
+                    <option value="Burco">Burco</option>
+                    <option value="Boosaaso">Boosaaso</option>
+                    <option value="Kismaayo">Kismaayo</option>
+                    <option value="Boorama">Boorama</option>
+                    <option value="Nairobi">Nairobi</option>
+                    <option value="Qurbaha">Qurbaha</option>
+                  </select>
+                </div>
+                <button type="submit" id="appViewsJoinBtn" class="btn btn-primary" style="width:100%;">🚀 Ku Biir &amp; Fur Faylka .vcf</button>
+              </form>
+
+              <div id="appViewsUnlockedBox" style="display:none;margin-top:0.5rem;">
+                <div style="font-size:0.84rem;color:#34d399;font-weight:700;margin-bottom:0.6rem;" id="appViewsJoinedBadge">✅ Waad ku jirtaa Pool-ka!</div>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                  <button class="btn btn-emerald" style="flex:1;" onclick="downloadAppViewsVcf('current')">📥 Soo Deji Batch .vcf</button>
+                  <button class="btn btn-primary btn-sm" onclick="downloadAppViewsVcf('all')">🌍 All .vcf</button>
+                  <button class="btn btn-ghost btn-sm" onclick="shareAppViewsLink()">📤 Share</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" style="border-color:rgba(245,158,11,0.35);">
+              <h3>
+                <span>👑 VIP Pinned Sponsors</span>
+                <button class="btn btn-ghost btn-sm" onclick="downloadAppViewsVcf('vip')">📥 VIP .vcf</button>
+              </h3>
+              <p class="sub">Macaamiisha VIP-ga ah ee korka ku xiran fayl kasta oo .vcf ah.</p>
+              <div class="mini-vip-grid" id="appViewsVipGrid">
+                <div style="color:var(--muted);font-size:0.82rem;">Waa la soo rarayaa...</div>
+              </div>
             </div>
           </div>
         </div>
@@ -936,6 +1009,10 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
           <span class="ico">💬</span>
           <span>Sheeko</span>
         </button>
+        <button class="bnav-btn" data-tab="views" onclick="switchAppTab('views')">
+          <span class="ico">📈</span>
+          <span>Views</span>
+        </button>
         <button class="bnav-btn" data-tab="tools" onclick="switchAppTab('tools')">
           <span class="ico">🛠️</span>
           <span>Adeegyada</span>
@@ -1046,6 +1123,108 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       });
 
       if (tabName === 'tools') loadPrayerTimes();
+      if (tabName === 'views') loadAppViewsHub();
+    }
+
+    let appViewsMember = null;
+    try {
+      const savedM = localStorage.getItem('cardoso_views_member');
+      if (savedM) appViewsMember = JSON.parse(savedM);
+    } catch {}
+
+    function renderAppViewsAuthUI() {
+      const form = document.getElementById('appViewsJoinForm');
+      const unl = document.getElementById('appViewsUnlockedBox');
+      if (!form || !unl) return;
+      if (appViewsMember && appViewsMember.phone) {
+        form.style.display = 'none';
+        unl.style.display = 'block';
+        document.getElementById('appViewsJoinedBadge').textContent =
+          '✅ ' + (appViewsMember.displayName || 'Xubin') + ' (+' + appViewsMember.phone + ') — Batch #' + (appViewsMember.batchNumber || 1);
+      } else {
+        form.style.display = 'block';
+        unl.style.display = 'none';
+      }
+    }
+
+    async function loadAppViewsHub() {
+      renderAppViewsAuthUI();
+      try {
+        const res = await fetch('/api/views/summary');
+        const data = await res.json();
+        if (!data || data.status !== 'ok') return;
+        const stats = data.stats || {};
+        const cfg = data.config || {};
+        document.getElementById('appViewsMeterText').textContent =
+          '📦 Batch #' + (stats.currentBatch || 1) + ': ' + (stats.currentBatchFreeCount || 0) + ' / ' + (stats.batchTarget || 100) + ' Qof (+' + (stats.activeVipCount || 0) + ' VIP)';
+        document.getElementById('appViewsTotalText').textContent = (stats.totalContacts || 0) + ' Contacts · ' + (stats.totalDownloads || 0) + ' DL';
+        document.getElementById('appViewsMeterFill').style.width = (stats.progressPct || 0) + '%';
+
+        const grid = document.getElementById('appViewsVipGrid');
+        const vips = data.vips || [];
+        if (!vips.length) {
+          const vipPhone = (cfg.ownerVipPhone || '').replace(/\\D/g, '');
+          const vipHref = vipPhone ? ('https://wa.me/' + vipPhone + '?text=' + encodeURIComponent('Asc! Waxaan rabaa VIP Pinned CARDOSO Views Hub.')) : '/views';
+          grid.innerHTML = '<div class="mini-vip-card"><strong>👑 Booska VIP Waa Banaan Yahay</strong><span style="font-size:0.78rem;color:var(--muted);">Ku xir ganacsigaaga korka .vcf kasta (' + escapeHtml(cfg.vipPriceLabel || '$5 / Bil') + ')</span><a href="' + vipHref + '" target="_blank" class="btn btn-primary btn-sm">Dalbo VIP</a></div>';
+        } else {
+          grid.innerHTML = vips.map(function(v) {
+            const waUrl = 'https://wa.me/' + encodeURIComponent(v.phone) + '?text=' + encodeURIComponent('Asc ' + v.displayName + '! Waxaan kaa helay CARDOSO AI App.');
+            return '<div class="mini-vip-card">' +
+              '<div style="font-weight:800;font-size:0.9rem;">👑 ' + escapeHtml(v.displayName) + '</div>' +
+              '<div style="font-size:0.75rem;color:#fcd34d;">📍 ' + escapeHtml(v.city) + '</div>' +
+              '<div style="font-size:0.78rem;color:#cbd5e1;">' + escapeHtml(v.tagline || 'VIP Pinned Sponsor') + '</div>' +
+              '<div style="display:flex;gap:0.4rem;margin-top:0.2rem;">' +
+                '<a href="' + waUrl + '" target="_blank" class="btn btn-emerald btn-sm" style="flex:1;">💬 Chat</a>' +
+                '<button class="btn btn-ghost btn-sm" onclick="window.location.href=\\'/api/views/download.vcf?scope=single&id=' + v.id + '\\'">➕ .vcf</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+      } catch {}
+    }
+
+    async function submitAppViewsJoin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('appViewsJoinBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Waa la diiwaangelinayaa...';
+      try {
+        const res = await fetch('/api/views/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('appViewsName').value.trim(),
+            phone: document.getElementById('appViewsPhone').value.trim(),
+            city: document.getElementById('appViewsCity').value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Khalad ayaa dhacay');
+        appViewsMember = data.contact;
+        try { localStorage.setItem('cardoso_views_member', JSON.stringify(data.contact)); } catch {}
+        showToast('🎉 Waad ku biirtay Views Hub — hadda soo deji .vcf!');
+        await loadAppViewsHub();
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Khalad'), true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 Ku Biir & Fur Faylka .vcf';
+      }
+    }
+
+    function downloadAppViewsVcf(scope) {
+      const q = new URLSearchParams({ scope: scope || 'current' });
+      if (appViewsMember && appViewsMember.phone) q.set('myPhone', appViewsMember.phone);
+      window.location.href = '/api/views/download.vcf?' + q.toString();
+      showToast('📥 Faylka .vcf waa soo degayaa!');
+      setTimeout(loadAppViewsHub, 1000);
+    }
+
+    function shareAppViewsLink() {
+      const ref = appViewsMember && appViewsMember.phone ? ('?ref=' + encodeURIComponent(appViewsMember.phone)) : '';
+      const url = location.origin + '/views' + ref;
+      const msg = '📈 Hel 200+ WhatsApp Status Views dhab ah (0% Ban) adigoo 1-click .vcf soo dejinaya: ' + url;
+      window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
     }
 
     function renderSafeMarkdown(rawText) {

@@ -22,6 +22,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
     <div style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;">
       <span class="pill pill-violet">👑 ${escapeAdminHtml(adminLabel)}</span>
       <a href="/app" class="btn btn-primary btn-sm">📱 Fur App-ka (/app)</a>
+      <a href="/views" target="_blank" class="btn btn-emerald btn-sm">📈 Views Hub (/views)</a>
       <button type="button" class="btn btn-ghost btn-sm" data-pwa-install-btn onclick="triggerCardosoInstall()">📲 Install App</button>
       <a href="/join" target="_blank" class="btn btn-ghost btn-sm">🔗 Bogga Isdiiwaangelinta (/join)</a>
       <span class="pill pill-amber" id="ownerWaBadge">Owner WhatsApp: --</span>
@@ -60,6 +61,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       <button class="tab-btn" onclick="switchAdminTab('create', this)">➕ Diiwaangeli Macmiil Cusub</button>
       <button class="tab-btn" onclick="switchAdminTab('admins', this)">👥 Admins &amp; 🎟️ Promo Codes</button>
       <button class="tab-btn" onclick="switchAdminTab('owner', this)">🤖 Bot-kaaga (Owner Studio)</button>
+      <button class="tab-btn" onclick="switchAdminTab('views', this)">📈 Views &amp; .vcf Hub</button>
       <button class="tab-btn" onclick="switchAdminTab('voice', this)">🎙️ Voice Note to Groups</button>
     </nav>
 
@@ -477,6 +479,151 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
         </div>
       </section>
     </div>
+
+    <!-- TAB 6: VIEWS & .VCF CONTACT EXCHANGE HUB (0% BAN VIP MANAGER) -->
+    <div id="admin-tab-views" class="tab-pane">
+      <section class="grid-4" style="margin-bottom:1.25rem;">
+        <div class="kpi-box">
+          <div class="kpi-label">Wadarta Contacts Pool-ka</div>
+          <div class="kpi-val" id="adminViewsTotal">0</div>
+          <div class="kpi-foot">Active contacts</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">VIP Pinned Clients</div>
+          <div class="kpi-val" id="adminViewsVipCount" style="color:#fbbf24;">0</div>
+          <div class="kpi-foot">Korka ku xiran .vcf kasta</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">Batch-ka Hadda</div>
+          <div class="kpi-val" id="adminViewsBatch" style="color:#22d3ee;">#1</div>
+          <div class="kpi-foot" id="adminViewsBatchFill">0 / 100</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">Wadarta .vcf Downloads</div>
+          <div class="kpi-val" id="adminViewsDownloads" style="color:#34d399;">0</div>
+          <div class="kpi-foot">1-click imports</div>
+        </div>
+      </section>
+
+      <div style="display:flex;gap:0.65rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+        <a href="/views" target="_blank" class="btn btn-primary btn-sm">🔗 Fur Bogga /views</a>
+        <button class="btn btn-ghost btn-sm" onclick="copyText(location.origin + '/views', '✅ Link-ga /views waa la koobiyeeyay!')">📋 Koobi Link-ga /views</button>
+        <a href="/api/views/download.vcf?scope=all" class="btn btn-emerald btn-sm">📥 Soo Deji Master .vcf (All)</a>
+        <a href="/api/views/download.vcf?scope=vip" class="btn btn-ghost btn-sm">👑 Soo Deji VIP .vcf</a>
+        <button class="btn btn-ghost btn-sm" onclick="startNextViewsBatch()">📦 Billow Batch Cusub (+1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="loadAdminViewsHub()">🔄 Refresh</button>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:1.25rem;">
+        <!-- Add / Promote VIP Pinned Sponsor -->
+        <section class="glass-card" style="border-color:rgba(245,158,11,0.4);">
+          <div class="card-title">👑 Ku Dar / Dalacsii Macmiil VIP Pinned</div>
+          <div class="card-sub">Macmiilka aad halkan geliso wuxuu korka kaga soo baxayaa fayl kasta oo .vcf ah iyo kaararka VIP-ga ee /views &amp; /app.</div>
+          <form onsubmit="submitAdminVip(event)">
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="field-label">Magaca VIP / Ganacsiga</label>
+                <input class="field" id="vipAddName" required placeholder="Tusaale: Hargeysa Fashion" />
+              </div>
+              <div class="form-group">
+                <label class="field-label">Lambarka WhatsApp</label>
+                <input class="field" id="vipAddPhone" required placeholder="252634xxxxxx" />
+              </div>
+            </div>
+            <div class="grid-3">
+              <div class="form-group">
+                <label class="field-label">Magaalada</label>
+                <input class="field" id="vipAddCity" value="Hargeysa" placeholder="Hargeysa" />
+              </div>
+              <div class="form-group">
+                <label class="field-label">Muddada VIP</label>
+                <select class="field" id="vipAddDays">
+                  <option value="7">7 Maalmood (1 Todobaad)</option>
+                  <option value="30" selected>30 Maalmood (1 Bil)</option>
+                  <option value="90">90 Maalmood (3 Bilood)</option>
+                  <option value="0">Joogto (Unlimited)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="field-label">Darajada (1 = Ugu Sare)</label>
+                <input class="field" id="vipAddPriority" type="number" value="1" min="1" max="999" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Xayeysiis Kooban (Tagline)</label>
+              <input class="field" id="vipAddTagline" placeholder="Tusaale: Dhar casri ah &amp; delivery degdeg ah!" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">Sawirka VIP / Logo (Ikhtiyaari — si toos ah loo yaraynayo)</label>
+              <input type="file" id="vipAddPhotoFile" accept="image/*" class="field" onchange="handleVipPhotoPicked(event)" />
+              <input type="hidden" id="vipAddAvatarData" />
+            </div>
+            <button type="submit" id="vipAddSubmitBtn" class="btn btn-primary" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ea580c);">
+              👑 Xir Booska VIP Pinned
+            </button>
+          </form>
+        </section>
+
+        <!-- Hub Settings -->
+        <section class="glass-card">
+          <div class="card-title">⚙️ Dejinta CARDOSO Views Hub</div>
+          <div class="card-sub">Maamul magaca contacts-ka, tirada Batch-ka, qiimaha VIP-ga, iyo lambarkaaga iibka VIP.</div>
+          <form onsubmit="saveAdminViewsConfig(event)">
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="field-label">Prefix-ka Magacyada (.vcf)</label>
+                <input class="field" id="cfgViewsPrefix" value="CV - " placeholder="CV - " />
+              </div>
+              <div class="form-group">
+                <label class="field-label">Xadka Batch Kasta (Target)</label>
+                <input class="field" id="cfgViewsTarget" type="number" value="100" min="10" max="2000" />
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="field-label">Lambarka Dalabka VIP (WhatsApp)</label>
+                <input class="field" id="cfgViewsVipPhone" placeholder="252634xxxxxx" />
+              </div>
+              <div class="form-group">
+                <label class="field-label">Qiimaha VIP (Label)</label>
+                <input class="field" id="cfgViewsVipPrice" value="$5 / Bil" placeholder="$5 / Bil" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Ogeysiis Sare (Announcement Banner — Ikhtiyaari)</label>
+              <input class="field" id="cfgViewsAnnouncement" placeholder="Tusaale: Batch #1 caawa 8:00 PM ayuu xirmayaa!" />
+            </div>
+            <button type="submit" class="btn btn-emerald" style="width:100%;">💾 Keydi Dejinta Views Hub</button>
+          </form>
+        </section>
+      </div>
+
+      <!-- Contacts Table -->
+      <section class="glass-card">
+        <div class="card-title">
+          <span>👥 Dhammaan Dadka Ku Jira Views Pool-ka</span>
+          <input class="field" id="adminViewsSearch" style="max-width:240px;padding:0.45rem 0.7rem;font-size:0.82rem;" placeholder="🔍 Raadi magac ama lambar..." oninput="renderAdminViewsTable()" />
+        </div>
+        <div class="card-sub">Hal gujis VIP ka dhig, kordhi +30 maalmood, ama tirtir.</div>
+        <div class="table-wrap">
+          <table class="saas-table">
+            <thead>
+              <tr>
+                <th>Magaca &amp; Lambarka</th>
+                <th>Magaalada</th>
+                <th>Batch</th>
+                <th>Xaaladda VIP</th>
+                <th>Referrals</th>
+                <th>Tallaabooyinka</th>
+              </tr>
+            </thead>
+            <tbody id="adminViewsTableBody">
+              <tr><td colspan="6" style="text-align:center;color:var(--text-muted);">Waa la soo rarayaa...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   </main>
 
   <!-- Edit Subscriber Limits / Tier Modal -->
@@ -559,6 +706,7 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       if (btn) btn.classList.add('active');
       if (name === 'owner') { loadOwnerConfig(); loadOwnerStatus(); loadOwnerLeads(); }
       if (name === 'admins') { loadAdminUsers(); loadPromos(); }
+      if (name === 'views') { loadAdminViewsHub(); }
       if (name === 'voice') { loadGroupsForVoice(); }
     }
 
@@ -1367,6 +1515,205 @@ export function renderAdminDashboardHTML(adminLabel: string = 'Owner Admin'): st
       } finally {
         btn.disabled = false;
         btn.textContent = '🚀 Ku Dar 5 Xubnood Hadda (Run Now)';
+      }
+    }
+
+    window._adminViewsContacts = [];
+
+    function handleVipPhotoPicked(ev) {
+      const file = ev && ev.target && ev.target.files && ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function() {
+        const img = new Image();
+        img.onload = function() {
+          const maxDim = 220;
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+          document.getElementById('vipAddAvatarData').value = dataUrl;
+          showToast('✅ Sawirka VIP waa diyaar!');
+        };
+        img.src = String(reader.result || '');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function loadAdminViewsHub() {
+      try {
+        const res = await fetch('/api/admin/views/overview');
+        const data = await res.json();
+        if (!data || data.status !== 'ok') return;
+        const stats = data.stats || {};
+        const cfg = data.config || {};
+        window._adminViewsContacts = data.contacts || [];
+
+        document.getElementById('adminViewsTotal').textContent = String(stats.totalContacts || 0);
+        document.getElementById('adminViewsVipCount').textContent = String(stats.activeVipCount || 0);
+        document.getElementById('adminViewsBatch').textContent = '#' + (cfg.currentBatch || 1);
+        document.getElementById('adminViewsBatchFill').textContent = (stats.currentBatchCount || 0) + ' / ' + (cfg.batchTarget || 100);
+        document.getElementById('adminViewsDownloads').textContent = String(stats.totalDownloads || 0);
+
+        document.getElementById('cfgViewsPrefix').value = cfg.contactPrefix || 'CV - ';
+        document.getElementById('cfgViewsTarget').value = String(cfg.batchTarget || 100);
+        document.getElementById('cfgViewsVipPhone').value = cfg.ownerVipPhone || '';
+        document.getElementById('cfgViewsVipPrice').value = cfg.vipPriceLabel || '$5 / Bil';
+        document.getElementById('cfgViewsAnnouncement').value = cfg.announcement || '';
+
+        renderAdminViewsTable();
+      } catch (err) {
+        showToast('❌ Views Hub lama soo rari karin: ' + err.message, true);
+      }
+    }
+
+    function renderAdminViewsTable() {
+      const tbody = document.getElementById('adminViewsTableBody');
+      if (!tbody) return;
+      const q = String((document.getElementById('adminViewsSearch') || {}).value || '').trim().toLowerCase();
+      const rows = (window._adminViewsContacts || []).filter(function(c) {
+        if (!q) return true;
+        return String(c.displayName || '').toLowerCase().includes(q) ||
+          String(c.phone || '').includes(q) ||
+          String(c.city || '').toLowerCase().includes(q);
+      });
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">Weli cidna kuma jirto Views Hub-ka.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(function(c) {
+        const vipBadge = c.isVip
+          ? ('<span class="pill pill-amber">👑 VIP #' + c.vipPriority + (c.vipExpiresAt ? (' · ' + Math.max(0, Math.ceil((c.vipExpiresAt - Date.now()) / 86400000)) + 'd') : ' · ∞') + '</span>')
+          : '<span class="pill pill-muted">Free</span>';
+        return '<tr>' +
+          '<td><strong>' + escapeHtml(c.displayName) + '</strong><div style="font-size:0.78rem;color:var(--text-muted);">+' + escapeHtml(c.phone) + (c.tagline ? (' · ' + escapeHtml(c.tagline)) : '') + '</div></td>' +
+          '<td>' + escapeHtml(c.city) + '</td>' +
+          '<td><span class="pill pill-cyan">#' + c.batchNumber + '</span></td>' +
+          '<td>' + vipBadge + '</td>' +
+          '<td>' + String(c.referralsCount || 0) + '</td>' +
+          '<td style="display:flex;gap:0.35rem;flex-wrap:wrap;">' +
+            (c.isVip
+              ? ('<button class="btn btn-emerald btn-sm" onclick="renewViewsVip(' + c.id + ')">+30d</button>' +
+                 '<button class="btn btn-ghost btn-sm" onclick="toggleViewsVip(' + c.id + ', false)">Unpin</button>')
+              : ('<button class="btn btn-primary btn-sm" onclick="toggleViewsVip(' + c.id + ', true)">👑 Make VIP</button>')) +
+            '<button class="btn btn-danger btn-sm" onclick="deleteViewsContact(' + c.id + ')">🗑️</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    async function submitAdminVip(e) {
+      e.preventDefault();
+      const btn = document.getElementById('vipAddSubmitBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/views/vip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('vipAddName').value.trim(),
+            phone: document.getElementById('vipAddPhone').value.trim(),
+            city: document.getElementById('vipAddCity').value.trim(),
+            durationDays: Number(document.getElementById('vipAddDays').value),
+            vipPriority: Number(document.getElementById('vipAddPriority').value) || 1,
+            tagline: document.getElementById('vipAddTagline').value.trim(),
+            avatarUrl: document.getElementById('vipAddAvatarData').value || ''
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed');
+        showToast(data.message || '👑 VIP waa la daray!');
+        document.getElementById('vipAddName').value = '';
+        document.getElementById('vipAddPhone').value = '';
+        document.getElementById('vipAddTagline').value = '';
+        document.getElementById('vipAddAvatarData').value = '';
+        document.getElementById('vipAddPhotoFile').value = '';
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function saveAdminViewsConfig(e) {
+      e.preventDefault();
+      try {
+        const res = await fetch('/api/admin/views/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contactPrefix: document.getElementById('cfgViewsPrefix').value,
+            batchTarget: Number(document.getElementById('cfgViewsTarget').value) || 100,
+            ownerVipPhone: document.getElementById('cfgViewsVipPhone').value.trim(),
+            vipPriceLabel: document.getElementById('cfgViewsVipPrice').value.trim(),
+            announcement: document.getElementById('cfgViewsAnnouncement').value.trim()
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed');
+        showToast(data.message || '✅ Dejinta waa la keydiyay!');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      }
+    }
+
+    async function startNextViewsBatch() {
+      if (!confirm('Ma hubtaa inaad bilowdo Batch cusub? Xubnaha cusub waxay geli doonaan Batch-ka xiga.')) return;
+      try {
+        const res = await fetch('/api/admin/views/new-batch', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || '📦 Batch cusub waa la bilaabay!');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      }
+    }
+
+    async function toggleViewsVip(id, makeVip) {
+      try {
+        const res = await fetch('/api/admin/views/contacts/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isVip: makeVip, durationDays: makeVip ? 30 : 0, vipPriority: 10 })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed');
+        showToast(makeVip ? '👑 VIP Pinned waa la shiday (+30d)!' : 'ℹ️ VIP waa laga saaray');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      }
+    }
+
+    async function renewViewsVip(id) {
+      try {
+        const res = await fetch('/api/admin/views/contacts/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isVip: true, durationDays: 30 })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed');
+        showToast('✅ +30 maalmood oo VIP ah waa la kordhiyay!');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
+      }
+    }
+
+    async function deleteViewsContact(id) {
+      if (!confirm('Ma hubtaa inaad tirtirto qofkan?')) return;
+      try {
+        await fetch('/api/admin/views/contacts/' + id, { method: 'DELETE' });
+        showToast('🗑️ Waa la tirtiray');
+        await loadAdminViewsHub();
+      } catch (err) {
+        showToast('❌ ' + err.message, true);
       }
     }
 

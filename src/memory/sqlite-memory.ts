@@ -12,6 +12,10 @@ export class SQLiteStudentMemory implements IStudentMemory {
     this.dbPath = dbPath;
   }
 
+  public getDatabase(): DatabaseSync | null {
+    return this.db;
+  }
+
   /**
    * Hashes a raw phone number or sender ID using SHA-256 for student privacy.
    */

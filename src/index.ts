@@ -126,6 +126,7 @@ async function bootstrap() {
   server.listen(webPort, () => {
     console.log(`🌐 [Studio Server] CARDOSO AI SaaS running on port ${webPort}`);
     console.log(`   📲 Installable App (PWA): http://localhost:${webPort}/app`);
+    console.log(`   📈 Views & .vcf Hub:      http://localhost:${webPort}/views`);
     console.log(`   👑 Admin Studio:          http://localhost:${webPort}/`);
     console.log(`   📝 Self-Signup:           http://localhost:${webPort}/join`);
     console.log(`   🔑 Client Login:          http://localhost:${webPort}/portal`);
