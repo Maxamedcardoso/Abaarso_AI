@@ -402,6 +402,7 @@ export class TenantManager {
         ? (msg, tr, isAdm) => this.onboarding.handleMessage(msg, tr, isAdm)
         : undefined,
       sendGuidePdfHandler: (chatId, tr) => this.sendSubscriberGuidePdf(tenant, chatId, null, tr),
+      publicBaseUrl: this.publicBaseUrl,
     });
 
     const transport = new WhatsAppBaileysTransport({

@@ -11,6 +11,7 @@ import { StudentAdvisorEngine } from '../src/advisor/advisor-engine.js';
 import { ConsoleSimulatorTransport } from '../src/transports/console-simulator.js';
 import { createStudioServer } from '../src/web/studio-server.js';
 import { normalizeViewsPhone } from '../src/services/views-hub.service.js';
+import { MessageRouter } from '../src/pipeline/message-router.js';
 import { config } from '../src/config/env.js';
 
 function assert(condition: unknown, message: string): void {
@@ -237,6 +238,102 @@ async function runViewsHubTests(): Promise<void> {
     });
     assert(adminMasterVcf.status === 200 && adminMasterVcf.text.includes('+251915998877'), 'Admin master VCF download should work');
     console.log('  ✅ PASS: Download tracker, Verified Saver, Manual Unlock & Admin Master VCF verified');
+
+    // 10. WhatsApp `!views` in Groups (0% Ban: replies IN GROUP with anti-flood cooldown!) & `views` in Private Chat
+    await invokeServer('PUT', '/api/admin/views/config', {
+      headers: { Authorization: adminAuth },
+      body: { downloadMode: 'instant', batchTarget: 10 },
+    });
+
+    const router = new MessageRouter(engine, testConfig, undefined, undefined, memory, {
+      tenantId: 'owner',
+      publicBaseUrl: 'https://cardoso.example.com',
+    });
+
+    const sentTexts: Array<{ chatId: string; text: string }> = [];
+    const sentDocs: Array<{ chatId: string; fileName: string; mimeType: string; content: string; caption: string }> = [];
+    const mockWaTransport: any = {
+      name: 'mock-wa',
+      isConnected: true,
+      sendMessage: async (chatId: string, text: string) => {
+        sentTexts.push({ chatId, text });
+        return true;
+      },
+      sendMedia: async (chatId: string, media: any) => {
+        sentDocs.push({
+          chatId,
+          fileName: media.fileName || '',
+          mimeType: media.mimeType || '',
+          content: media.dataBuffer ? media.dataBuffer.toString('utf8') : '',
+          caption: media.caption || '',
+        });
+        return true;
+      },
+    };
+
+    const groupJid = '120363000111222333@g.us';
+
+    // Group user #1 writes `!views` -> auto-registered AND receives .vcf document IN THE GROUP (never private cold DM!)
+    const grpRes1 = await router.handleIncomingMessage(
+      {
+        id: 'grp_v_1',
+        senderId: '252637001122@s.whatsapp.net',
+        senderPhone: '252637001122',
+        senderName: 'Cali Group',
+        chatId: groupJid,
+        isGroup: true,
+        content: '!views',
+        rawTimestamp: Date.now(),
+        isMentioned: false,
+        isFromMe: false,
+      },
+      mockWaTransport
+    );
+    assert(grpRes1.handled === true, 'Group !views must be handled');
+    assert(sentDocs.length === 1 && sentDocs[0].chatId === groupJid, 'First group !views must send .vcf IN THE GROUP');
+    assert(sentDocs[0].mimeType === 'text/vcard' && sentDocs[0].content.includes('BEGIN:VCARD'), 'Group doc must be valid vCard');
+    assert(sentDocs[0].content.includes('+252637001122'), 'Group .vcf must include newly joined user');
+
+    // Group user #2 (+251 Ethiopia) writes `!views` 2 seconds later -> registered cleanly + concise group text (NO .vcf flood, NO private DM!)
+    const grpRes2 = await router.handleIncomingMessage(
+      {
+        id: 'grp_v_2',
+        senderId: '251911223344@s.whatsapp.net',
+        senderPhone: '251911223344',
+        senderName: 'Muna Jigjiga',
+        chatId: groupJid,
+        isGroup: true,
+        content: '!views',
+        rawTimestamp: Date.now(),
+        isMentioned: false,
+        isFromMe: false,
+      },
+      mockWaTransport
+    );
+    assert(grpRes2.handled === true, 'Second group !views must be handled');
+    assert(sentDocs.length === 1, 'Group cooldown must prevent spamming duplicate .vcf files back-to-back');
+    assert(sentTexts.length === 1 && sentTexts[0].chatId === groupJid, 'Cooldown reply must stay IN THE GROUP (0 cold DMs!)');
+
+    // Private chat user writes `views` -> receives .vcf directly inside Private Chat!
+    const dmRes = await router.handleIncomingMessage(
+      {
+        id: 'dm_v_1',
+        senderId: '251922334455@s.whatsapp.net',
+        senderPhone: '251922334455',
+        senderName: 'Sacdiya',
+        chatId: '251922334455@s.whatsapp.net',
+        isGroup: false,
+        content: 'views',
+        rawTimestamp: Date.now(),
+        isMentioned: false,
+        isFromMe: false,
+      },
+      mockWaTransport
+    );
+    assert(dmRes.handled === true, 'Private chat "views" must be handled');
+    assert(sentDocs.length === 2 && sentDocs[1].chatId === '251922334455@s.whatsapp.net', 'Private chat must receive .vcf directly');
+    assert(sentDocs[1].content.includes('+251911223344'), 'Private .vcf must include previously joined +251 group member');
+    console.log('  ✅ PASS: WhatsApp Group `!views` (0 cold DMs + anti-flood cooldown) & Private `views` auto-.vcf verified');
 
     console.log('\n🎉 All CARDOSO Views & .vcf Hub upgraded tests passed!\n');
   } finally {

@@ -12,6 +12,8 @@ import { UserProfiler } from '../services/user-profiler.service.js';
 import { PlanGuard } from '../tenants/plan-catalog.js';
 import { codeRunnerService } from '../services/code-runner.service.js';
 import { errorLogService, formatClock, formatDuration } from '../services/error-log.service.js';
+import { ViewsHubError, ViewsHubService, normalizeViewsPhone } from '../services/views-hub.service.js';
+import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 
 export interface MessageRouterOptions {
   /** Tenant id (used to scope `!info` error output for subscribers). Defaults to 'owner'. */
@@ -28,6 +30,8 @@ export interface MessageRouterOptions {
     isAdminUser: boolean
   ) => Promise<{ handled: boolean; reason?: string }>;
   sendGuidePdfHandler?: (chatId: string, transport: IMessagingTransport) => Promise<boolean>;
+  publicBaseUrl?: string;
+  viewsHub?: ViewsHubService;
 }
 
 export class MessageRouter {
@@ -46,6 +50,9 @@ export class MessageRouter {
   private getExtraAdmins?: () => string[];
   private onboardingHandler?: MessageRouterOptions['onboardingHandler'];
   private sendGuidePdfHandler?: MessageRouterOptions['sendGuidePdfHandler'];
+  private publicBaseUrl: string;
+  private viewsHub?: ViewsHubService;
+  private groupVcfCooldown: Map<string, { sentAt: number; joinsSince: number }> = new Map();
   private tenantId: string;
   private isOwnerTenant: boolean;
 
@@ -70,8 +77,22 @@ export class MessageRouter {
     this.getExtraAdmins = options?.getExtraAdmins;
     this.onboardingHandler = options?.onboardingHandler;
     this.sendGuidePdfHandler = options?.sendGuidePdfHandler;
+    this.publicBaseUrl = (
+      options?.publicBaseUrl ||
+      process.env.PUBLIC_URL ||
+      process.env.RENDER_EXTERNAL_URL ||
+      ''
+    ).replace(/\/+$/, '');
     this.tenantId = options?.tenantId || 'owner';
     this.isOwnerTenant = this.tenantId === 'owner';
+    if (options?.viewsHub) {
+      this.viewsHub = options.viewsHub;
+    } else if (this.isOwnerTenant && memory instanceof SQLiteStudentMemory) {
+      this.viewsHub = new ViewsHubService(
+        () => memory.getDatabase(),
+        config.security.adminPhoneNumbers[0] || ''
+      );
+    }
     if (this.engine?.getAIOrchestrator) {
       this.whatsappManager.setAIOrchestrator(this.engine.getAIOrchestrator());
     }
@@ -667,6 +688,20 @@ SHURUUCDA DUGSIIYA:
         await transport.sendMessage(message.chatId, summaryText, { replyToMessageId: message.id });
         return { handled: true, reason: 'Autonomous natural discussion summary' };
       }
+    }
+
+    // 1c.0. Zero-Ban WhatsApp Views & .vcf Command (`!views` / `!vcf` in Groups; `views` / `!views` / `vcf` in Private Chat)
+    // 100% Inbound: NEVER sends unsolicited cold private DMs — always replies in the same chat (Group or Private).
+    const isViewsGroupCmd = message.isGroup && /^[!./#](?:views|vcf)(?:\s+(.*))?$/i.test(text);
+    const isViewsPrivateCmd =
+      !message.isGroup &&
+      (message.isFromMe
+        ? /^[!./#](?:views|vcf)(?:\s+(.*))?$/i.test(text)
+        : /^[!./#]?(?:views|vcf)(?:\s+(.*))?$/i.test(text));
+
+    if (this.viewsHub && (isViewsGroupCmd || isViewsPrivateCmd)) {
+      const viewsRes = await this.handleViewsCommand(message, transport, isAdminUser);
+      if (viewsRes.handled) return viewsRes;
     }
 
     // If AI is specifically disabled for this sender (!off <number>), do not respond at all
@@ -2963,6 +2998,180 @@ SHURUUCDA DUGSIIYA:
     console.log(`✅ [Router] Jawaabtii si guul leh ayaa loogu diray WhatsApp!`);
 
     return { handled: true };
+  }
+
+  /**
+   * Handles 100% Inbound `!views` / `views` / `vcf` commands in Groups and Private Chats:
+   * - Auto-registers sender's WhatsApp Name + Phone (+252, +251, +254, etc.) with zero duplicates.
+   * - Replies IN THE SAME CHAT (never cold-DMs strangers privately from a group -> 0% Ban!).
+   * - Sends native .vcf document directly inside WhatsApp chat (with 5-min / 10-join anti-spam cooldown in groups).
+   */
+  private async handleViewsCommand(
+    message: IncomingMessage,
+    transport: IMessagingTransport,
+    isAdminUser: boolean
+  ): Promise<{ handled: boolean; reason?: string }> {
+    if (!this.viewsHub) return { handled: false };
+
+    const rawText = message.content.trim();
+    const argMatch = rawText.match(/^[!./#]?(?:views|vcf)(?:\s+(.+))?$/i);
+    const extraArg = (argMatch?.[1] || '').trim();
+    const viewsUrl = this.publicBaseUrl ? `${this.publicBaseUrl}/views` : '';
+
+    // Resolve real phone digits (never store an unresolved @lid identifier as a phone number)
+    let rawPhoneCandidate = (message.senderPhone || '').replace(/\D/g, '');
+    if (!rawPhoneCandidate && message.senderId && !message.senderId.endsWith('@lid')) {
+      rawPhoneCandidate = message.senderId.split('@')[0].split(':')[0].replace(/\D/g, '');
+    }
+    if (!rawPhoneCandidate && !message.isGroup && message.chatId && !message.chatId.endsWith('@lid')) {
+      rawPhoneCandidate = message.chatId.split('@')[0].split(':')[0].replace(/\D/g, '');
+    }
+    if (!rawPhoneCandidate && message.isFromMe) {
+      rawPhoneCandidate = (
+        this.whatsappManager.getBotNumber() ||
+        this.config.security.adminPhoneNumbers[0] ||
+        ''
+      ).replace(/\D/g, '');
+    }
+
+    const phone = normalizeViewsPhone(rawPhoneCandidate);
+    const hasValidPhone = Boolean(phone && phone.length >= 9 && phone.length <= 15);
+    const mentionTag = message.isGroup && message.senderId ? `@${message.senderId.split('@')[0].split(':')[0]} ` : '';
+    const mentionList = message.isGroup && message.senderId ? [message.senderId] : undefined;
+
+    if (!hasValidPhone) {
+      const fallbackMsg =
+        `${mentionTag}Walaal lambarkaaga WhatsApp si toos ah uma muuqan — 5 ilbiriqsi geli boggan si aad *.vcf* u hesho:` +
+        (viewsUrl ? `\n🔗 ${viewsUrl}` : '\n(Fur bogga `/views`)');
+      await transport.sendMessage(message.chatId, fallbackMsg, {
+        replyToMessageId: message.id,
+        mentions: mentionList,
+      });
+      return { handled: true, reason: 'Views command: unresolved LID phone fallback' };
+    }
+
+    const defaultCity = phone.startsWith('251')
+      ? 'Jigjiga'
+      : phone.startsWith('254')
+      ? 'Nairobi'
+      : 'Hargeysa';
+    const displayName =
+      (extraArg && extraArg.length >= 2 && extraArg.length <= 45 ? extraArg : '') ||
+      (message.senderName && message.senderName.trim().length >= 2 ? message.senderName.trim() : '') ||
+      `Xubin ${phone.slice(-4)}`;
+
+    let contact: any;
+    let alreadyJoined = false;
+    let batchCompleted = false;
+    let nextBatchOpened: number | null = null;
+
+    try {
+      const joined = this.viewsHub.joinContact({
+        name: displayName,
+        phone,
+        city: defaultCity,
+        category: 'personal',
+      });
+      contact = joined.contact;
+      batchCompleted = joined.batchCompleted;
+      nextBatchOpened = joined.nextBatchOpened;
+    } catch (err: any) {
+      if (err instanceof ViewsHubError && err.code === 'DUPLICATE_PHONE') {
+        alreadyJoined = true;
+        contact = this.viewsHub.lookupContactByPhone(phone);
+      } else {
+        await transport.sendMessage(
+          message.chatId,
+          `${mentionTag}⚠️ ${err?.message || 'Cilad yar ayaa dhacday, mar kale isku day.'}`,
+          { replyToMessageId: message.id, mentions: mentionList }
+        );
+        return { handled: true, reason: 'Views command join error' };
+      }
+    }
+
+    const cfg = this.viewsHub.getConfig();
+    const targetBatch = contact?.batchNumber || cfg.currentBatch;
+    const batchCount = this.viewsHub.getBatchFreeCount(targetBatch);
+    const isUnlocked = this.viewsHub.isBatchDownloadUnlocked(targetBatch, cfg);
+
+    // If Batch Lock Mode is active and this batch isn't full yet
+    if (!isUnlocked && !isAdminUser) {
+      const lockMsg =
+        `${mentionTag}✅ *${alreadyJoined ? 'Horay ayaad ugu jirtay' : 'Waad ku biirtay'} CARDOSO Views Hub — Batch #${targetBatch}!*\n` +
+        `🔒 *Xaaladda:* ${batchCount} / ${cfg.batchTarget} Qof\n` +
+        (message.isGroup
+          ? `🔥 Marka uu gaaro *${cfg.batchTarget} qof*, faylka *.vcf* toos ayaan kooxda ugu soo tuurayaa — qora \`!views\` si uu degdeg u buuxsamo!`
+          : `🔥 Marka uu gaaro *${cfg.batchTarget} qof*, faylka *.vcf* wuu furmayaa — ii soo qor \`vcf\` mar kale ama fur:${viewsUrl ? `\n🔗 ${viewsUrl}` : ''}`);
+      await transport.sendMessage(message.chatId, lockMsg, {
+        replyToMessageId: message.id,
+        mentions: mentionList,
+      });
+      return { handled: true, reason: 'Views command: joined locked batch' };
+    }
+
+    // Decide whether to attach the .vcf file now (always in Private Chat; smart cooldown in Groups to prevent flooding)
+    let shouldSendVcfFile = !message.isGroup;
+    if (message.isGroup) {
+      const now = Date.now();
+      const prev = this.groupVcfCooldown.get(message.chatId);
+      const joinsSince = (prev?.joinsSince || 0) + (alreadyJoined ? 0 : 1);
+      const cooldownExpired = !prev || now - prev.sentAt >= 5 * 60 * 1000;
+      const hitBurstThreshold = joinsSince >= 10;
+      if (cooldownExpired || hitBurstThreshold || batchCompleted || isAdminUser) {
+        shouldSendVcfFile = true;
+        this.groupVcfCooldown.set(message.chatId, { sentAt: now, joinsSince: 0 });
+      } else {
+        this.groupVcfCooldown.set(message.chatId, { sentAt: prev.sentAt, joinsSince });
+      }
+    }
+
+    if (shouldSendVcfFile && typeof transport.sendMedia === 'function') {
+      try {
+        const generated = this.viewsHub.generateVcf({
+          scope: 'current',
+          batch: targetBatch,
+          excludePhone: message.isGroup ? undefined : phone,
+          isAdminBypass: isAdminUser,
+        });
+
+        const vcfCaption = batchCompleted
+          ? `🔥 *HAMBALYO! Batch #${targetBatch} (${cfg.batchTarget}/${cfg.batchTarget}) WUU BUUXSAMAY!*\n` +
+            `📥 Waa kan faylka *.vcf* (${generated.count} Contacts + VIP) — *Guji ➔ Import All Contacts!*\n` +
+            `📦 *Batch #${nextBatchOpened}* hadda ayuu si toos ah u furmay — qor \`!views\` si aad ugu biirto!`
+          : `${mentionTag}✅ *${alreadyJoined ? 'Waa kan faylkaagii' : 'Waad ku biirtay'} Batch #${targetBatch} (${batchCount}/${cfg.batchTarget} Qof)!*\n` +
+            `📥 *${generated.count} Contacts (+VIP)* — Guji faylkan *.vcf* ➔ *Import All Contacts* (2 ilbiriqsi!)\n` +
+            (message.isGroup
+              ? `🔥 Qof kasta oo kooxda jooga oo raba 200+ Status Views bilaash ah ha qoro \`!views\`!`
+              : `✅ Markaad save gareyso, Status Views-kaagu toos ayay u kacayaan!` + (viewsUrl ? `\n🔗 ${viewsUrl}` : ''));
+
+        await transport.sendMedia(
+          message.chatId,
+          {
+            type: 'document',
+            dataBuffer: Buffer.from(generated.vcfText, 'utf8'),
+            mimeType: 'text/vcard',
+            fileName: generated.filename,
+            caption: vcfCaption,
+          },
+          { replyToMessageId: message.id, mentions: mentionList }
+        );
+        return { handled: true, reason: `Views command: sent .vcf (${generated.count} contacts)` };
+      } catch (vcfErr: any) {
+        console.warn(`[ViewsCmd] .vcf generation fallback: ${vcfErr?.message || vcfErr}`);
+      }
+    }
+
+    // Concise group reply during 5-min anti-flood cooldown (user IS already registered!)
+    const shortReply =
+      `${mentionTag}✅ *${alreadyJoined ? 'Horay ayaad ugu jirtay' : 'Waad ku biirtay'} Batch #${targetBatch}* (${batchCount}/${cfg.batchTarget} Qof)! 🔥\n` +
+      `📥 Guji faylka *.vcf* ee kor ku yaal si aad u save gareyso — ama private-ka iigu soo qor *vcf* si toos kuugu soo diro!` +
+      (viewsUrl ? `\n🔗 ${viewsUrl}` : '');
+
+    await transport.sendMessage(message.chatId, shortReply, {
+      replyToMessageId: message.id,
+      mentions: mentionList,
+    });
+    return { handled: true, reason: 'Views command: registered (group cooldown concise reply)' };
   }
 
   public getStatus() {
