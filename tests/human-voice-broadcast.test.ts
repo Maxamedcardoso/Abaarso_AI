@@ -399,7 +399,88 @@ async function runTests() {
       assert.ok(sentTexts.every(t => t.chatId === '252634949642@s.whatsapp.net'));
       ok('!bc cod #1 from Owner Self-Chat delivers Mohamed Voice Note to Broadcast List with zero raw command leak');
 
-      // 5f. Non-command message in Broadcast List must NEVER trigger Gemini AI
+      // 5f. `!bclist name #1 Ardayda` renames list + persists, and `!bc cod Ardayda ...` targets it by custom name!
+      sentTexts.length = 0;
+      sentMedia.length = 0;
+      const renameMsg: IncomingMessage = {
+        id: 'self_bc_rename_1',
+        senderId: '252634949642@s.whatsapp.net',
+        chatId: '252634949642@s.whatsapp.net',
+        isGroup: false,
+        content: '!bclist name #1 Ardayda',
+        rawTimestamp: Date.now(),
+        isMentioned: true,
+        isFromMe: true,
+      };
+      const renameRes = await router.handleIncomingMessage(renameMsg, mockTransport);
+      assert.strictEqual(renameRes.handled, true);
+      assert.strictEqual(mgr.listBroadcastLists()[0].name, 'Ardayda');
+
+      const namedBcCodMsg: IncomingMessage = {
+        id: 'self_bc_named_cod_1',
+        senderId: '252634949642@s.whatsapp.net',
+        chatId: '252634949642@s.whatsapp.net',
+        isGroup: false,
+        content: '!bc cod Ardayda Imtixaanku beri weeye!',
+        rawTimestamp: Date.now(),
+        isMentioned: true,
+        isFromMe: true,
+      };
+      const namedRes = await router.handleIncomingMessage(namedBcCodMsg, mockTransport);
+      assert.strictEqual(namedRes.handled, true);
+      assert.strictEqual(sentMedia.length, 2, '!bc cod Ardayda must deliver to the 2 members of Ardayda');
+      assert.strictEqual(
+        synthesizedCalls[synthesizedCalls.length - 1].text,
+        'Imtixaanku beri weeye!'
+      );
+      ok('!bclist name #1 Ardayda renames list & !bc cod Ardayda targets it directly by custom name');
+
+      // 5f-2. Existing multi-word WhatsApp list name ("Asxaabta VIP") works automatically without renaming!
+      sentTexts.length = 0;
+      sentMedia.length = 0;
+      const multiWordMsg: IncomingMessage = {
+        id: 'self_bc_multiword_1',
+        senderId: '252634949642@s.whatsapp.net',
+        chatId: '252634949642@s.whatsapp.net',
+        isGroup: false,
+        content: '!bc cod Asxaabta VIP Shirku waa 8-da fiidnimo!',
+        rawTimestamp: Date.now(),
+        isMentioned: true,
+        isFromMe: true,
+      };
+      const multiRes = await router.handleIncomingMessage(multiWordMsg, mockTransport);
+      assert.strictEqual(multiRes.handled, true);
+      assert.strictEqual(sentMedia.length, 3, '!bc cod Asxaabta VIP must deliver to all 3 members of Asxaabta VIP');
+      assert.strictEqual(
+        synthesizedCalls[synthesizedCalls.length - 1].text,
+        'Shirku waa 8-da fiidnimo!'
+      );
+      ok('Existing multi-word WhatsApp Broadcast List name ("Asxaabta VIP") works automatically in !bc cod / !bc podcast');
+
+      // 5g. `!bc cod all` fans out across ALL Broadcast Lists with strict deduplication (overlapping member gets it ONCE!)
+      // Add overlapping member `252634222222@s.whatsapp.net` to 9999999999@broadcast too (already in 1763812345@broadcast)
+      mgr.recordBroadcastListRecipient('9999999999@broadcast', '252634222222@s.whatsapp.net', true);
+      sentTexts.length = 0;
+      sentMedia.length = 0;
+      const allBcMsg: IncomingMessage = {
+        id: 'self_bc_all_1',
+        senderId: '252634949642@s.whatsapp.net',
+        chatId: '252634949642@s.whatsapp.net',
+        isGroup: false,
+        content: '!bc cod all Warbixin guud dhammaan 5-ta liis!',
+        rawTimestamp: Date.now(),
+        isMentioned: true,
+        isFromMe: true,
+      };
+      const allRes = await router.handleIncomingMessage(allBcMsg, mockTransport);
+      assert.strictEqual(allRes.handled, true);
+      // 1763812345@broadcast has {111, 222, 333}; 9999999999@broadcast has {555, 666, 222} -> 5 unique recipients!
+      assert.strictEqual(sentMedia.length, 5, 'All 5 unique recipients across both lists must receive it ONCE');
+      assert.strictEqual(new Set(sentMedia.map(m => m.chatId)).size, 5, 'Zero duplicate sends across overlapping lists');
+      assert.ok(sentTexts.some(t => t.chatId === '252634949642@s.whatsapp.net' && t.text.includes('5/5 qof')));
+      ok('!bc cod all delivers to ALL Broadcast Lists at once with 100% deduplication (5/5 unique recipients)');
+
+      // 5h. Non-command message in Broadcast List must NEVER trigger Gemini AI
       const plainBcMsg: IncomingMessage = {
         id: 'bc_plain_1',
         senderId: '252634949642@s.whatsapp.net',

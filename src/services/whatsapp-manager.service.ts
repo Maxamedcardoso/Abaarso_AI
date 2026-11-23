@@ -3805,6 +3805,8 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
   // deliver seamlessly inside WhatsApp Broadcast Lists!
   // ═══════════════════════════════════════════════════════════════════════════
 
+  public static readonly ALL_BROADCAST_LISTS_JID = '__all__@broadcast';
+
   public isBroadcastListJid(jid?: string | null): boolean {
     const clean = String(jid || '').trim().toLowerCase();
     return clean.endsWith('@broadcast') && clean !== 'status@broadcast';
@@ -3926,7 +3928,7 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     persist: boolean = false
   ): boolean {
     const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
-    if (!this.isBroadcastListJid(id)) return false;
+    if (!this.isBroadcastListJid(id) || id === WhatsAppManagerService.ALL_BROADCAST_LISTS_JID) return false;
 
     const existing = this.broadcastLists.get(id);
     const rawName = String(raw?.name || raw?.subject || raw?.conversationName || '').trim();
@@ -4155,6 +4157,77 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     return lists.find(l => l.name.toLowerCase().includes(lower) || l.id.toLowerCase().includes(lower));
   }
 
+  public getAllBroadcastListRecipientsDeduped(): {
+    recipients: string[];
+    listCount: number;
+    listNames: string[];
+  } {
+    const lists = this.listBroadcastLists();
+    const merged = new Set<string>();
+    const listNames: string[] = [];
+    for (const l of lists) {
+      if (l.recipients.length > 0) {
+        listNames.push(l.name);
+      }
+      for (const r of l.recipients) {
+        const clean = this.normalizeBroadcastRecipientJid(r);
+        if (clean) merged.add(clean);
+      }
+    }
+    return {
+      recipients: Array.from(merged),
+      listCount: lists.length,
+      listNames,
+    };
+  }
+
+  public renameBroadcastList(
+    selector: string,
+    newName: string
+  ): { success: boolean; listId: string; name: string; message: string } {
+    const cleanName = String(newName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!cleanName) {
+      return {
+        success: false,
+        listId: '',
+        name: '',
+        message: '⚠️ Fadlan qor magaca cusub. Tusaale: `!bclist name #1 Ardayda`',
+      };
+    }
+
+    const target = this.findBroadcastListTarget(selector);
+    if (!target || target.id === WhatsAppManagerService.ALL_BROADCAST_LISTS_JID) {
+      return {
+        success: false,
+        listId: '',
+        name: '',
+        message: '⚠️ Lama helin Broadcast List-kaas. Qor `!bclist` si aad u aragto lambarada (`#1`, `#2`, ...).',
+      };
+    }
+
+    const existing = this.broadcastLists.get(target.id);
+    this.broadcastLists.set(target.id, {
+      id: target.id,
+      name: cleanName,
+      recipients: existing?.recipients || target.recipients || [],
+      updatedAt: Date.now(),
+    });
+    this.saveBroadcastListsCache();
+
+    const count = this.broadcastLists.get(target.id)?.recipients.length || 0;
+    return {
+      success: true,
+      listId: target.id,
+      name: cleanName,
+      message:
+        `✅ *Magaca Broadcast List-ka waa la beddelay!*\n` +
+        `🏷️ *Magaca Cusub:* ${cleanName}\n` +
+        `🆔 *ID:* \`${target.id}\`\n` +
+        `👥 *Dadka Liiska:* ${count} qof\n\n` +
+        `_Hadda waxaad toos u diri kartaa:_ \`!bc cod ${cleanName} Salaan!\` ama \`!bc podcast ${cleanName} <Mawduuc> 2m\``,
+    };
+  }
+
   public async resolveBroadcastListRecipients(
     broadcastJid: string,
     forceQuery: boolean = false
@@ -4162,6 +4235,18 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     const id = String(broadcastJid || '').trim();
     if (!this.isBroadcastListJid(id)) {
       return { id, name: id, recipients: [] };
+    }
+
+    if (id === WhatsAppManagerService.ALL_BROADCAST_LISTS_JID) {
+      if (this.broadcastLists.size === 0) {
+        await this.syncAllBroadcastListsFromWhatsApp().catch(() => {});
+      }
+      const agg = this.getAllBroadcastListRecipientsDeduped();
+      return {
+        id,
+        name: `Dhammaan Liisaska (${agg.listCount} Broadcast Lists)`,
+        recipients: agg.recipients,
+      };
     }
 
     const cached = this.broadcastLists.get(id);
@@ -4196,8 +4281,11 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
     const query = String(listIdOrQuery || '').trim();
     let targetId = '';
 
-    if (this.isBroadcastListJid(query)) {
+    if (this.isBroadcastListJid(query) && query !== WhatsAppManagerService.ALL_BROADCAST_LISTS_JID) {
       targetId = query;
+    } else if (/^#\d{1,2}$/.test(query)) {
+      const byIdx = this.findBroadcastListTarget(query);
+      if (byIdx) targetId = byIdx.id;
     } else if (/^(?:last|latest|kan)$/i.test(query)) {
       const lists = this.listBroadcastLists();
       if (lists.length > 0) targetId = lists[0].id;

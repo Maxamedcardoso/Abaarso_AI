@@ -2422,45 +2422,83 @@ SHURUUCDA DUGSIIYA:
     }
 
     // Manage WhatsApp Broadcast Lists & trigger clean Broadcast List sends from Self-Chat:
-    // - `!bc podcast [#1|listId] [Mawduuc 2m]` -> Sends Safa & Mohamed Podcast to Broadcast List (ZERO raw command text seen by contacts!)
-    // - `!bc cod [#1|listId] <qoraalkaaga>` -> Sends Mohamed Human Voice Note to Broadcast List (ZERO raw command text seen by contacts!)
+    // - `!bc podcast [#1|all|Magac|listId] [Mawduuc 2m]` -> Sends Safa & Mohamed Podcast to 1 or ALL Broadcast Lists (ZERO raw command text seen by contacts!)
+    // - `!bc cod [#1|all|Magac|listId] <qoraalkaaga>` -> Sends Mohamed Human Voice Note to 1 or ALL Broadcast Lists (ZERO raw command text seen by contacts!)
     if (/^[!./#]bc\s+(podcast|cod)(?:\s+([\s\S]+))?$/i.test(text) && isAdminUser) {
       const bcCmdMatch = text.match(/^[!./#]bc\s+(podcast|cod)(?:\s+([\s\S]+))?$/i);
       const subKind = bcCmdMatch![1].toLowerCase();
       let rest = (bcCmdMatch?.[2] || '').trim();
       const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
 
-      // Optional explicit selector token (#1, 1763812345@broadcast, etc.) at the start of rest
-      let selector = '';
-      const firstTok = rest.match(/^(\S+)(?:\s+([\s\S]+))?$/);
-      if (
-        firstTok &&
-        (firstTok[1].includes('@broadcast') || /^#\d{1,2}$/.test(firstTok[1]) || /^\d{8,}$/.test(firstTok[1]))
-      ) {
-        selector = firstTok[1];
-        rest = (firstTok[2] || '').trim();
-      }
-
       if (this.whatsappManager.listBroadcastLists().length === 0) {
         await this.whatsappManager.syncAllBroadcastListsFromWhatsApp().catch(() => {});
       }
-      const targetList = this.whatsappManager.findBroadcastListTarget(selector);
-      if (!targetList) {
-        await transport.sendMessage(
-          feedbackChatId,
-          `📢 *Broadcast List lama helin weli!*\n` +
-            `Hal mar ku dar liiskaaga adigoo qoraya:\n` +
-            `\`!bclist add 1763812345@broadcast 25263xxxxxxx, 25263yyyyyyy\`\n` +
-            `Ama fur Broadcast List-kaaga WhatsApp oo hal fariin gaaban (\`Salaam\`) dir si bot-ku si toos ah u qabto.`
-        );
-        return { handled: true, reason: 'No broadcast list found for !bc command' };
+
+      // Optional explicit selector token: `all`/`dhammaan`, `#1`, `1763812345@broadcast`, or an exact custom list name
+      let selector = '';
+      let isAllLists = false;
+      const firstTok = rest.match(/^(\S+)(?:\s+([\s\S]+))?$/);
+      if (firstTok) {
+        const candidate = firstTok[1];
+        const lowerCand = candidate.toLowerCase();
+        if (/^(?:all|dhammaan|dhamman|kuli|kuligood)$/i.test(lowerCand)) {
+          isAllLists = true;
+          rest = (firstTok[2] || '').trim();
+        } else if (
+          candidate.includes('@broadcast') ||
+          /^#\d{1,2}$/.test(candidate) ||
+          /^\d{8,}$/.test(candidate)
+        ) {
+          selector = candidate;
+          rest = (firstTok[2] || '').trim();
+        } else {
+          // Match existing WhatsApp or custom list name (supports BOTH 1-word and multi-word names like "Asxaabta VIP"!)
+          const lowerRest = rest.toLowerCase();
+          const namedLists = this.whatsappManager
+            .listBroadcastLists()
+            .filter(l => l.name && !l.name.endsWith('@broadcast'))
+            .sort((a, b) => b.name.length - a.name.length);
+          const matchedByName = namedLists.find(l => {
+            const ln = l.name.toLowerCase();
+            return lowerRest === ln || lowerRest.startsWith(`${ln} `);
+          });
+          if (matchedByName) {
+            selector = matchedByName.id;
+            rest = rest.slice(matchedByName.name.length).trim();
+          }
+        }
       }
 
-      // Delegate cleanly to the exact Broadcast List `!podcast` / `!cod` pipeline with targetList.id
+      let targetChatId = '';
+      if (isAllLists) {
+        if (this.whatsappManager.listBroadcastLists().length === 0) {
+          await transport.sendMessage(
+            feedbackChatId,
+            `📢 *Broadcast List lama helin weli!*\nMarka hore qor \`!bclist\` ama ku dar xubnaha liisaskaaga adigoo qoraya \`!bclist add <ID> 25263xxxxxxx, 25263yyyyyyy\`.`
+          );
+          return { handled: true, reason: 'No broadcast lists found for !bc all' };
+        }
+        targetChatId = WhatsAppManagerService.ALL_BROADCAST_LISTS_JID;
+      } else {
+        const targetList = this.whatsappManager.findBroadcastListTarget(selector);
+        if (!targetList) {
+          await transport.sendMessage(
+            feedbackChatId,
+            `📢 *Broadcast List lama helin weli!*\n` +
+              `Hal mar ku dar liiskaaga adigoo qoraya:\n` +
+              `\`!bclist add 1763812345@broadcast 25263xxxxxxx, 25263yyyyyyy\`\n` +
+              `Ama fur Broadcast List-kaaga WhatsApp oo hal fariin gaaban (\`Salaam\`) dir si bot-ku si toos ah u qabto.`
+          );
+          return { handled: true, reason: 'No broadcast list found for !bc command' };
+        }
+        targetChatId = targetList.id;
+      }
+
+      // Delegate cleanly to the exact Broadcast List `!podcast` / `!cod` pipeline with targetChatId
       const syntheticMsg: IncomingMessage = {
         ...message,
         id: `${message.id}_bc_dispatch`,
-        chatId: targetList.id,
+        chatId: targetChatId,
         isGroup: false,
         isFromMe: true,
         content: rest ? `!${subKind} ${rest}` : `!${subKind}`,
@@ -2468,12 +2506,37 @@ SHURUUCDA DUGSIIYA:
       return await this.processMessageInternal(syntheticMsg, transport);
     }
 
-    // Manage WhatsApp Broadcast Lists: !bclist / !bclist sync / !bclist add [listId] <numbers...>
+    // Manage WhatsApp Broadcast Lists: !bclist / !bclist name / !bclist sync / !bclist add [listId|#1] <numbers...>
     if (/^[!./#]bclist(?:\s+([\s\S]+))?$/i.test(text) && isAdminUser) {
       const bcMatch = text.match(/^[!./#]bclist(?:\s+([\s\S]+))?$/i);
       const arg = (bcMatch?.[1] || '').trim();
       const isBroadcastList = this.whatsappManager.isBroadcastListJid(message.chatId);
       const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
+
+      if (/^(?:name|rename|magac)\s+([\s\S]+)$/i.test(arg)) {
+        const nameRest = arg.replace(/^(?:name|rename|magac)\s+/i, '').trim();
+        let targetSelector = isBroadcastList ? message.chatId : '';
+        let newName = nameRest;
+
+        if (!targetSelector) {
+          const tokMatch = nameRest.match(/^(\S+)\s+([\s\S]+)$/);
+          if (
+            tokMatch &&
+            (tokMatch[1].includes('@broadcast') ||
+              /^#?\d{1,2}$/.test(tokMatch[1]) ||
+              /^\d{6,}$/.test(tokMatch[1]) ||
+              /^(?:last|latest|kan)$/i.test(tokMatch[1]))
+          ) {
+            targetSelector = tokMatch[1];
+            newName = tokMatch[2].trim();
+          } else {
+            targetSelector = 'last';
+          }
+        }
+        const renameRes = this.whatsappManager.renameBroadcastList(targetSelector, newName);
+        await transport.sendMessage(feedbackChatId, renameRes.message);
+        return { handled: true, reason: 'Broadcast list renamed' };
+      }
 
       if (/^add\s+([\s\S]+)$/i.test(arg)) {
         const addRest = arg.replace(/^add\s+/i, '').trim();
@@ -2482,7 +2545,13 @@ SHURUUCDA DUGSIIYA:
 
         if (!targetList) {
           const firstTokenMatch = addRest.match(/^(\S+)\s+([\s\S]+)$/);
-          if (firstTokenMatch && (firstTokenMatch[1].includes('@broadcast') || /^(?:last|latest|kan)$/i.test(firstTokenMatch[1]) || /^\d{6,}$/.test(firstTokenMatch[1]))) {
+          if (
+            firstTokenMatch &&
+            (firstTokenMatch[1].includes('@broadcast') ||
+              /^#\d{1,2}$/.test(firstTokenMatch[1]) ||
+              /^(?:last|latest|kan)$/i.test(firstTokenMatch[1]) ||
+              /^\d{6,}$/.test(firstTokenMatch[1]))
+          ) {
             targetList = firstTokenMatch[1];
             numsBlock = firstTokenMatch[2];
           } else {
@@ -2547,7 +2616,12 @@ SHURUUCDA DUGSIIYA:
           feedbackChatId,
           `📢 *[WHATSAPP BROADCAST LISTS (${lists.length})]*\n\n` +
             lines.join('\n\n') +
-            `\n\n💡 *Ku-daris degdeg ah:* \`!bclist add <ID> 25263xxxxxxx, 25263yyyyyyy\``
+            `\n\n💡 *Amarro Fudud (ka qor Self-Chat):*\n` +
+            `• \`!bclist name #1 Ardayda\` — Magac u bixi liiska #1\n` +
+            `• \`!bc podcast #1 <Mawduuc> 2m\` — Podcast u dir liiska #1\n` +
+            `• \`!bc podcast all <Mawduuc> 2m\` — Podcast u wada dir DHAMMAAN liisaska\n` +
+            `• \`!bc cod all <Qoraalkaaga>\` — Codka Mohamed u wada dir DHAMMAAN liisaska\n` +
+            `• \`!bclist add #1 25263xxxxxxx, 25263yyyyyyy\` — Xubno ku dar liiska #1`
         );
       }
       return { handled: true, reason: 'Broadcast lists status displayed' };
