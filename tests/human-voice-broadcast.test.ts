@@ -227,9 +227,9 @@ async function runTests() {
     const mockTransport: IMessagingTransport = {
       name: 'mock-wa',
       isConnected: true,
-      start: async () => {},
-      stop: async () => {},
-      onMessage: () => {},
+      start: async () => { },
+      stop: async () => { },
+      onMessage: () => { },
       getSocket: () => mockSocket,
       getStatus: () => ({ name: 'mock-wa', connected: true, activeChats: 1, lastActivity: Date.now() }),
       sendMessage: async (chatId: string, text: string, _opts?: OutgoingMessageOptions) => {
@@ -245,10 +245,10 @@ async function runTests() {
     // Stub TTS & Promo generator offline using our real FFmpeg-mastered OggS buffer
     const origSynth = VoiceReplyService.synthesizeVoice;
     const origPromo = VoiceReplyService.getCardosoPromoVoiceNote;
-    let lastSynthesizedCall: { text: string; options?: any } | null = null;
+    const synthesizedCalls: Array<{ text: string; options?: any }> = [];
 
     (VoiceReplyService as any).synthesizeVoice = async (text: string, _lang?: string, options?: any) => {
-      lastSynthesizedCall = { text, options };
+      synthesizedCalls.push({ text, options });
       return {
         buffer: masteredOgg,
         mimeType: 'audio/ogg; codecs=opus',
@@ -327,12 +327,14 @@ async function runTests() {
       const codRes = await router.handleIncomingMessage(codMsg, mockTransport);
       assert.strictEqual(codRes.handled, true);
       assert.strictEqual(aiCalledCount, 0, '!cod in Broadcast List must NEVER call Gemini AI Q&A');
+      const lastSynthesizedCall = synthesizedCalls[synthesizedCalls.length - 1];
+      assert.ok(lastSynthesizedCall, 'VoiceReplyService.synthesizeVoice must be called');
       assert.strictEqual(
-        lastSynthesizedCall?.text,
+        lastSynthesizedCall.text,
         'Salaan dhammaan asxaabta, caawa barnaamij cusub baa soo baxaya!'
       );
-      assert.strictEqual(lastSynthesizedCall?.options?.speaker, 'mohamed');
-      assert.strictEqual(lastSynthesizedCall?.options?.humanMaster, true);
+      assert.strictEqual(lastSynthesizedCall.options?.speaker, 'mohamed');
+      assert.strictEqual(lastSynthesizedCall.options?.humanMaster, true);
       assert.strictEqual(sentMedia.length, 3, 'All 3 recipients must receive Mohamed Voice Note PTT');
       assert.ok(sentTexts.every(t => t.chatId === '252634949642@s.whatsapp.net'));
       assert.ok(sentTexts.some(t => t.text.includes('3/3 qof')));
