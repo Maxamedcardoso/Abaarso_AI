@@ -20,6 +20,7 @@ const testFiles = [
   'tests/views-hub.test.ts',
   'tests/podcast.test.ts',
   'tests/voice-groups.test.ts',
+  'tests/human-voice-broadcast.test.ts',
 ];
 
 console.log(`\n================================================================`);

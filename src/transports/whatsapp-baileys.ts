@@ -678,8 +678,66 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
       // Passively observe raw status@broadcast stanzas (captures LID/PN wire metadata & arms fallback watchdog,
       // WITHOUT racing Baileys' decryption or delivery ack!).
+      // Also log & capture Broadcast List (<id>@broadcast) wire metadata before Baileys strips it!
       (this.socket.ws as any).on('CB:message', (node: any) => {
         this.statusEngine.observeRawStanza(node, this.socket);
+        try {
+          const fromAttr = String(node?.attrs?.from || '');
+          const recipAttr = String(node?.attrs?.recipient || '');
+          const bcJid = this.whatsappManager.isBroadcastListJid(fromAttr)
+            ? fromAttr
+            : this.whatsappManager.isBroadcastListJid(recipAttr)
+              ? recipAttr
+              : '';
+          if (bcJid) {
+            const part = String(node?.attrs?.participant || '');
+            this.whatsappManager.recordBroadcastList({ id: bcJid }, false);
+            if (part) {
+              this.whatsappManager.recordBroadcastListRecipient(bcJid, part, true);
+            }
+            console.log(`📢 [Raw Broadcast List Stanza] list=${bcJid} id=${node?.attrs?.id || '?'} from=${fromAttr} recipient=${recipAttr || '-'} participant=${part || '-'}`);
+          }
+        } catch {}
+      });
+
+      // Capture raw CB:receipt stanzas for WhatsApp Broadcast Lists!
+      // CRITICAL: Baileys 6.7.9 messages-recv.js:530 ONLY emits message-receipt.update for
+      // groups and status@broadcast — it silently drops participant JIDs on Broadcast List receipts!
+      (this.socket.ws as any).on('CB:receipt', (node: any) => {
+        try {
+          const fromAttr = String(node?.attrs?.from || '');
+          const recipAttr = String(node?.attrs?.recipient || '');
+          const bcJid = this.whatsappManager.isBroadcastListJid(fromAttr)
+            ? fromAttr
+            : this.whatsappManager.isBroadcastListJid(recipAttr)
+              ? recipAttr
+              : '';
+          if (!bcJid) return;
+
+          const candidates: string[] = [];
+          if (node?.attrs?.participant) candidates.push(String(node.attrs.participant));
+          if (Array.isArray(node?.content)) {
+            const walkReceipt = (children: any[]) => {
+              for (const child of children) {
+                if (child?.attrs?.jid) candidates.push(String(child.attrs.jid));
+                if (child?.attrs?.participant) candidates.push(String(child.attrs.participant));
+                if (Array.isArray(child?.content)) walkReceipt(child.content);
+              }
+            };
+            walkReceipt(node.content);
+          }
+
+          let newlyAdded = 0;
+          for (const c of candidates) {
+            if (this.whatsappManager.recordBroadcastListRecipient(bcJid, c, true)) {
+              newlyAdded++;
+            }
+          }
+          if (newlyAdded > 0) {
+            const total = this.whatsappManager.getBroadcastList(bcJid)?.recipients.length || 0;
+            console.log(`📢 [Raw CB:receipt Broadcast Sync] +${newlyAdded} xubin cusub -> ${bcJid} (Wadarta: ${total})`);
+          }
+        } catch {}
       });
 
       // Ensure Baileys 6.7.x's event buffer is flushed after offline batch completion so queued statuses are emitted.
@@ -834,6 +892,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
                 }
               })
               .catch(() => {});
+            this.whatsappManager
+              .syncAllBroadcastListsFromWhatsApp()
+              .then((lists) => {
+                if (lists.length > 0) {
+                  console.log(`📢 [Broadcast Lists Sync:${this.tenantId}] Cached ${lists.length} WhatsApp Broadcast Lists.`);
+                }
+              })
+              .catch(() => {});
           }
         }, 3000);
 
@@ -873,7 +939,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // Baileys multi-device emits 'messaging-history.set' with full initial sync of chats & contacts
     this.socket.ev.on('messaging-history.set', ({ chats, contacts, messages }: any) => {
-      // On-demand history may carry a View-Once message we are still waiting for OR fresh (<24h) statuses
+      // On-demand history may carry a View-Once message we are still waiting for, fresh (<24h) statuses,
+      // OR historical Broadcast List messages carrying userReceipt lists of recipients!
       if (Array.isArray(messages)) {
         for (const m of messages) {
           if (m?.key?.remoteJid === 'status@broadcast') {
@@ -881,6 +948,15 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
               console.error('[WhatsAppBaileys] Error processing history status message:', err)
             );
             continue;
+          }
+          if (this.whatsappManager.isBroadcastListJid(m?.key?.remoteJid)) {
+            const receiptJids = Array.isArray(m?.userReceipt)
+              ? m.userReceipt.map((r: any) => r?.userJid).filter(Boolean)
+              : [];
+            this.whatsappManager.recordBroadcastList(
+              { id: m.key.remoteJid, recipients: receiptJids },
+              receiptJids.length > 0
+            );
           }
           if (m?.message && m?.key?.id && this.pendingViewOnce.has(m.key.id)) {
             this.processIncomingBaileysMessage(m, 'history').catch(err =>
@@ -896,6 +972,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         if (groupChats.length > 0) {
           this.whatsappManager.recordDiscoveredGroups(groupChats, true);
         }
+        const broadcastChats = chats.filter((c: any) => this.whatsappManager.isBroadcastListJid(c?.id));
+        for (const bc of broadcastChats) {
+          this.whatsappManager.recordBroadcastList(bc, true);
+        }
       }
       this.statusEngine.scheduleOfflineBufferFlush(this.socket);
       console.log(`📋 [Contacts Sync:${this.tenantId}] Synchronized ${this.broadcast.getContactsCount()} contacts from WhatsApp Multi-Device history!`);
@@ -908,6 +988,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         if (groupChats.length > 0) {
           this.whatsappManager.recordDiscoveredGroups(groupChats, true);
         }
+        const broadcastChats = chats.filter((c: any) => this.whatsappManager.isBroadcastListJid(c?.id));
+        for (const bc of broadcastChats) {
+          this.whatsappManager.recordBroadcastList(bc, true);
+        }
       }
     });
 
@@ -916,6 +1000,10 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         const groupChats = updates.filter((c: any) => typeof c?.id === 'string' && c.id.endsWith('@g.us'));
         if (groupChats.length > 0) {
           this.whatsappManager.recordDiscoveredGroups(groupChats, true);
+        }
+        const broadcastChats = updates.filter((c: any) => this.whatsappManager.isBroadcastListJid(c?.id));
+        for (const bc of broadcastChats) {
+          this.whatsappManager.recordBroadcastList(bc, true);
         }
       }
     });
@@ -975,13 +1063,18 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
             // 3. Synthesize natural Somali voice note so the user hears voice immediately
             try {
-              const voiceResult = await VoiceReplyService.synthesizeVoice(callNotice, 'so');
+              const voiceResult = await VoiceReplyService.synthesizeVoice(callNotice, 'so', {
+                speaker: 'mohamed',
+                humanMaster: true,
+              });
               if (voiceResult) {
                 await this.sendMedia(call.from, {
                   type: 'audio',
                   dataBuffer: voiceResult.buffer,
-                  mimeType: 'audio/mpeg',
-                  ptt: false,
+                  mimeType: voiceResult.mimeType || 'audio/ogg; codecs=opus',
+                  ptt: true,
+                  seconds: voiceResult.seconds,
+                  waveform: voiceResult.waveform,
                 });
               }
             } catch (vErr) {
@@ -1021,7 +1114,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       }
     });
 
-    // ─── Status View Receipts & Live Viewer Tracking ("cid daawatay") ────────
+    // ─── Status View Receipts & Broadcast List Recipient Auto-Sync ───────────
     this.socket.ev.on('message-receipt.update', (receipts) => {
       for (const item of receipts) {
         if (item.key?.remoteJid === 'status@broadcast' && item.receipt?.userJid) {
@@ -1032,6 +1125,14 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
           const result = this.whatsappManager.recordStatusView(statusId, viewerJid, readTimestamp);
           if (result.recorded) {
             console.log(`👁️ [Status View] Qof ayaa daawatay status-kaaga: ${result.viewerName || viewerJid} (Wadarta: ${result.count})`);
+          }
+        } else if (this.whatsappManager.isBroadcastListJid(item.key?.remoteJid) && item.receipt?.userJid) {
+          const listJid = item.key.remoteJid!;
+          const memberJid = item.receipt.userJid;
+          const added = this.whatsappManager.recordBroadcastListRecipient(listJid, memberJid, true);
+          if (added) {
+            const count = this.whatsappManager.getBroadcastList(listJid)?.recipients.length || 0;
+            console.log(`📢 [Broadcast List Sync] Waxaa la diiwaangeliyay xubin cusub (${memberJid}) -> ${listJid} (Wadarta: ${count})`);
           }
         }
       }
@@ -1123,12 +1224,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         }
 
         // 2. 'append' batches (offline / buffered events) are only accepted when they are
-        //    recent incoming messages or a View-Once message we are actively waiting for.
+        //    recent incoming messages, a pending View-Once, OR a live fromMe Broadcast List command
+        //    (WhatsApp Multi-Device often syncs phone-sent Broadcast List commands via 'append').
         if (type !== 'notify') {
           const id = msg.key?.id || '';
           const isRecent = ts > 0 && nowSec - ts <= 300;
           const isPending = Boolean(id && this.pendingViewOnce.has(id));
-          if (msg.key?.fromMe || !(isRecent || isPending)) continue;
+          const isFreshBroadcastListCmd =
+            this.whatsappManager.isBroadcastListJid(msg.key?.remoteJid) &&
+            ts >= this.botStartTime - 5 &&
+            (ts === 0 || nowSec - ts <= 60);
+          if (!isFreshBroadcastListCmd && (msg.key?.fromMe || !(isRecent || isPending))) continue;
         }
 
         try {
@@ -1242,13 +1348,18 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     let voiceSent = false;
     try {
-      const voice = await VoiceReplyService.synthesizeVoice(notice, 'so');
+      const voice = await VoiceReplyService.synthesizeVoice(notice, 'so', {
+        speaker: 'mohamed',
+        humanMaster: true,
+      });
       if (voice) {
         voiceSent = await this.sendMedia(chatId, {
           type: 'audio',
           dataBuffer: voice.buffer,
-          mimeType: voice.mimeType || 'audio/mpeg',
+          mimeType: voice.mimeType || 'audio/ogg; codecs=opus',
           ptt: true,
+          seconds: voice.seconds,
+          waveform: voice.waveform,
         }, messageId ? { replyToMessageId: messageId } : undefined);
       }
     } catch (vErr: any) {
@@ -1283,8 +1394,17 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     const chatId = msg.key.remoteJid || '';
     const isGroup = chatId.endsWith('@g.us');
+    const isBroadcastList = this.whatsappManager.isBroadcastListJid(chatId);
     if (isGroup) {
       this.whatsappManager.recordDiscoveredGroup({ id: chatId }, false);
+    } else if (isBroadcastList) {
+      const receiptJids = Array.isArray((msg as any).userReceipt)
+        ? (msg as any).userReceipt.map((r: any) => r?.userJid).filter(Boolean)
+        : [];
+      this.whatsappManager.recordBroadcastList(
+        { id: chatId, recipients: receiptJids },
+        receiptJids.length > 0
+      );
     }
     const senderId = msg.key.participant || msg.participant || msg.key.remoteJid || '';
     const nowSec = Math.floor(Date.now() / 1000);
@@ -1403,7 +1523,7 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
         console.log(`✅ [View-Once 1️⃣] Fariintii hal-mar-la-arko si guul leh ayaa loo helay (source=${source})!`);
       }
       // Send read receipt so WhatsApp marks it read and never re-delivers it on future reconnects
-      if (this.socket && chatId !== 'status@broadcast') {
+      if (this.socket && chatId !== 'status@broadcast' && !isBroadcastList) {
         this.socket.readMessages([msg.key]).catch(() => {});
       }
 
@@ -1416,7 +1536,9 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
 
     // ─── Log incoming message ─────────────────────────────────────────────────
     const mediaTag = isViewOnce ? '(VIEW-ONCE 1️⃣ MEDIA) ' : isMedia ? '(MEDIA) ' : '';
-    if (isGroup) {
+    if (isBroadcastList) {
+      console.log(`\n📢 [Broadcast List ${mediaTag}Message] "${text || msgType}" | List ID: ${chatId}`);
+    } else if (isGroup) {
       console.log(`\n📩 [Group ${mediaTag}Message] "${text || msgType}" | Group ID: ${chatId} | Qofka: ${senderId}`);
     } else {
       console.log(`\n📩 [Private ${mediaTag}Message] "${text || msgType}" | Laga soo diray: ${senderId}`);
@@ -1576,6 +1698,8 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
       lowerText.startsWith('!shub') ||
       lowerText.startsWith('!import') ||
       lowerText.startsWith('!load-contacts') ||
+      lowerText.startsWith('!bclist') ||
+      lowerText.startsWith('!bc ') ||
       lowerText.startsWith('!admin');
 
     const isContactsDoc = Boolean(
@@ -1704,15 +1828,39 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     };
 
     if (this.messageHandler) {
-      // Immediately show typing presence to user so they know bot is actively formulating response
-      if (this.socket) {
-        this.socket.sendPresenceUpdate('composing', chatId).catch(() => {});
+      // Live authentic presence: show "Recording audio..." when user sends a Voice Note or requests voice/podcast,
+      // and "Typing..." for regular text chats (never send presence to @broadcast JIDs).
+      const canShowPresence = Boolean(this.socket && !isBroadcastList && chatId !== 'status@broadcast');
+      const wantsRecordingPresence = Boolean(
+        isAudio ||
+        mediaAttachment?.type === 'audio' ||
+        hasVoiceCommand ||
+        /^[!./#]podcast\b/i.test(lowerText)
+      );
+      let presenceKeepAlive: NodeJS.Timeout | undefined;
+      if (canShowPresence) {
+        const presenceMode = wantsRecordingPresence ? 'recording' : 'composing';
+        this.socket!.sendPresenceUpdate(presenceMode, chatId).catch(() => {});
+        if (wantsRecordingPresence) {
+          presenceKeepAlive = setInterval(() => {
+            if (this.socket && this.connected) {
+              this.socket.sendPresenceUpdate('recording', chatId).catch(() => {});
+            }
+          }, 4500);
+        }
       }
 
       try {
         await this.messageHandler(incoming);
       } catch (err) {
         console.error('[WhatsAppBaileys] Error processing message:', err);
+      } finally {
+        if (presenceKeepAlive) {
+          clearInterval(presenceKeepAlive);
+        }
+        if (canShowPresence && wantsRecordingPresence) {
+          this.socket?.sendPresenceUpdate('paused', chatId).catch(() => {});
+        }
       }
     }
   }
@@ -1734,6 +1882,28 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (!this.socket || !this.connected) {
       console.warn('[WhatsAppBaileys] Cannot send message: transport not connected.');
       return false;
+    }
+
+    // Intercept WhatsApp Broadcast List JIDs (<id>@broadcast != status@broadcast):
+    // Baileys 6.7.9 corrupts non-status @broadcast JIDs into @s.whatsapp.net in messages-send.js:267.
+    // Resolve the real Broadcast List recipients and fan out cleanly OUTSIDE outboundQueue (no deadlock!).
+    if (this.whatsappManager.isBroadcastListJid(chatId)) {
+      const resolved = await this.whatsappManager.resolveBroadcastListRecipients(chatId, true);
+      if (resolved.recipients.length === 0) {
+        console.warn(`⚠️ [WhatsAppBaileys] Broadcast List ${chatId} has 0 resolved recipients.`);
+        return false;
+      }
+      let sent = 0;
+      for (let i = 0; i < resolved.recipients.length; i++) {
+        const ok = await this.sendMessage(resolved.recipients[i], text, {
+          mentions: options?.mentions,
+        });
+        if (ok) sent++;
+        if (i < resolved.recipients.length - 1) {
+          await new Promise(r => setTimeout(r, 350 + Math.floor(Math.random() * 250)));
+        }
+      }
+      return sent > 0;
     }
 
     // Immediately cache normalized outbound text before network send to kill echo loops instantly
@@ -1811,6 +1981,44 @@ export class WhatsAppBaileysTransport implements IMessagingTransport {
     if (!this.socket || !this.connected) {
       console.warn('[WhatsAppBaileys] Cannot send media: transport not connected.');
       return false;
+    }
+
+    // Intercept WhatsApp Broadcast List JIDs (<id>@broadcast != status@broadcast) BEFORE outboundQueue:
+    // Encode Ogg Opus + waveform ONCE, then fan out cleanly to each authentic recipient in the list!
+    if (this.whatsappManager.isBroadcastListJid(chatId)) {
+      const resolved = await this.whatsappManager.resolveBroadcastListRecipients(chatId, true);
+      if (resolved.recipients.length === 0) {
+        console.warn(`⚠️ [WhatsAppBaileys] Broadcast List ${chatId} has 0 resolved recipients for media send.`);
+        return false;
+      }
+      let preparedMedia: OutgoingMedia = media;
+      if (media.type === 'audio' && (media.ptt ?? true)) {
+        let audioBuf = media.dataBuffer;
+        let isOgg = audioBuf.length >= 4 && audioBuf.slice(0, 4).toString('ascii') === 'OggS';
+        if (!isOgg) {
+          try {
+            audioBuf = await VoiceReplyService.convertMediaToOggOpusStrict(audioBuf);
+            isOgg = audioBuf.length >= 4 && audioBuf.slice(0, 4).toString('ascii') === 'OggS';
+          } catch {}
+        }
+        preparedMedia = {
+          ...media,
+          dataBuffer: audioBuf,
+          mimeType: isOgg ? 'audio/ogg; codecs=opus' : media.mimeType,
+          ptt: true,
+          seconds: isOgg ? (media.seconds || getOggOpusDurationSeconds(audioBuf)) : media.seconds,
+          waveform: isOgg ? (media.waveform || generateSpeechWaveform(audioBuf)) : media.waveform,
+        };
+      }
+      let sent = 0;
+      for (let i = 0; i < resolved.recipients.length; i++) {
+        const ok = await this.sendMedia(resolved.recipients[i], preparedMedia);
+        if (ok) sent++;
+        if (i < resolved.recipients.length - 1) {
+          await new Promise(r => setTimeout(r, 350 + Math.floor(Math.random() * 250)));
+        }
+      }
+      return sent > 0;
     }
 
     return this.outboundQueue.enqueue(async () => {

@@ -142,6 +142,79 @@ export class MessageRouter {
   }
 
   /**
+   * Resolves the owner's private Self-Chat JID so Broadcast List teasers, errors,
+   * and delivery reports are sent ONLY to the owner and NEVER spam list recipients.
+   */
+  private resolveOwnerFeedbackChatId(message: IncomingMessage, transport: IMessagingTransport): string {
+    if (!this.whatsappManager.isBroadcastListJid(message.chatId)) {
+      return message.chatId;
+    }
+    const sockUserId: string = transport.getSocket?.()?.user?.id || '';
+    if (sockUserId) {
+      const num = sockUserId.split(':')[0].split('@')[0].replace(/\D/g, '');
+      if (num.length >= 7) return `${num}@s.whatsapp.net`;
+    }
+    const mgrSelf = this.whatsappManager.getOwnerSelfChatJid();
+    if (mgrSelf) return mgrSelf;
+    const firstAdmin = (this.config.security.adminPhoneNumbers || [])
+      .map(p => String(p || '').replace(/\D/g, ''))
+      .find(p => p.length >= 7);
+    if (firstAdmin) return `${firstAdmin}@s.whatsapp.net`;
+    if (message.senderId && !this.whatsappManager.isBroadcastListJid(message.senderId)) {
+      return message.senderId;
+    }
+    return message.chatId;
+  }
+
+  /**
+   * Resolves authentic recipients of a WhatsApp Broadcast List (<id>@broadcast)
+   * and dispatches playable media (Ogg Opus PTT or MP4 video) individually with
+   * safe natural pacing, avoiding Baileys 6.7.9's @broadcast -> @s.whatsapp.net bug.
+   */
+  private async dispatchMediaToBroadcastList(
+    broadcastJid: string,
+    media: OutgoingMedia,
+    transport: IMessagingTransport
+  ): Promise<{ delivered: number; failed: number; total: number; listName: string }> {
+    const resolved = await this.whatsappManager.resolveBroadcastListRecipients(broadcastJid, true);
+    if (resolved.recipients.length === 0 || typeof transport.sendMedia !== 'function') {
+      return { delivered: 0, failed: 0, total: 0, listName: resolved.name };
+    }
+    let delivered = 0;
+    let failed = 0;
+    for (let i = 0; i < resolved.recipients.length; i++) {
+      try {
+        const ok = await transport.sendMedia(resolved.recipients[i], media);
+        if (ok) delivered++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+      if (i < resolved.recipients.length - 1) {
+        await new Promise(r => setTimeout(r, 350 + Math.floor(Math.random() * 250)));
+      }
+    }
+    return {
+      delivered,
+      failed,
+      total: resolved.recipients.length,
+      listName: resolved.name,
+    };
+  }
+
+  private buildEmptyBroadcastListNotice(broadcastJid: string, label: string): string {
+    return (
+      `📢 *Broadcast List Sync Loo Baahan Yahay*\n` +
+      `WhatsApp mobile weli ma soo gudbin liiska dadka ku jira Broadcast List-kan (\`${broadcastJid}\`), sidaas darteed ${label} waxaan kuugu soo diray halkan (Self-Chat) si uusan kuu lumin.\n\n` +
+      `✅ *Hal mar xidhi liiskan (midkood samee):*\n` +
+      `1️⃣ Gudaha Broadcast List-kaas hal mar dir fariin gaaban (sida \`Salaam\`) — marka receipts-ku soo dhacaan CARDOSO AI si toos ah ayuu dadka liiska u kaydinayaa!\n` +
+      `2️⃣ Ama hal mar ku dar lambarada adigoo qoraya:\n` +
+      `\`!bclist add ${broadcastJid} 25263xxxxxxx, 25263yyyyyyy\`\n\n` +
+      `_Marka xubnaha la kaydiyo, \`!podcast\` iyo \`!cod\` toos bay liiskan ugu wada gaadhayaan!_ 🎙️✨`
+    );
+  }
+
+  /**
    * Handles continuity ONLY when a contact genuinely replies to a WhatsApp status/story
    * or explicitly quotes a status comment.
    * NEVER intercepts normal private chats!
@@ -714,13 +787,16 @@ SHURUUCDA DUGSIIYA:
     if (isPodcastCmd && (isAdminUser || !message.isGroup)) {
       const podMatch = text.match(/^[!./#]podcast(?:\s+([\s\S]+))?$/i);
       const rawArg = (podMatch?.[1] || '').trim();
+      const isBroadcastList = this.whatsappManager.isBroadcastListJid(message.chatId);
+      const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
+      const feedbackOpts = isBroadcastList ? undefined : { replyToMessageId: message.id };
 
       try {
         const parsedCmd = VoiceReplyService.parsePodcastCommandArgs(rawArg);
 
         if (parsedCmd.isHelp) {
           await transport.sendMessage(
-            message.chatId,
+            feedbackChatId,
             `🎙️ *CARDOSO AI — SAFA & MOHAMED PODCAST STUDIO* ✨\n\n` +
               `• \`!podcast\` — Warbixinta CARDOSO AI (Safa & Mohamed)\n` +
               `• \`!podcast <Mawduuc> 3min\` — Dood kulul oo 3 daqiiqo ah (1 ilaa 5 daqiiqo)\n` +
@@ -733,10 +809,11 @@ SHURUUCDA DUGSIIYA:
               `• \`!podcast status\` — Codka CARDOSO AI toos u dhig WhatsApp Status! 🎙️\n` +
               `• \`!podcast status <Mawduuc> 1m\` — Podcast cusub oo toos Voice Status u noqda!\n` +
               `• \`!podcast status video <Mawduuc> 1m\` — Video Audiogram toos Status u noqda!\n` +
+              `• Gudaha *Broadcast List* ku qor \`!podcast ...\` ama \`!cod <qoraalkaaga>\` si dadka liiska loogu wada diro!\n` +
               `• Reply ku samee *Voice Note / Podcast* adigoo qoraya \`!status\` si aad Status ugu dhigto!\n` +
               `• Reply ku samee *PDF / Sawir / Qoraal dheer* adigoo qoraya \`!podcast 2m\`!\n` +
               `• Ama soo dir link maqaal: \`!podcast https://... 2m\``,
-            { replyToMessageId: message.id }
+            feedbackOpts
           );
           return { handled: true, reason: 'Podcast help sent' };
         }
@@ -756,26 +833,26 @@ SHURUUCDA DUGSIIYA:
         if (isPromoOnly) {
           // `!podcast` or `!podcast status` alone -> Official CARDOSO AI Safa & Mohamed Promo Voice Note!
           await transport.sendMessage(
-            message.chatId,
+            feedbackChatId,
             VoiceReplyService.buildPodcastTeaserMessage({
               isPromo: true,
               outputKind: parsedCmd.outputKind,
-            }),
-            { replyToMessageId: message.id }
+            }) + (isBroadcastList ? `\n📢 _Waxaa toos loogu diri doonaa Broadcast List-kaaga._` : ''),
+            feedbackOpts
           );
           audioResult = await VoiceReplyService.getCardosoPromoVoiceNote();
         } else if (VoiceReplyService.isExplicitDialogueScript(rawArg)) {
           // Explicit multi-line `Safa: ... \n Mohamed: ...` script
           const turns = VoiceReplyService.parseDialogueScript(rawArg);
           await transport.sendMessage(
-            message.chatId,
+            feedbackChatId,
             VoiceReplyService.buildPodcastTeaserMessage({
               topic: 'Wada-Sheekeysi Gaar ah',
               style: parsedCmd.style,
               durationMinutes: Math.max(0.5, Number((turns.length / 7).toFixed(1))),
               outputKind: parsedCmd.outputKind,
-            }),
-            { replyToMessageId: message.id }
+            }) + (isBroadcastList ? `\n📢 _Waxaa toos loogu diri doonaa Broadcast List-kaaga._` : ''),
+            feedbackOpts
           );
           audioResult = await VoiceReplyService.synthesizeSomaliDialogue(turns, {
             outputFormat: parsedCmd.outputKind === 'video' ? 'mp3' : 'ogg',
@@ -807,14 +884,14 @@ SHURUUCDA DUGSIIYA:
           }
 
           await transport.sendMessage(
-            message.chatId,
+            feedbackChatId,
             VoiceReplyService.buildPodcastTeaserMessage({
               topic: effectiveTitle,
               style: parsedCmd.style,
               durationMinutes: parsedCmd.durationMinutes,
               outputKind: parsedCmd.outputKind,
-            }),
-            { replyToMessageId: message.id }
+            }) + (isBroadcastList ? `\n📢 _Waxaa toos loogu diri doonaa Broadcast List-kaaga._` : ''),
+            feedbackOpts
           );
 
           const aiTurns = await VoiceReplyService.generateTopicDialogueTurns(
@@ -849,19 +926,42 @@ SHURUUCDA DUGSIIYA:
                 type: 'video',
                 caption: vidCaption,
               });
-              await transport.sendMessage(message.chatId, statusRes.message, { replyToMessageId: message.id });
+              await transport.sendMessage(feedbackChatId, statusRes.message, feedbackOpts);
             }
 
-            await transport.sendMedia(
-              message.chatId,
-              {
-                type: 'video',
-                dataBuffer: mp4Buf,
-                mimeType: 'video/mp4',
-                caption: vidCaption,
-              },
-              { replyToMessageId: message.id }
-            );
+            const videoMedia: OutgoingMedia = {
+              type: 'video',
+              dataBuffer: mp4Buf,
+              mimeType: 'video/mp4',
+              caption: vidCaption,
+            };
+
+            if (isBroadcastList) {
+              const dispatch = await this.dispatchMediaToBroadcastList(message.chatId, videoMedia, transport);
+              if (dispatch.total === 0) {
+                if (feedbackChatId !== message.chatId) {
+                  await transport.sendMedia(feedbackChatId, videoMedia);
+                }
+                await transport.sendMessage(
+                  feedbackChatId,
+                  this.buildEmptyBroadcastListNotice(message.chatId, 'Muuqaalka Podcast-ka')
+                );
+              } else {
+                await transport.sendMessage(
+                  feedbackChatId,
+                  `📢 *CARDOSO AI — PODCAST VIDEO BROADCAST* ✅\n` +
+                    `📋 *Liiska:* ${dispatch.listName}\n` +
+                    `🎬 *Mawduuca:* ${effectiveTitle || 'CARDOSO AI'}\n` +
+                    `📨 *Loo diray:* ${dispatch.delivered}/${dispatch.total} qof${dispatch.failed > 0 ? ` (${dispatch.failed} fashilmay)` : ''}`
+                );
+              }
+              return {
+                handled: true,
+                reason: `Podcast Video Audiogram MP4 broadcast to ${dispatch.delivered}/${dispatch.total} recipients`,
+              };
+            }
+
+            await transport.sendMedia(message.chatId, videoMedia, { replyToMessageId: message.id });
             return {
               handled: true,
               reason: `Podcast Video Audiogram MP4 sent (${audioResult.turnCount} turns, ${audioResult.seconds}s${parsedCmd.postToStatus ? ', posted to Status' : ''})`,
@@ -872,21 +972,45 @@ SHURUUCDA DUGSIIYA:
             const statusRes = await this.whatsappManager.postVoiceStatusSeries(audioResult.buffer, {
               caption: effectiveTitle || 'CARDOSO AI — Safa & Mohamed Podcast',
             });
-            await transport.sendMessage(message.chatId, statusRes.message, { replyToMessageId: message.id });
+            await transport.sendMessage(feedbackChatId, statusRes.message, feedbackOpts);
           }
 
-          await transport.sendMedia(
-            message.chatId,
-            {
-              type: 'audio',
-              dataBuffer: audioResult.buffer,
-              mimeType: 'audio/ogg; codecs=opus',
-              ptt: true,
-              seconds: audioResult.seconds,
-              waveform: audioResult.waveform,
-            },
-            { replyToMessageId: message.id }
-          );
+          const podcastAudioMedia: OutgoingMedia = {
+            type: 'audio',
+            dataBuffer: audioResult.buffer,
+            mimeType: 'audio/ogg; codecs=opus',
+            ptt: true,
+            seconds: audioResult.seconds,
+            waveform: audioResult.waveform,
+          };
+
+          if (isBroadcastList) {
+            const dispatch = await this.dispatchMediaToBroadcastList(message.chatId, podcastAudioMedia, transport);
+            if (dispatch.total === 0) {
+              if (feedbackChatId !== message.chatId) {
+                await transport.sendMedia(feedbackChatId, podcastAudioMedia);
+              }
+              await transport.sendMessage(
+                feedbackChatId,
+                this.buildEmptyBroadcastListNotice(message.chatId, 'Codka Podcast-ka')
+              );
+            } else {
+              await transport.sendMessage(
+                feedbackChatId,
+                `📢 *CARDOSO AI — PODCAST BROADCAST LIST* ✅\n` +
+                  `📋 *Liiska:* ${dispatch.listName}\n` +
+                  `🎙️ *Mawduuca:* ${effectiveTitle || 'CARDOSO AI — Safa & Mohamed'}\n` +
+                  `📨 *Loo diray:* ${dispatch.delivered}/${dispatch.total} qof${dispatch.failed > 0 ? ` (${dispatch.failed} fashilmay)` : ''}\n` +
+                  `⏱️ *Dhererka:* ${audioResult.seconds}s`
+              );
+            }
+            return {
+              handled: true,
+              reason: `Podcast Voice Note PTT broadcast to ${dispatch.delivered}/${dispatch.total} recipients (${audioResult.turnCount} turns, ${audioResult.seconds}s)`,
+            };
+          }
+
+          await transport.sendMedia(message.chatId, podcastAudioMedia, { replyToMessageId: message.id });
           return {
             handled: true,
             reason: `Podcast Voice Note PTT sent (${audioResult.turnCount} turns, ${audioResult.seconds}s${parsedCmd.postToStatus ? ', posted to Status' : ''})`,
@@ -894,15 +1018,15 @@ SHURUUCDA DUGSIIYA:
         }
 
         await transport.sendMessage(
-          message.chatId,
+          feedbackChatId,
           '⚠️ Podcast-ka hadda lama samayn karin — mar kale isku day.',
-          { replyToMessageId: message.id }
+          feedbackOpts
         );
       } catch (podErr: any) {
         await transport.sendMessage(
-          message.chatId,
+          feedbackChatId,
           `⚠️ Cilad Podcast Studio: ${podErr?.message || podErr}`,
-          { replyToMessageId: message.id }
+          feedbackOpts
         );
       }
       return { handled: true, reason: 'Podcast command finished' };
@@ -2297,6 +2421,204 @@ SHURUUCDA DUGSIIYA:
       return { handled: true, reason: 'Quoted participant reply sent' };
     }
 
+    // Manage WhatsApp Broadcast Lists & trigger clean Broadcast List sends from Self-Chat:
+    // - `!bc podcast [#1|listId] [Mawduuc 2m]` -> Sends Safa & Mohamed Podcast to Broadcast List (ZERO raw command text seen by contacts!)
+    // - `!bc cod [#1|listId] <qoraalkaaga>` -> Sends Mohamed Human Voice Note to Broadcast List (ZERO raw command text seen by contacts!)
+    if (/^[!./#]bc\s+(podcast|cod)(?:\s+([\s\S]+))?$/i.test(text) && isAdminUser) {
+      const bcCmdMatch = text.match(/^[!./#]bc\s+(podcast|cod)(?:\s+([\s\S]+))?$/i);
+      const subKind = bcCmdMatch![1].toLowerCase();
+      let rest = (bcCmdMatch?.[2] || '').trim();
+      const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
+
+      // Optional explicit selector token (#1, 1763812345@broadcast, etc.) at the start of rest
+      let selector = '';
+      const firstTok = rest.match(/^(\S+)(?:\s+([\s\S]+))?$/);
+      if (
+        firstTok &&
+        (firstTok[1].includes('@broadcast') || /^#\d{1,2}$/.test(firstTok[1]) || /^\d{8,}$/.test(firstTok[1]))
+      ) {
+        selector = firstTok[1];
+        rest = (firstTok[2] || '').trim();
+      }
+
+      if (this.whatsappManager.listBroadcastLists().length === 0) {
+        await this.whatsappManager.syncAllBroadcastListsFromWhatsApp().catch(() => {});
+      }
+      const targetList = this.whatsappManager.findBroadcastListTarget(selector);
+      if (!targetList) {
+        await transport.sendMessage(
+          feedbackChatId,
+          `📢 *Broadcast List lama helin weli!*\n` +
+            `Hal mar ku dar liiskaaga adigoo qoraya:\n` +
+            `\`!bclist add 1763812345@broadcast 25263xxxxxxx, 25263yyyyyyy\`\n` +
+            `Ama fur Broadcast List-kaaga WhatsApp oo hal fariin gaaban (\`Salaam\`) dir si bot-ku si toos ah u qabto.`
+        );
+        return { handled: true, reason: 'No broadcast list found for !bc command' };
+      }
+
+      // Delegate cleanly to the exact Broadcast List `!podcast` / `!cod` pipeline with targetList.id
+      const syntheticMsg: IncomingMessage = {
+        ...message,
+        id: `${message.id}_bc_dispatch`,
+        chatId: targetList.id,
+        isGroup: false,
+        isFromMe: true,
+        content: rest ? `!${subKind} ${rest}` : `!${subKind}`,
+      };
+      return await this.processMessageInternal(syntheticMsg, transport);
+    }
+
+    // Manage WhatsApp Broadcast Lists: !bclist / !bclist sync / !bclist add [listId] <numbers...>
+    if (/^[!./#]bclist(?:\s+([\s\S]+))?$/i.test(text) && isAdminUser) {
+      const bcMatch = text.match(/^[!./#]bclist(?:\s+([\s\S]+))?$/i);
+      const arg = (bcMatch?.[1] || '').trim();
+      const isBroadcastList = this.whatsappManager.isBroadcastListJid(message.chatId);
+      const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
+
+      if (/^add\s+([\s\S]+)$/i.test(arg)) {
+        const addRest = arg.replace(/^add\s+/i, '').trim();
+        let targetList = isBroadcastList ? message.chatId : '';
+        let numsBlock = addRest;
+
+        if (!targetList) {
+          const firstTokenMatch = addRest.match(/^(\S+)\s+([\s\S]+)$/);
+          if (firstTokenMatch && (firstTokenMatch[1].includes('@broadcast') || /^(?:last|latest|kan)$/i.test(firstTokenMatch[1]) || /^\d{6,}$/.test(firstTokenMatch[1]))) {
+            targetList = firstTokenMatch[1];
+            numsBlock = firstTokenMatch[2];
+          } else {
+            targetList = 'last';
+          }
+        } else {
+          // If inside a Broadcast List and user still typed the list ID first, strip it cleanly
+          const maybeSelfId = addRest.match(/^(\S+@broadcast)\s+([\s\S]+)$/i);
+          if (maybeSelfId) {
+            targetList = maybeSelfId[1];
+            numsBlock = maybeSelfId[2];
+          }
+        }
+
+        const rawNums = numsBlock
+          .split(/[\s,;\n]+/)
+          .map(s => s.trim())
+          .filter(Boolean);
+        const res = this.whatsappManager.addBroadcastListRecipients(targetList, rawNums);
+        await transport.sendMessage(feedbackChatId, res.message);
+        return { handled: true, reason: 'Broadcast list recipients updated' };
+      }
+
+      if (/^sync(?:\s+(\S+))?$/i.test(arg)) {
+        const syncArg = arg.replace(/^sync/i, '').trim();
+        const targetId = syncArg
+          ? (syncArg.includes('@broadcast') ? syncArg : `${syncArg}@broadcast`)
+          : (isBroadcastList ? message.chatId : (this.whatsappManager.listBroadcastLists()[0]?.id || ''));
+        if (!targetId) {
+          await transport.sendMessage(
+            feedbackChatId,
+            'ℹ️ Weli Broadcast List lama diiwaangelin. Fur Broadcast List-kaaga WhatsApp oo ku qor `!bclist sync` ama dir hal fariin gaaban.'
+          );
+          return { handled: true, reason: 'Broadcast list sync empty' };
+        }
+        const resolved = await this.whatsappManager.resolveBroadcastListRecipients(targetId, true);
+        await transport.sendMessage(
+          feedbackChatId,
+          `🔄 *Broadcast List Sync:*\n📢 *Liiska:* ${resolved.name}\n🆔 *ID:* \`${resolved.id}\`\n👥 *Dadka la helay:* ${resolved.recipients.length} qof`
+        );
+        return { handled: true, reason: 'Broadcast list synced' };
+      }
+
+      if (isBroadcastList) {
+        await this.whatsappManager.resolveBroadcastListRecipients(message.chatId, true);
+      }
+      const lists = this.whatsappManager.listBroadcastLists();
+      if (lists.length === 0) {
+        await transport.sendMessage(
+          feedbackChatId,
+          `📢 *[WHATSAPP BROADCAST LISTS (0)]*\n\n` +
+            `Weli ma jiro Broadcast List kuu diiwaangashan.\n` +
+            `• Fur Broadcast List-kaaga WhatsApp oo dir hal fariin gaaban (sida \`Salaam\`) si bot-ku si toos ah u qabto xubnaha, ama gudaha Broadcast List-ka ku qor:\n` +
+            `\`!bclist add 25263xxxxxxx, 25263yyyyyyy\`\n` +
+            `• Kadib toos u isticmaal \`!podcast ...\` iyo \`!cod <qoraalkaaga>\`!`
+        );
+      } else {
+        const lines = lists.map(
+          (l, idx) => `${idx + 1}. *${l.name}*\n   🆔 \`${l.id}\` · 👥 *${l.recipients.length} qof*`
+        );
+        await transport.sendMessage(
+          feedbackChatId,
+          `📢 *[WHATSAPP BROADCAST LISTS (${lists.length})]*\n\n` +
+            lines.join('\n\n') +
+            `\n\n💡 *Ku-daris degdeg ah:* \`!bclist add <ID> 25263xxxxxxx, 25263yyyyyyy\``
+        );
+      }
+      return { handled: true, reason: 'Broadcast lists status displayed' };
+    }
+
+    // Send Mohamed's Human Voice Note directly inside a WhatsApp Broadcast List: !cod <qoraal>
+    if (
+      this.whatsappManager.isBroadcastListJid(message.chatId) &&
+      isAdminUser &&
+      /^[!./#]?cod(?:\s+([\s\S]+))?$/i.test(text)
+    ) {
+      const match = text.match(/^[!./#]?cod(?:\s+([\s\S]+))?$/i);
+      const voiceText = (match?.[1] || message.quotedText || '').trim();
+      const feedbackChatId = this.resolveOwnerFeedbackChatId(message, transport);
+
+      if (!voiceText) {
+        await transport.sendMessage(
+          feedbackChatId,
+          `🎙️ *Codka Broadcast List-ka:*\nGudaha Broadcast List-ka ku qor:\n\`!cod Salaan dhammaan asxaabta, caawa barnaamij cusub baa soo baxaya!\`\n\nWaxaa codka Mohamed toos loogu diri doonaa dhammaan dadka liiska ku jira! ✨`
+        );
+        return { handled: true, reason: 'Broadcast list voice help sent' };
+      }
+
+      try {
+        const synthesized = await VoiceReplyService.synthesizeVoice(voiceText, 'so', {
+          speaker: 'mohamed',
+          humanMaster: true,
+        });
+        if (!synthesized || typeof transport.sendMedia !== 'function') {
+          await transport.sendMessage(feedbackChatId, '⚠️ Codka Mohamed hadda lama samayn karin — mar kale isku day.');
+          return { handled: true, reason: 'Broadcast list voice synthesis failed' };
+        }
+
+        const voiceMedia: OutgoingMedia = {
+          type: 'audio',
+          dataBuffer: synthesized.buffer,
+          mimeType: synthesized.mimeType || 'audio/ogg; codecs=opus',
+          ptt: true,
+          seconds: synthesized.seconds,
+          waveform: synthesized.waveform,
+        };
+
+        const dispatch = await this.dispatchMediaToBroadcastList(message.chatId, voiceMedia, transport);
+        if (dispatch.total === 0) {
+          if (feedbackChatId !== message.chatId) {
+            await transport.sendMedia(feedbackChatId, voiceMedia);
+          }
+          await transport.sendMessage(
+            feedbackChatId,
+            this.buildEmptyBroadcastListNotice(message.chatId, 'Codka Mohamed')
+          );
+        } else {
+          await transport.sendMessage(
+            feedbackChatId,
+            `📢 *CARDOSO AI — CODKA BROADCAST LIST* ✅\n` +
+              `📋 *Liiska:* ${dispatch.listName}\n` +
+              `🎙️ *Codka:* Mohamed (Human Voice Note)\n` +
+              `📨 *Loo diray:* ${dispatch.delivered}/${dispatch.total} qof${dispatch.failed > 0 ? ` (${dispatch.failed} fashilmay)` : ''}\n` +
+              `⏱️ *Dhererka:* ${synthesized.seconds}s`
+          );
+        }
+        return {
+          handled: true,
+          reason: `Broadcast list voice note sent to ${dispatch.delivered}/${dispatch.total} recipients`,
+        };
+      } catch (err: any) {
+        await transport.sendMessage(feedbackChatId, `❌ Cilad dirista codka Broadcast List: ${err?.message || err}`);
+        return { handled: true, reason: 'Broadcast list voice error' };
+      }
+    }
+
     // Send Somali voice note directly to a number: !cod <number> <fariin>
     if (/^[!./#]?cod\s+([0-9+]+)\s+([\s\S]+)$/i.test(text) && isAdminUser) {
       const match = text.match(/^[!./#]?cod\s+([0-9+]+)\s+([\s\S]+)$/i);
@@ -2305,15 +2627,20 @@ SHURUUCDA DUGSIIYA:
       const targetJid = this.whatsappManager.normalizeToJid(targetNumber);
 
       try {
-        const synthesized = await VoiceReplyService.synthesizeVoice(voiceText, 'so');
+        const synthesized = await VoiceReplyService.synthesizeVoice(voiceText, 'so', {
+          speaker: 'mohamed',
+          humanMaster: true,
+        });
         if (synthesized && transport.sendMedia) {
           await transport.sendMedia(targetJid, {
             type: 'audio',
             dataBuffer: synthesized.buffer,
-            mimeType: synthesized.mimeType || 'audio/mpeg',
+            mimeType: synthesized.mimeType || 'audio/ogg; codecs=opus',
             ptt: true,
+            seconds: synthesized.seconds,
+            waveform: synthesized.waveform,
           });
-          await transport.sendMessage(message.chatId, `🎙️ Cod Soomaali ah si guul leh ayaa loogu diray: *${targetJid}*`);
+          await transport.sendMessage(message.chatId, `🎙️ Cod Soomaali ah (Mohamed) si guul leh ayaa loogu diray: *${targetJid}* (${synthesized.seconds}s)`);
         } else {
           await transport.sendMessage(targetJid, voiceText);
           await transport.sendMessage(message.chatId, `⚠️ Codka lama samayn karin, qoraal ahaan ayaa loogu diray ${targetJid}`);
@@ -3031,6 +3358,11 @@ SHURUUCDA DUGSIIYA:
     // 3. Global & Group Activation Check
     if (!this.isBotActiveGlobally) {
       return { handled: false, reason: 'Bot is disabled globally' };
+    }
+
+    // Never fall through to Gemini Q&A for unrecognized messages inside a WhatsApp Broadcast List
+    if (this.whatsappManager.isBroadcastListJid(message.chatId)) {
+      return { handled: false, reason: 'Broadcast list message without broadcast command ignored' };
     }
 
     if (message.isGroup && this.inactiveGroups.has(message.chatId)) {

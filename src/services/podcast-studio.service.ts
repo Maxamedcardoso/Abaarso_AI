@@ -873,3 +873,79 @@ export async function encodeMasteredPodcastAudio(
     await fs.promises.unlink(outPath).catch(() => {});
   }
 }
+
+/**
+ * Human Phone-Mic Mastering for single-speaker WhatsApp Voice Note replies:
+ * 1. Trims Edge TTS's dead ~400ms leading & trailing silence (`silenceremove`)
+ * 2. Adds smooth 6ms fades + ultra-subtle -50dB natural room air (eliminates digital vacuum)
+ * 3. Applies warm vocal mic EQ + 12ms micro room reflection + compressor + peak limiter
+ * 4. Encodes to strict WhatsApp-native 48kHz Mono Ogg Opus ("OggS")
+ */
+export async function masterHumanVoiceReplyToOggOpus(rawAudioBuffer: Buffer): Promise<Buffer> {
+  if (!rawAudioBuffer || rawAudioBuffer.length < 128) {
+    throw new Error('Codka jawaabta wuu madhan yahay');
+  }
+
+  const trimmed = await decodeTrimmedMonoPcm48k(rawAudioBuffer);
+  if (trimmed.length === 0) {
+    throw new Error('Codka la nadiifiyay wuu madhan yahay');
+  }
+
+  const sampleRate = 48000;
+  const padStart = Math.round(sampleRate * 0.04); // 40ms natural breath lead-in
+  const padEnd = Math.round(sampleRate * 0.07); // 70ms natural tail
+  const totalLen = padStart + trimmed.length + padEnd;
+  const samples = generateStudioRoomToneSamples(totalLen); // ~ -48dB subtle natural air
+
+  // Dial room air down slightly further (-51dB) for intimate phone-mic feel
+  for (let i = 0; i < totalLen; i++) {
+    samples[i] *= 0.72;
+  }
+
+  const fadeSamples = Math.round(sampleRate * 0.006);
+  for (let i = 0; i < trimmed.length; i++) {
+    let env = 1.0;
+    if (i < fadeSamples) env = i / fadeSamples;
+    else if (i > trimmed.length - fadeSamples) env = (trimmed.length - i) / fadeSamples;
+    samples[padStart + i] += trimmed[i] * env;
+  }
+
+  for (let i = 0; i < totalLen; i++) {
+    samples[i] = Math.tanh(samples[i] * 0.96);
+  }
+
+  const wavBuf = encodePcmWav(samples, sampleRate);
+  const tmpBase = `cardoso_human_vn_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const inPath = path.join(os.tmpdir(), `${tmpBase}.wav`);
+  const outPath = path.join(os.tmpdir(), `${tmpBase}.ogg`);
+
+  const phoneMicFilter =
+    'highpass=f=80,equalizer=f=185:t=q:w=1.2:g=2.0,equalizer=f=3100:t=q:w=1.4:g=1.8,aecho=0.8:0.88:12:0.04,acompressor=threshold=-18dB:ratio=2.6:attack=15:release=140:makeup=2,alimiter=limit=0.95';
+
+  try {
+    await fs.promises.writeFile(inPath, wavBuf);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inPath)
+        .noVideo()
+        .audioFilters(phoneMicFilter)
+        .audioCodec('libopus')
+        .audioBitrate('48k')
+        .audioFrequency(48000)
+        .audioChannels(1)
+        .outputOptions(['-application', 'voip', '-vbr', 'on'])
+        .format('ogg')
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .save(outPath);
+    });
+
+    const outBuf = await fs.promises.readFile(outPath);
+    if (!outBuf || outBuf.length < 64 || outBuf.slice(0, 4).toString('ascii') !== 'OggS') {
+      throw new Error('FFmpeg ma soo saarin fayl OggS sax ah');
+    }
+    return outBuf;
+  } finally {
+    await fs.promises.unlink(inPath).catch(() => {});
+    await fs.promises.unlink(outPath).catch(() => {});
+  }
+}

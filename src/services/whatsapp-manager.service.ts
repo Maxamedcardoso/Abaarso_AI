@@ -1,4 +1,4 @@
-import { WASocket, proto, jidNormalizedUser } from '@whiskeysockets/baileys';
+import { WASocket, proto, jidNormalizedUser, BinaryNode } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
@@ -84,6 +84,13 @@ interface KnownGroupRecord {
   updatedAt: number;
 }
 
+export interface BroadcastListRecord {
+  id: string;
+  name: string;
+  recipients: string[];
+  updatedAt: number;
+}
+
 export class WhatsAppManagerService {
   private socket: WASocket | null = null;
   private autoViewStatus: boolean = true;
@@ -112,8 +119,10 @@ export class WhatsAppManagerService {
   private readonly autoGroupStoragePath: string;
   private readonly autoAddStoragePath: string;
   private readonly knownGroupsStoragePath: string;
+  private readonly broadcastListsStoragePath: string;
   private autoManagedGroups: Map<string, { jid: string; name: string; enabledAt: number }> = new Map();
   private knownGroups: Map<string, KnownGroupRecord> = new Map();
+  private broadcastLists: Map<string, BroadcastListRecord> = new Map();
   private lastLiveGroupsFetchAt: number = 0;
   private lastGroupsFetchError: string | null = null;
   private autoAddConfig: Map<string, AutoAddGroupConfig> = new Map();
@@ -132,6 +141,7 @@ export class WhatsAppManagerService {
     this.autoGroupStoragePath = path.join(this.authDir, 'auto-managed-groups.json');
     this.autoAddStoragePath = path.join(this.authDir, 'auto-add-members-config.json');
     this.knownGroupsStoragePath = path.join(this.authDir, 'discovered-groups-cache.json');
+    this.broadcastListsStoragePath = path.join(this.authDir, 'broadcast-lists-cache.json');
     this.broadcast = options?.broadcast || broadcastService;
     if (options?.adminPhones) {
       this.configuredAdminPhones = options.adminPhones;
@@ -142,6 +152,7 @@ export class WhatsAppManagerService {
     this.loadAutoGroupConfig();
     this.loadAutoAddConfig();
     this.loadKnownGroupsCache();
+    this.loadBroadcastListsCache();
   }
 
   public setAdminPhones(phones: string[]): void {
@@ -3782,6 +3793,468 @@ Marnaba ha ku darin hordhac ama faahfaahin dambe, soo celi QORAALKA STATUS-KA OO
       attempted,
       skippedPrivacy,
       message: msg,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ─── WHATSAPP BROADCAST LISTS (<id>@broadcast != status@broadcast) ────────
+  // Baileys 6.7.9 rewrites non-status @broadcast JIDs into @s.whatsapp.net in
+  // messages-send.js:267, silently dropping every message sent directly to a
+  // WhatsApp Broadcast List. We discover, query (w:b IQ), capture receipts,
+  // persist, and resolve the list's authentic recipients so !podcast and !cod
+  // deliver seamlessly inside WhatsApp Broadcast Lists!
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  public isBroadcastListJid(jid?: string | null): boolean {
+    const clean = String(jid || '').trim().toLowerCase();
+    return clean.endsWith('@broadcast') && clean !== 'status@broadcast';
+  }
+
+  private getBotSelfDigits(): { botPhone: string; botLid: string } {
+    const botPhone = this.socket?.user?.id
+      ? this.socket.user.id.split(':')[0].split('@')[0].replace(/\D/g, '')
+      : this.botJid.replace(/\D/g, '');
+    const botLid = (this.socket?.user as any)?.lid
+      ? String((this.socket?.user as any).lid).split(':')[0].split('@')[0].replace(/\D/g, '')
+      : '';
+    return { botPhone, botLid };
+  }
+
+  public getOwnerSelfChatJid(): string {
+    const { botPhone } = this.getBotSelfDigits();
+    if (botPhone && botPhone.length >= 7) {
+      return `${botPhone}@s.whatsapp.net`;
+    }
+    const firstAdmin = (this.configuredAdminPhones || [])
+      .map(p => String(p || '').replace(/\D/g, ''))
+      .find(p => p.length >= 7);
+    if (firstAdmin) {
+      return `${firstAdmin}@s.whatsapp.net`;
+    }
+    return '';
+  }
+
+  private normalizeBroadcastRecipientJid(raw?: string | null): string | null {
+    const str = String(raw || '').trim();
+    if (!str) return null;
+    const lower = str.toLowerCase();
+    if (
+      lower.endsWith('@g.us') ||
+      lower.endsWith('@broadcast') ||
+      lower.endsWith('@newsletter')
+    ) {
+      return null;
+    }
+
+    let jid: string;
+    if (lower.endsWith('@lid')) {
+      const lidDigits = str.split('@')[0].split(':')[0].replace(/\D/g, '');
+      if (lidDigits.length < 7) return null;
+      jid = `${lidDigits}@lid`;
+    } else if (lower.endsWith('@s.whatsapp.net') || lower.endsWith('@c.us')) {
+      const digits = str.split('@')[0].split(':')[0].replace(/\D/g, '');
+      if (digits.length < 7 || digits.length > 16) return null;
+      jid = `${digits}@s.whatsapp.net`;
+    } else {
+      const normalized = this.normalizeToJid(str);
+      if (!normalized.endsWith('@s.whatsapp.net')) return null;
+      const digits = normalized.split('@')[0].replace(/\D/g, '');
+      if (digits.length < 7 || digits.length > 16) return null;
+      jid = `${digits}@s.whatsapp.net`;
+    }
+
+    const num = jid.split('@')[0];
+    const { botPhone, botLid } = this.getBotSelfDigits();
+    if ((botPhone && num === botPhone) || (botLid && num === botLid)) {
+      return null;
+    }
+    return jid;
+  }
+
+  private loadBroadcastListsCache(): void {
+    try {
+      if (fs.existsSync(this.broadcastListsStoragePath)) {
+        const raw = JSON.parse(fs.readFileSync(this.broadcastListsStoragePath, 'utf8'));
+        if (Array.isArray(raw)) {
+          for (const item of raw) {
+            if (item?.id && this.isBroadcastListJid(item.id)) {
+              const cleanRecipients: string[] = Array.isArray(item.recipients)
+                ? Array.from(
+                  new Set<string>(
+                    item.recipients
+                      .map((r: any) => this.normalizeBroadcastRecipientJid(r))
+                      .filter((r: string | null): r is string => Boolean(r))
+                  )
+                )
+                : [];
+              this.broadcastLists.set(item.id, {
+                id: item.id,
+                name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : item.id,
+                recipients: cleanRecipients,
+                updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : Date.now(),
+              });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to load broadcast lists cache: ${e?.message}`);
+    }
+  }
+
+  private saveBroadcastListsCache(): void {
+    try {
+      const dir = path.dirname(this.broadcastListsStoragePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const list = Array.from(this.broadcastLists.values());
+      fs.writeFileSync(this.broadcastListsStoragePath, JSON.stringify(list, null, 2), 'utf8');
+    } catch (e: any) {
+      console.warn(`[WhatsAppManager] Failed to save broadcast lists cache: ${e?.message}`);
+    }
+  }
+
+  private isRealBroadcastListName(name?: string, id?: string): boolean {
+    const clean = String(name || '').trim();
+    if (!clean) return false;
+    if (clean.endsWith('@broadcast')) return false;
+    if (id && clean === id) return false;
+    return true;
+  }
+
+  public recordBroadcastList(
+    raw: { id?: string; name?: string; subject?: string; conversationName?: string; recipients?: string[]; participants?: any[] },
+    persist: boolean = false
+  ): boolean {
+    const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
+    if (!this.isBroadcastListJid(id)) return false;
+
+    const existing = this.broadcastLists.get(id);
+    const rawName = String(raw?.name || raw?.subject || raw?.conversationName || '').trim();
+    const nextName = this.isRealBroadcastListName(rawName, id)
+      ? rawName
+      : (existing && this.isRealBroadcastListName(existing.name, id) ? existing.name : (rawName || existing?.name || id));
+
+    const mergedSet = new Set<string>(existing?.recipients || []);
+    const incomingList: any[] = [
+      ...(Array.isArray(raw?.recipients) ? raw.recipients : []),
+      ...(Array.isArray(raw?.participants) ? raw.participants : []),
+    ];
+    for (const entry of incomingList) {
+      const candidate =
+        typeof entry === 'string'
+          ? entry
+          : entry?.jid || entry?.userJid || entry?.id || entry?.phoneNumber || '';
+      const normalized = this.normalizeBroadcastRecipientJid(candidate);
+      if (normalized) mergedSet.add(normalized);
+    }
+
+    const nextRecipients = Array.from(mergedSet);
+    const changed =
+      !existing ||
+      existing.name !== nextName ||
+      existing.recipients.length !== nextRecipients.length;
+
+    this.broadcastLists.set(id, {
+      id,
+      name: nextName,
+      recipients: nextRecipients,
+      updatedAt: Date.now(),
+    });
+
+    if (persist && changed) {
+      this.saveBroadcastListsCache();
+    }
+    return changed;
+  }
+
+  public recordBroadcastListRecipient(
+    broadcastJid: string,
+    recipientJid: string,
+    persist: boolean = true
+  ): boolean {
+    if (!this.isBroadcastListJid(broadcastJid)) return false;
+    const normalized = this.normalizeBroadcastRecipientJid(recipientJid);
+    if (!normalized) return false;
+    return this.recordBroadcastList({ id: broadcastJid, recipients: [normalized] }, persist);
+  }
+
+  private extractBroadcastDataFromNode(
+    node: BinaryNode | any,
+    targetListId: string
+  ): { name?: string; recipients: string[]; discoveredLists: Array<{ id: string; name?: string; recipients: string[] }> } {
+    let foundName: string | undefined;
+    const directRecipients = new Set<string>();
+    const discoveredLists: Array<{ id: string; name?: string; recipients: string[] }> = [];
+
+    const walk = (n: any, currentList?: { id: string; name?: string; recipients: Set<string> }) => {
+      if (!n || typeof n !== 'object') return;
+      const tag = String(n.tag || '').toLowerCase();
+      const attrs = n.attrs && typeof n.attrs === 'object' ? n.attrs : {};
+
+      if ((tag === 'list' || tag === 'broadcast') && this.isBroadcastListJid(attrs.id || attrs.jid)) {
+        const listId = String(attrs.id || attrs.jid).trim();
+        const entry = {
+          id: listId,
+          name: attrs.name || attrs.subject || undefined,
+          recipients: new Set<string>(),
+        };
+        if (Array.isArray(n.content)) {
+          for (const child of n.content) walk(child, entry);
+        }
+        discoveredLists.push({
+          id: entry.id,
+          name: entry.name,
+          recipients: Array.from(entry.recipients),
+        });
+        if (listId === targetListId) {
+          if (entry.name) foundName = entry.name;
+          entry.recipients.forEach(r => directRecipients.add(r));
+        }
+        return;
+      }
+
+      if ((tag === 'broadcast' || tag === 'query' || tag === 'list') && (attrs.name || attrs.subject)) {
+        const nm = String(attrs.name || attrs.subject).trim();
+        if (nm) {
+          if (currentList) currentList.name = nm;
+          else if (!foundName) foundName = nm;
+        }
+      }
+
+      if (tag === 'participant' || tag === 'recipient' || tag === 'item') {
+        const candidate = attrs.jid || attrs.user || attrs.id || '';
+        const normalized = this.normalizeBroadcastRecipientJid(candidate);
+        if (normalized) {
+          if (currentList) currentList.recipients.add(normalized);
+          else directRecipients.add(normalized);
+        }
+      }
+
+      if (Array.isArray(n.content)) {
+        for (const child of n.content) walk(child, currentList);
+      }
+    };
+
+    walk(node);
+    return {
+      name: foundName,
+      recipients: Array.from(directRecipients),
+      discoveredLists,
+    };
+  }
+
+  public async queryBroadcastListInfoFromWhatsApp(
+    broadcastJid: string
+  ): Promise<{ name?: string; recipients: string[] }> {
+    if (!this.socket || !this.isBroadcastListJid(broadcastJid)) {
+      return { recipients: [] };
+    }
+    const sock: any = this.socket;
+    if (typeof sock.query !== 'function') {
+      return { recipients: [] };
+    }
+
+    const recipients = new Set<string>();
+    let name: string | undefined;
+
+    // 1. Direct query to the specific Broadcast List JID (xmlns: 'w:b')
+    try {
+      const node = await Promise.race([
+        sock.query({
+          tag: 'iq',
+          attrs: { to: broadcastJid, type: 'get', xmlns: 'w:b' },
+          content: [{ tag: 'query', attrs: {} }],
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('w:b query timeout')), 5500)),
+      ]);
+      const parsed = this.extractBroadcastDataFromNode(node, broadcastJid);
+      if (parsed.name) name = parsed.name;
+      parsed.recipients.forEach(r => recipients.add(r));
+      for (const dl of parsed.discoveredLists) {
+        this.recordBroadcastList(dl, true);
+      }
+    } catch { }
+
+    // 2. Fallback: query all broadcast lists on the account if specific query returned empty
+    if (recipients.size === 0) {
+      try {
+        const listsNode = await Promise.race([
+          sock.query({
+            tag: 'iq',
+            attrs: { to: 's.whatsapp.net', type: 'get', xmlns: 'w:b' },
+            content: [{ tag: 'lists', attrs: {} }],
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('w:b lists timeout')), 5500)),
+        ]);
+        const parsed = this.extractBroadcastDataFromNode(listsNode, broadcastJid);
+        if (parsed.name && !name) name = parsed.name;
+        parsed.recipients.forEach(r => recipients.add(r));
+        for (const dl of parsed.discoveredLists) {
+          this.recordBroadcastList(dl, true);
+        }
+      } catch { }
+    }
+
+    const mergedList = Array.from(recipients);
+    if (name || mergedList.length > 0) {
+      this.recordBroadcastList({ id: broadcastJid, name, recipients: mergedList }, true);
+    }
+    return { name, recipients: mergedList };
+  }
+
+  /**
+   * Proactively queries WhatsApp for all Broadcast Lists on the account (`w:b` <lists/> IQ)
+   * and caches every discovered list + recipient to disk.
+   */
+  public async syncAllBroadcastListsFromWhatsApp(): Promise<BroadcastListRecord[]> {
+    if (!this.socket) return this.listBroadcastLists();
+    const sock: any = this.socket;
+    if (typeof sock.query !== 'function') return this.listBroadcastLists();
+
+    try {
+      const listsNode = await Promise.race([
+        sock.query({
+          tag: 'iq',
+          attrs: { to: 's.whatsapp.net', type: 'get', xmlns: 'w:b' },
+          content: [{ tag: 'lists', attrs: {} }],
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('w:b sync timeout')), 6000)),
+      ]);
+      const parsed = this.extractBroadcastDataFromNode(listsNode, '');
+      for (const dl of parsed.discoveredLists) {
+        this.recordBroadcastList(dl, true);
+      }
+    } catch {}
+    return this.listBroadcastLists();
+  }
+
+  /**
+   * Resolves a Broadcast List target from an explicit JID, 1-based index (`#1`, `1`),
+   * partial name, or defaults to the most recently active list.
+   */
+  public findBroadcastListTarget(selector?: string): BroadcastListRecord | undefined {
+    const lists = this.listBroadcastLists();
+    if (lists.length === 0) return undefined;
+    const raw = String(selector || '').trim();
+    if (!raw || /^(?:last|latest|kan|default)$/i.test(raw)) {
+      return lists[0];
+    }
+    if (this.isBroadcastListJid(raw)) {
+      return this.broadcastLists.get(raw) || { id: raw, name: raw, recipients: [], updatedAt: Date.now() };
+    }
+    const idxMatch = raw.match(/^#?(\d{1,2})$/);
+    if (idxMatch) {
+      const idx = parseInt(idxMatch[1], 10) - 1;
+      if (idx >= 0 && idx < lists.length) return lists[idx];
+    }
+    if (/^\d{6,}$/.test(raw)) {
+      const fullId = `${raw}@broadcast`;
+      return this.broadcastLists.get(fullId) || { id: fullId, name: fullId, recipients: [], updatedAt: Date.now() };
+    }
+    const lower = raw.toLowerCase();
+    return lists.find(l => l.name.toLowerCase().includes(lower) || l.id.toLowerCase().includes(lower));
+  }
+
+  public async resolveBroadcastListRecipients(
+    broadcastJid: string,
+    forceQuery: boolean = false
+  ): Promise<{ id: string; name: string; recipients: string[] }> {
+    const id = String(broadcastJid || '').trim();
+    if (!this.isBroadcastListJid(id)) {
+      return { id, name: id, recipients: [] };
+    }
+
+    const cached = this.broadcastLists.get(id);
+    if (forceQuery || !cached || cached.recipients.length === 0) {
+      await this.queryBroadcastListInfoFromWhatsApp(id).catch(() => { });
+    }
+
+    const updated = this.broadcastLists.get(id);
+    const cleanRecipients = (updated?.recipients || [])
+      .map(r => this.normalizeBroadcastRecipientJid(r))
+      .filter((r): r is string => Boolean(r));
+
+    return {
+      id,
+      name: updated?.name || id,
+      recipients: Array.from(new Set(cleanRecipients)),
+    };
+  }
+
+  public getBroadcastList(broadcastJid: string): BroadcastListRecord | undefined {
+    return this.broadcastLists.get(broadcastJid);
+  }
+
+  public listBroadcastLists(): BroadcastListRecord[] {
+    return Array.from(this.broadcastLists.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  public addBroadcastListRecipients(
+    listIdOrQuery: string,
+    rawNumbers: string[]
+  ): { success: boolean; listId: string; added: number; total: number; message: string } {
+    const query = String(listIdOrQuery || '').trim();
+    let targetId = '';
+
+    if (this.isBroadcastListJid(query)) {
+      targetId = query;
+    } else if (/^(?:last|latest|kan)$/i.test(query)) {
+      const lists = this.listBroadcastLists();
+      if (lists.length > 0) targetId = lists[0].id;
+    } else if (/^\d{6,}$/.test(query)) {
+      targetId = `${query}@broadcast`;
+    } else if (query) {
+      const lowerQ = query.toLowerCase();
+      const found = this.listBroadcastLists().find(
+        l => l.name.toLowerCase().includes(lowerQ) || l.id.toLowerCase().includes(lowerQ)
+      );
+      if (found) targetId = found.id;
+    }
+
+    if (!targetId) {
+      return {
+        success: false,
+        listId: '',
+        added: 0,
+        total: 0,
+        message: '⚠️ Lama helin Broadcast List-kaas. Qor `!bclist` si aad u aragto ID-ga liisaskaaga, ama gudaha Broadcast List-ka ku qor `!bclist add 25263xxxxxxx, 25263yyyyyyy`.',
+      };
+    }
+
+    const beforeCount = this.broadcastLists.get(targetId)?.recipients.length || 0;
+    const validJids: string[] = [];
+    for (const rawNum of rawNumbers) {
+      const normalized = this.normalizeBroadcastRecipientJid(rawNum);
+      if (normalized) validJids.push(normalized);
+    }
+
+    if (validJids.length === 0) {
+      return {
+        success: false,
+        listId: targetId,
+        added: 0,
+        total: beforeCount,
+        message: '⚠️ Ma jiro lambar sax ah oo aad soo gelisay. Tusaale: `!bclist add 252634949642, 252634000111`',
+      };
+    }
+
+    this.recordBroadcastList({ id: targetId, recipients: validJids }, true);
+    const afterCount = this.broadcastLists.get(targetId)?.recipients.length || 0;
+    const added = Math.max(0, afterCount - beforeCount);
+    const listName = this.broadcastLists.get(targetId)?.name || targetId;
+
+    return {
+      success: true,
+      listId: targetId,
+      added,
+      total: afterCount,
+      message:
+        `✅ *Broadcast List waa la cusboonaysiiyay!*\n` +
+        `📢 *Liiska:* ${listName}\n` +
+        `🆔 *ID:* \`${targetId}\`\n` +
+        `➕ *Cusub:* ${added} qof\n` +
+        `👥 *Wadarta Liiska:* ${afterCount} qof\n\n` +
+        `_Hadda gudaha Broadcast List-kan waxaad si toos ah ugu diri kartaa \`!podcast\` iyo \`!cod\`!_ 🎙️✨`,
     };
   }
 }

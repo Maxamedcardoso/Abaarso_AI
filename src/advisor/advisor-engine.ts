@@ -797,18 +797,31 @@ You are looking directly at a ${mediaLabel}${viewOnceTag} sent by the user on Wh
     let replyMedia: OutgoingMedia | undefined;
 
     if (wantsVoice && (!this.planGuard || this.planGuard.checkFeature('voice').allowed)) {
-      console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Somali/English TTS...`);
+      let voiceEmotion = emotionResult.tone;
+      if (voiceEmotion === 'neutral' && userTurnSavedContent !== content) {
+        const transcriptEmotion = EmotionDetector.detect(userTurnSavedContent);
+        if (transcriptEmotion.tone !== 'neutral') {
+          voiceEmotion = transcriptEmotion.tone;
+        }
+      }
+      console.log(`🎙️ [AdvisorEngine] Voice reply la doonayaa — synthesizing Mohamed Human Voice (emotion=${voiceEmotion})...`);
       try {
-        const voiceResult = await VoiceReplyService.synthesizeVoice(aiResult.text, lang);
+        const voiceResult = await VoiceReplyService.synthesizeVoice(aiResult.text, lang, {
+          emotion: voiceEmotion,
+          speaker: 'mohamed',
+          humanMaster: true,
+        });
         if (voiceResult) {
           this.planGuard?.recordUsage('voice');
           replyMedia = {
             type: 'audio',
             dataBuffer: voiceResult.buffer,
-            mimeType: voiceResult.mimeType || 'audio/mpeg',
+            mimeType: voiceResult.mimeType || 'audio/ogg; codecs=opus',
             ptt: true,
+            seconds: voiceResult.seconds,
+            waveform: voiceResult.waveform,
           };
-          console.log(`✅ [AdvisorEngine] Voice note (PTT Waveform) la diyaariyay — ${voiceResult.buffer.length} bytes`);
+          console.log(`✅ [AdvisorEngine] Mohamed Human Voice Note (PTT ${voiceResult.seconds}s) la diyaariyay — ${voiceResult.buffer.length} bytes`);
         }
       } catch (voiceErr) {
         console.warn('[AdvisorEngine] Voice synthesis error:', voiceErr);

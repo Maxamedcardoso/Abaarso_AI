@@ -9,6 +9,7 @@ import {
   HumanMixSegment,
   decodeTrimmedMonoPcm48k,
   encodeMasteredPodcastAudio,
+  masterHumanVoiceReplyToOggOpus,
   mixHumanPodcastTimeline,
   renderPodcastVideoAudiogram,
 } from './podcast-studio.service.js';
@@ -288,38 +289,106 @@ export class VoiceReplyService {
     return clean;
   }
 
+  private static voiceJitterSeq = 0;
+
   /**
-   * Synthesizes audio buffer from text with automatic retry for 100% zero-error resilience.
-   * Returns audio MP3 buffer or null on error.
+   * Computes authentic human voice prosody (rate & pitch) matched to the user's detected
+   * emotional tone (empathy when sick/sad, lively warmth when joking/happy, sharp confident
+   * punch when roasting/clapping back at insults, plus subtle organic micro-jitter).
    */
-  public static async synthesizeVoice(text: string, language: string = 'so'): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  public static prosodyForChatEmotion(emotion?: string, text?: string): { rate: string; pitch: string } {
+    const seq = (this.voiceJitterSeq = (this.voiceJitterSeq + 1) % 6);
+    const rateJitter = [0, 1, -1, 2, -1, 1][seq];
+    const pitchJitter = [0, 1, -1, 0, 1, 0][seq];
+    const fmtRate = (v: number) => `${v >= 0 ? '+' : ''}${v}%`;
+    const fmtPitch = (v: number) => `${v >= 0 ? '+' : ''}${v}Hz`;
+
+    const emo = String(emotion || 'neutral').toLowerCase();
+    const t = String(text || '');
+
+    if (
+      emo === 'sick' ||
+      emo === 'sad' ||
+      emo === 'heartbroken' ||
+      emo === 'stressed' ||
+      /\b(?:alle\s+ha\s+ku\s+caafiyo|caafimaad\s+degdeg|waan\s+ka\s+xumahay|samir\s+iyo\s+iimaan)\b/i.test(t)
+    ) {
+      return { rate: fmtRate(-7 + rateJitter), pitch: fmtPitch(-2 + pitchJitter) };
+    }
+    if (
+      emo === 'angry' ||
+      emo === 'insult' ||
+      emo === 'roast' ||
+      /\b(?:afkaaga\s+qabso|maxaa\s+kaa\s+qaldan|nacas|doqon|waalan|meel\s+kale\s+la\s+aad|ha\s+igu\s+soo\s+daadin|wasakh)\b/i.test(t) ||
+      /\?!/.test(t)
+    ) {
+      // Sharp, confident, punchy Somali clapback tone (NOT soft or timid!)
+      return { rate: fmtRate(5 + rateJitter), pitch: fmtPitch(1 + pitchJitter) };
+    }
+    if (emo === 'happy' || emo === 'excited' || emo === 'laugh' || /\b(?:haha|haa-haa|kkkk|hehe)\b/i.test(t)) {
+      return { rate: fmtRate(4 + rateJitter), pitch: fmtPitch(3 + pitchJitter) };
+    }
+    if (emo === 'tired' || emo === 'sleepy') {
+      return { rate: fmtRate(-5 + rateJitter), pitch: fmtPitch(-1 + pitchJitter) };
+    }
+    return { rate: fmtRate(-2 + rateJitter), pitch: fmtPitch(0 + pitchJitter) };
+  }
+
+  /**
+   * Synthesizes a natural, human-mastered WhatsApp Voice Note (Ogg Opus PTT with exact duration
+   * and 64-bar speech waveform). Defaults strictly to Mohamed (`so-SO-MuuseNeural`), adapts prosody
+   * to the user's emotion (empathy, humor, or sharp comeback), trims dead TTS gaps, and applies
+   * warm phone-mic mastering!
+   */
+  public static async synthesizeVoice(
+    text: string,
+    language: string = 'so',
+    options?: {
+      emotion?: string;
+      speaker?: 'mohamed' | 'safa';
+      humanMaster?: boolean;
+    }
+  ): Promise<{ buffer: Buffer; mimeType: string; seconds: number; waveform: Uint8Array } | null> {
     const clean = this.cleanTextForSpeech(text, language);
     if (!clean) return null;
 
-    // Select the best native Edge Neural TTS voice for the detected language
-    let voiceName = 'so-SO-MuuseNeural'; // Default: Somali
+    // Default strictly to Mohamed (so-SO-MuuseNeural) unless explicitly set to Safa or another language
+    let voiceName = options?.speaker === 'safa' ? 'so-SO-UbaxNeural' : 'so-SO-MuuseNeural';
     if (language === 'en') {
-      voiceName = 'en-US-ChristopherNeural'; // English
+      voiceName = options?.speaker === 'safa' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
     } else if (language === 'ar') {
-      voiceName = 'ar-SA-HamedNeural'; // Arabic
+      voiceName = options?.speaker === 'safa' ? 'ar-SA-ZariyahNeural' : 'ar-SA-HamedNeural';
     } else if (language === 'fr') {
-      voiceName = 'fr-FR-HenriNeural'; // French
+      voiceName = 'fr-FR-HenriNeural';
     } else if (language === 'tr') {
-      voiceName = 'tr-TR-AhmetNeural'; // Turkish
+      voiceName = 'tr-TR-AhmetNeural';
     }
+
+    const prosody = this.prosodyForChatEmotion(options?.emotion, clean);
+    const applyHumanMaster = options?.humanMaster !== false;
 
     // Try up to 2 attempts for 100% zero-error reliability against transient network glitches
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const result = await this.synthesizeSingleAttempt(clean, voiceName, language);
+        const result = await this.synthesizeSingleAttempt(clean, voiceName, language, prosody);
         if (result && result.buffer.length > 0) {
-          // Convert MP3 to WhatsApp-native Ogg Opus container ("OggS" header).
-          // WhatsApp PTT (Voice Note) player strictly requires Ogg Opus to render waveforms and play without "This audio is not available" error.
-          const opusBuffer = await this.convertMp3ToOggOpus(result.buffer);
-          const isOggOpus = opusBuffer.slice(0, 4).toString() === 'OggS';
+          let opusBuffer: Buffer;
+          if (applyHumanMaster) {
+            try {
+              opusBuffer = await masterHumanVoiceReplyToOggOpus(result.buffer);
+            } catch (masterErr: any) {
+              console.warn('[VoiceReply] Human voice mastering fallback to standard Opus:', masterErr?.message || masterErr);
+              opusBuffer = await this.convertMp3ToOggOpus(result.buffer);
+            }
+          } else {
+            opusBuffer = await this.convertMp3ToOggOpus(result.buffer);
+          }
+          const isOggOpus = opusBuffer.slice(0, 4).toString('ascii') === 'OggS';
           return {
             buffer: opusBuffer,
             mimeType: isOggOpus ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
+            seconds: isOggOpus ? getOggOpusDurationSeconds(opusBuffer) : Math.max(1, Math.round(opusBuffer.length / 6000)),
+            waveform: generateSpeechWaveform(opusBuffer),
           };
         }
       } catch (err) {
