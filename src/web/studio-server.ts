@@ -116,10 +116,12 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '15mb' }));
 
-  // Zero-dependency Gzip compression (~5x smaller HTML/JS/JSON on mobile networks!)
+  // Zero-dependency Brotli + Gzip compression (~6x smaller HTML/JS/JSON on mobile networks!)
   app.use((req: Request, res: Response, next) => {
     const acceptEnc = String(req.headers['accept-encoding'] || '');
-    if (!/\bgzip\b/i.test(acceptEnc)) {
+    const supportsBr = /\bbr\b/i.test(acceptEnc);
+    const supportsGzip = /\bgzip\b/i.test(acceptEnc);
+    if (!supportsBr && !supportsGzip) {
       next();
       return;
     }
@@ -149,14 +151,19 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         return origSend(body);
       }
       try {
-        const zipped = zlib.gzipSync(rawBuf, { level: 6 });
-        res.setHeader('Content-Encoding', 'gzip');
+        const useBr = supportsBr && typeof zlib.brotliCompressSync === 'function';
+        const compressed = useBr
+          ? zlib.brotliCompressSync(rawBuf, {
+            params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+          })
+          : zlib.gzipSync(rawBuf, { level: 6 });
+        res.setHeader('Content-Encoding', useBr ? 'br' : 'gzip');
         res.setHeader('Vary', 'Accept-Encoding');
-        res.setHeader('Content-Length', String(zipped.length));
+        res.setHeader('Content-Length', String(compressed.length));
         if (!res.getHeader('Content-Type')) {
           res.setHeader('Content-Type', typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
         }
-        res.end(zipped);
+        res.end(compressed);
         return res;
       } catch {
         return origSend(body);
@@ -395,7 +402,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       if (cfg?.botName && cfg.botName.trim()) {
         botName = `${cfg.botName.trim()} — Smart App`;
       }
-    } catch {}
+    } catch { }
     res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.send(JSON.stringify(buildWebManifest({ name: botName })));
@@ -443,7 +450,37 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     res.send(renderOfflineHTML());
   });
 
-  app.get('/app', async (req: Request, res: Response) => {
+  interface CachedHtmlEntry {
+    etag: string;
+    raw: Buffer;
+    gzip: Buffer;
+    br: Buffer;
+    createdAt: number;
+  }
+  const pwaHtmlCache = new Map<string, CachedHtmlEntry>();
+  const PWA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  const compactAppHtml = (html: string): string => {
+    // 1. Compact CSS inside <style>...</style>
+    let out = html.replace(/<style>([\s\S]*?)<\/style>/gi, (_m, css: string) => {
+      const compactCss = css
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\s*\n\s*/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/\s*([{}:;,])\s*/g, '$1')
+        .trim();
+      return `<style>${compactCss}</style>`;
+    });
+    // 2. Safely strip leading/trailing indentation per line (preserving newlines so JS // comments & ASI stay 100% intact)
+    out = out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !/^<!--[\s\S]*-->$/.test(line))
+      .join('\n');
+    return out;
+  };
+
+  const sendCachedPwaApp = async (req: Request, res: Response): Promise<void> => {
     const tenantId = typeof req.query.tenant === 'string' ? req.query.tenant.trim() : '';
     const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
     const target = await resolveAppTarget(tenantId, token);
@@ -453,17 +490,71 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       const cfg = await target.memory.getBotConfig();
       if (cfg?.botName?.trim()) botName = cfg.botName.trim();
       if (cfg?.businessName?.trim()) businessName = cfg.businessName.trim();
-    } catch {}
+    } catch { }
+
+    const safeTenant = target.tenantId === 'owner' ? '' : target.tenantId;
+    const safeToken = target.tenantId === 'owner' ? '' : token;
+    const cacheKey = `${botName}|${businessName}|${safeTenant}|${safeToken}|${config.messaging.mode}`;
+    const now = Date.now();
+    let entry = pwaHtmlCache.get(cacheKey);
+    if (!entry || now - entry.createdAt > PWA_CACHE_TTL_MS) {
+      if (pwaHtmlCache.size >= 24) {
+        pwaHtmlCache.clear();
+      }
+      const html = compactAppHtml(
+        renderPwaAppHTML({
+          botName,
+          businessName,
+          tenantId: safeTenant,
+          tenantToken: safeToken,
+          mode: config.messaging.mode,
+        })
+      );
+      const raw = Buffer.from(html, 'utf8');
+      const gzip = zlib.gzipSync(raw, { level: 9 });
+      const br =
+        typeof zlib.brotliCompressSync === 'function'
+          ? zlib.brotliCompressSync(raw, {
+            params: {
+              [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+              [zlib.constants.BROTLI_PARAM_QUALITY]: 10,
+            },
+          })
+          : gzip;
+      const hash = crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16);
+      entry = { etag: `W/"app-${hash}"`, raw, gzip, br, createdAt: now };
+      pwaHtmlCache.set(cacheKey, entry);
+    }
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(
-      renderPwaAppHTML({
-        botName,
-        businessName,
-        tenantId: target.tenantId === 'owner' ? '' : target.tenantId,
-        tenantToken: target.tenantId === 'owner' ? '' : token,
-        mode: config.messaging.mode,
-      })
-    );
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=3600');
+    res.setHeader('ETag', entry.etag);
+    res.setHeader('Vary', 'Accept-Encoding');
+
+    if (String(req.headers['if-none-match'] || '').trim() === entry.etag) {
+      res.status(304).end();
+      return;
+    }
+
+    const acceptEnc = String(req.headers['accept-encoding'] || '');
+    if (/\bbr\b/i.test(acceptEnc) && typeof zlib.brotliCompressSync === 'function') {
+      res.setHeader('Content-Encoding', 'br');
+      res.setHeader('Content-Length', String(entry.br.length));
+      res.end(entry.br);
+      return;
+    }
+    if (/\bgzip\b/i.test(acceptEnc)) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Content-Length', String(entry.gzip.length));
+      res.end(entry.gzip);
+      return;
+    }
+    res.setHeader('Content-Length', String(entry.raw.length));
+    res.end(entry.raw);
+  };
+
+  app.get('/app', async (req: Request, res: Response) => {
+    await sendCachedPwaApp(req, res);
   });
 
   app.get('/api/app/bootstrap', async (req: Request, res: Response) => {
@@ -475,7 +566,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         const cfg = await target.memory.getBotConfig();
         if (cfg?.botName?.trim()) botName = cfg.botName.trim();
         if (cfg?.businessName?.trim()) businessName = cfg.businessName.trim();
-      } catch {}
+      } catch { }
       res.json({
         status: 'ok',
         botName,
@@ -517,11 +608,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       })),
       featuredAyah: nextPrayer
         ? {
-            prayerName: nextPrayer.somaliName,
-            arabic: nextPrayer.quranAyahArabic,
-            somali: nextPrayer.quranAyahSomali,
-            ref: nextPrayer.quranSurahRef,
-          }
+          prayerName: nextPrayer.somaliName,
+          arabic: nextPrayer.quranAyahArabic,
+          somali: nextPrayer.quranAyahSomali,
+          ref: nextPrayer.quranSurahRef,
+        }
         : null,
     });
   });
@@ -711,10 +802,10 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
         turns = VoiceReplyService.isExplicitDialogueScript(rawScript)
           ? VoiceReplyService.parseDialogueScript(rawScript)
           : await VoiceReplyService.generateTopicDialogueTurns(
-              rawScript,
-              getOwnerRefs().engine?.getAIOrchestrator?.(),
-              { style, durationMinutes }
-            );
+            rawScript,
+            getOwnerRefs().engine?.getAIOrchestrator?.(),
+            { style, durationMinutes }
+          );
       }
 
       const audioFormat: 'mp3' | 'ogg' = format === 'ogg' ? 'ogg' : 'mp3';
@@ -842,7 +933,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     // 2. Check if user is the Owner
     const isOwnerPhone = tenantManager.isOwnerPhone(rawPhone) ||
       (cleanPhone && tenantManager.registry.getTenant('owner')?.allowedPhone &&
-       normalizeSubscriptionPhone(tenantManager.registry.getTenant('owner')!.allowedPhone) === cleanPhone);
+        normalizeSubscriptionPhone(tenantManager.registry.getTenant('owner')!.allowedPhone) === cleanPhone);
     const ownerTenantPin = tenantManager.registry.verifyTenantPin(rawPhone, pin);
     const matchesStudioPassword = Boolean(studioPassword && pin === studioPassword);
     const isOwnerLogin = matchesStudioPassword || (isOwnerPhone && ownerTenantPin?.id === 'owner');
@@ -1362,10 +1453,10 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
     }
 
-    // 3. Public visitors opening the root URL (`/`) go straight to the User App (`/app`),
-    //    never to Admin Login! Admins access the dashboard via `/admin`, `/dashboard`, or `/admin-login`.
+    // 3. Public visitors opening the root URL (`/`) receive the User App directly (200 OK, zero redirect round-trip!),
+    //    never Admin Login! Authenticated admins get Admin Dashboard; unauthenticated admins use `/admin`, `/dashboard`, or `/admin-login`.
     if (req.method === 'GET' && req.path === '/') {
-      res.redirect('/app');
+      void sendCachedPwaApp(req, res).catch(() => res.redirect('/app'));
       return;
     }
     if (req.method === 'GET' && req.accepts && req.accepts('html') && (req.path === '/admin' || req.path === '/dashboard')) {
@@ -2116,7 +2207,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     const { transport } = getOwnerRefs();
     if (transport instanceof WhatsAppBaileysTransport) {
       await (transport as WhatsAppBaileysTransport).unlinkSession();
-      await tenantManager?.getCloudSync()?.deleteAuthSnapshot('owner').catch(() => {});
+      await tenantManager?.getCloudSync()?.deleteAuthSnapshot('owner').catch(() => { });
       res.json({ status: 'ok', message: 'WhatsApp session waa la xidhay. QR cusub ayaa soo baxaya.' });
     } else {
       res.status(400).json({ status: 'error', message: 'Baileys transport is not active.' });

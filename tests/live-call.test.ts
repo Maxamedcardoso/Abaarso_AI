@@ -366,8 +366,8 @@ async function runLiveCallTests(): Promise<void> {
       new vm.Script(m[1], { filename: 'app-with-live-call.js' });
     }
 
-    // Verify zero-dependency Gzip compression (~4-5x smaller mobile payload), HEAD /health & WhatsApp OG preview tags
-    const gzipLiveRes = await invoke('GET', '/live-call', undefined, { 'accept-encoding': 'gzip, deflate, br' });
+    // Verify zero-dependency Gzip & Brotli compression (~5-6x smaller mobile payload), HEAD /health & WhatsApp OG preview tags
+    const gzipLiveRes = await invoke('GET', '/live-call', undefined, { 'accept-encoding': 'gzip' });
     assert(
       gzipLiveRes.status === 200 &&
         gzipLiveRes.headers['content-encoding'] === 'gzip' &&
@@ -379,14 +379,38 @@ async function runLiveCallTests(): Promise<void> {
       unzippedHtml.includes('og:title') && unzippedHtml.includes('id="lcModeRandomBtn"'),
       'Gunzipped /live-call HTML should contain OpenGraph WhatsApp preview tags and live call UI'
     );
+    const brLiveRes = await invoke('GET', '/live-call', undefined, { 'accept-encoding': 'gzip, deflate, br' });
+    assert(
+      brLiveRes.status === 200 &&
+        brLiveRes.headers['content-encoding'] === 'br' &&
+        brLiveRes.buffer.length <= gzipLiveRes.buffer.length,
+      `Brotli middleware should shrink /live-call at least as much as gzip (gzip=${gzipLiveRes.buffer.length}B, br=${brLiveRes.buffer.length}B)`
+    );
     const headHealthRes = await invoke('HEAD', '/health');
     assert(headHealthRes.status === 200, 'HEAD /health should return 200 OK for UptimeRobot/cron-job monitors');
 
     const rootGuestRes = await invoke('GET', '/');
     assert(
-      rootGuestRes.status === 302 && rootGuestRes.headers.location === '/app',
-      `Public GET / should redirect straight to /app (never /admin-login), got ${rootGuestRes.status} -> ${rootGuestRes.headers.location}`
+      rootGuestRes.status === 200 &&
+        rootGuestRes.text.includes('id="pane-chat"') &&
+        !rootGuestRes.text.includes('fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"'),
+      `Public GET / should serve /app directly (200 OK, zero redirect, zero render-blocking external fonts), got ${rootGuestRes.status}`
     );
+
+    const brAppRes = await invoke('GET', '/app', undefined, { 'accept-encoding': 'gzip, deflate, br' });
+    assert(
+      brAppRes.status === 200 &&
+        brAppRes.headers['content-encoding'] === 'br' &&
+        brAppRes.headers['etag'] &&
+        brAppRes.buffer.length < 40000,
+      `GET /app with Brotli should return compact cached payload (<40KB), got ${brAppRes.headers['content-encoding']} ${brAppRes.buffer.length}B`
+    );
+
+    const notModRes = await invoke('GET', '/app', undefined, {
+      'accept-encoding': 'br',
+      'if-none-match': String(brAppRes.headers['etag']),
+    });
+    assert(notModRes.status === 304, `GET /app with matching ETag should return 304 Not Modified, got ${notModRes.status}`);
 
     console.log('  ✅ PASS: /api/live-call/peer/stats, Gzip compression, HEAD /health, OG preview & standalone /live-call + /app verified');
 

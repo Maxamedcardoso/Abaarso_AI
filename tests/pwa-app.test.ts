@@ -111,7 +111,7 @@ async function runPwaAppTests(): Promise<void> {
     const swRes = await invokeServer('GET', '/sw.js');
     assert(swRes.status === 200, '/sw.js should return 200');
     assert(String(swRes.headers['content-type'] || '').includes('javascript'), '/sw.js should serve JS');
-    assert(swRes.text.includes('cardoso-ai-pwa-v3') && swRes.text.includes('/pwa/offline') && swRes.text.includes('.vcf') && swRes.text.includes('/api/'), '/sw.js should include cache, .vcf + /api/ bypass & offline fallback');
+    assert(swRes.text.includes('cardoso-ai-pwa-v4') && swRes.text.includes('/pwa/offline') && swRes.text.includes('.vcf') && swRes.text.includes('/api/'), '/sw.js should include cache v4, .vcf + /api/ bypass & offline fallback');
     new vm.Script(swRes.text, { filename: 'sw.js' });
     console.log('  ✅ PASS: /sw.js serves syntactically valid installable Service Worker');
 

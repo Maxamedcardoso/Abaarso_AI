@@ -35,9 +35,6 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>${escapeAttr(initialBotName)} — Smart App</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   ${PWA_HEAD_TAGS}
   <script>
     (function() {
@@ -1243,7 +1240,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
     <!-- Modern Desktop Sidebar -->
     <aside class="sidebar" id="appSidebar">
       <div class="side-brand">
-        <img src="/pwa/icon-192.png" alt="CARDOSO AI" />
+        <img src="/pwa/icon.svg" alt="CARDOSO AI" />
         <div class="side-brand-meta">
           <h1 id="sideBotTitle">CARDOSO <span>AI</span></h1>
           <div class="side-brand-sub">
@@ -1307,7 +1304,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
 
           <!-- Mobile Brand -->
           <div class="mobile-brand">
-            <img src="/pwa/icon-192.png" alt="CARDOSO AI" class="mobile-logo" />
+            <img src="/pwa/icon.svg" alt="CARDOSO AI" class="mobile-logo" />
             <div class="topbar-title" id="topBotName">${escapeAttr(initialBotName)}</div>
             <span class="dot-online" title="Online"></span>
           </div>
@@ -1350,7 +1347,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
         <div class="chat-scroll" id="chatScroll">
           <div class="chat-inner" id="chatMessages">
             <div class="welcome-hero" id="welcomeHero">
-              <img src="/pwa/icon-192.png" alt="CARDOSO AI" class="welcome-badge-img" />
+              <img src="/pwa/icon.svg" alt="CARDOSO AI" class="welcome-badge-img" />
               <h2>Maxaan maanta kaa caawiyaa?</h2>
               <p>Iila hadal qoraal, cod Soomaali/Ingiriisi ah, ama sawir ii soo dir — si degdeg ah ayaan kuugu jawaabayaa.</p>
 
@@ -2591,6 +2588,15 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
       }
     }
 
+    function fetchWithTimeout(url, opts, timeoutMs) {
+      const ms = timeoutMs || 10000;
+      if (typeof AbortController === 'undefined') return fetch(url, opts);
+      const ctrl = new AbortController();
+      const timer = setTimeout(function() { try { ctrl.abort(); } catch {} }, ms);
+      const merged = Object.assign({}, opts || {}, { signal: ctrl.signal });
+      return fetch(url, merged).finally(function() { clearTimeout(timer); });
+    }
+
     async function loadHistory() {
       try {
         const q = new URLSearchParams({ sessionId: state.sessionId });
@@ -2598,7 +2604,7 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
           q.set('tenantId', state.tenantId);
           q.set('token', state.tenantToken);
         }
-        const res = await fetch('/api/app/history?' + q.toString());
+        const res = await fetchWithTimeout('/api/app/history?' + q.toString(), null, 9000);
         const data = await res.json();
         if (data && data.status === 'ok' && Array.isArray(data.messages) && data.messages.length > 0) {
           state.messages = data.messages;
@@ -2646,7 +2652,7 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
           q.set('tenantId', state.tenantId);
           q.set('token', state.tenantToken);
         }
-        const res = await fetch('/api/app/bootstrap' + (q.toString() ? '?' + q.toString() : ''));
+        const res = await fetchWithTimeout('/api/app/bootstrap' + (q.toString() ? '?' + q.toString() : ''), null, 9000);
         const data = await res.json();
         if (data && data.status === 'ok') {
           const name = data.botName || 'CARDOSO AI';
@@ -2910,8 +2916,22 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
       if (nameInput) nameInput.value = state.userName;
       setAppTheme(state.theme);
       updateAutoVoiceUI();
-      loadBootstrap();
-      loadHistory();
+      // Defer background API hydration slightly so initial paint & touch interaction are instant
+      setTimeout(function() {
+        loadBootstrap();
+        loadHistory();
+      }, 80);
+      // Load Plus Jakarta Sans strictly AFTER page load so external font CDNs NEVER block rendering
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          try {
+            const l = document.createElement('link');
+            l.rel = 'stylesheet';
+            l.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap';
+            document.head.appendChild(l);
+          } catch {}
+        }, 900);
+      });
     })();
 
     ${renderLiveCallClientJS()}

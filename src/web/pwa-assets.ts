@@ -352,13 +352,10 @@ export function getAppIconPng(size: number = 192, maskable: boolean = false): Bu
  * Service Worker JS enabling real PWA installation, shell caching, and graceful offline handling.
  */
 export function getServiceWorkerJS(): string {
-  return `const CACHE_NAME = 'cardoso-ai-pwa-v3';
+  return `const CACHE_NAME = 'cardoso-ai-pwa-v4';
 const SHELL_ASSETS = [
-  '/app',
-  '/manifest.webmanifest',
-  '/pwa/icon-192.png',
-  '/pwa/icon-512.png',
   '/pwa/icon.svg',
+  '/manifest.webmanifest',
   '/pwa/offline'
 ];
 
@@ -379,6 +376,33 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function fetchWithTimeout(req, ms) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('SW_NET_TIMEOUT'));
+      }
+    }, ms);
+    fetch(req)
+      .then((res) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(res);
+        }
+      })
+      .catch((err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      });
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -386,8 +410,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept .vcf contact file downloads or dynamic /api/ requests — let browser handle auth/cookies/timeouts natively
-  if (url.pathname.endsWith('.vcf') || url.pathname.startsWith('/api/')) return;
+  // Never intercept .vcf downloads, dynamic /api/ requests, or WebSockets
+  if (url.pathname.endsWith('.vcf') || url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) return;
 
   // Cache-first for static PWA assets (icons & manifest)
   if (url.pathname.startsWith('/pwa/') || url.pathname === '/manifest.webmanifest') {
@@ -395,7 +419,7 @@ self.addEventListener('fetch', (event) => {
       caches.match(req).then((cached) => {
         if (cached) return cached;
         return fetch(req).then((res) => {
-          if (res && res.status === 200) {
+          if (res && res.status === 200 && !res.redirected) {
             const copy = res.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
           }
@@ -406,18 +430,37 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for HTML navigations with offline fallback
-  if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
+  // Only accelerate /app & / HTML navigations with a 3s timeout -> instant cached fallback (never hang spinning!)
+  if ((req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) && (url.pathname === '/app' || url.pathname === '/')) {
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          if (res && res.status === 200 && url.pathname === '/app') {
+      caches.match('/app').then((cachedApp) => {
+        const netPromise = fetch(req).then((res) => {
+          if (res && res.status === 200 && !res.redirected && res.type === 'basic') {
             const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
+            caches.open(CACHE_NAME).then((cache) => cache.put('/app', copy)).catch(() => {});
           }
           return res;
-        })
-        .catch(() => caches.match(req).then((c) => c || caches.match('/app')).then((c) => c || caches.match('/pwa/offline')))
+        });
+
+        // If user already has cached /app, race network against 2.8s timeout so slow mobile never spins forever
+        if (cachedApp) {
+          return Promise.race([
+            netPromise.catch(() => cachedApp),
+            new Promise((resolve) => setTimeout(() => resolve(cachedApp), 2800))
+          ]);
+        }
+
+        // First-ever visit: try network with generous fallback to offline page if disconnected
+        return fetchWithTimeout(req, 15000)
+          .then((res) => {
+            if (res && res.status === 200 && !res.redirected && res.type === 'basic') {
+              const copy = res.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put('/app', copy)).catch(() => {});
+            }
+            return res;
+          })
+          .catch(() => caches.match('/app').then((c) => c || caches.match('/pwa/offline')));
+      })
     );
   }
 });
@@ -525,8 +568,11 @@ export const PWA_INSTALL_CLIENT_JS = `
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function() {});
         refreshInstallButtons();
+        // Register SW after initial render settles so it never competes with first-load mobile bandwidth
+        setTimeout(function() {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function() {});
+        }, 2500);
       });
     } else {
       window.addEventListener('load', refreshInstallButtons);
