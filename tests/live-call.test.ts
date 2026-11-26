@@ -97,10 +97,10 @@ async function runLiveCallTests(): Promise<void> {
   const ice = buildIceServers(customCfg);
   assert(
     ice.length === 2 &&
-      Array.isArray(ice[0].urls) &&
-      ice[0].urls.length === 2 &&
-      ice[1].urls === 'turn:turn.example.org:3478' &&
-      ice[1].username === 'cardoso',
+    Array.isArray(ice[0].urls) &&
+    ice[0].urls.length === 2 &&
+    ice[1].urls === 'turn:turn.example.org:3478' &&
+    ice[1].username === 'cardoso',
     'buildIceServers should include STUN + optional TURN entries'
   );
   console.log('  ✅ PASS: Live Call WebRTC config & STUN/TURN ICE server builder');
@@ -116,9 +116,9 @@ async function runLiveCallTests(): Promise<void> {
   const welcomeB = await peerB.nextMsg((m) => m.type === 'welcome');
   assert(
     typeof welcomeA.peerId === 'string' &&
-      typeof welcomeB.peerId === 'string' &&
-      welcomeA.peerId !== welcomeB.peerId &&
-      peerHandle.getStats().onlineCount === 2,
+    typeof welcomeB.peerId === 'string' &&
+    welcomeA.peerId !== welcomeB.peerId &&
+    peerHandle.getStats().onlineCount === 2,
     'Peer signaling hub should assign unique IDs and track onlineCount=2'
   );
 
@@ -134,13 +134,13 @@ async function runLiveCallTests(): Promise<void> {
   ]);
   assert(
     foundA.roomId === foundB.roomId &&
-      foundA.initiator === true &&
-      foundB.initiator === false &&
-      foundB.partner.name === 'Cali' &&
-      foundB.partner.camOn === false &&
-      foundA.partner.name === 'Amina' &&
-      foundA.partner.camOn === true &&
-      peerHandle.getStats().activeCalls === 1,
+    foundA.initiator === true &&
+    foundB.initiator === false &&
+    foundB.partner.name === 'Cali' &&
+    foundB.partner.camOn === false &&
+    foundA.partner.name === 'Amina' &&
+    foundA.partner.camOn === true &&
+    peerHandle.getStats().activeCalls === 1,
     'Random match should pair Cali (Cam Off) and Amina (Cam On) with initiator handshake'
   );
 
@@ -217,10 +217,10 @@ async function runLiveCallTests(): Promise<void> {
   ]);
   assert(
     privC.mode === 'private' &&
-      privD.mode === 'private' &&
-      privC.roomCode === createdRoom.roomCode &&
-      privC.partner.name === 'Hodan' &&
-      privC.partner.camOn === false,
+    privD.mode === 'private' &&
+    privC.roomCode === createdRoom.roomCode &&
+    privC.partner.name === 'Hodan' &&
+    privC.partner.camOn === false,
     'room.join should pair private room friends with Camera-Off status preserved'
   );
 
@@ -304,9 +304,9 @@ async function runLiveCallTests(): Promise<void> {
     const statsRes = await invoke('GET', '/api/live-call/peer/stats');
     assert(
       statsRes.status === 200 &&
-        statsRes.json().status === 'ok' &&
-        statsRes.json().wsPath === '/ws/live-peer' &&
-        Array.isArray(statsRes.json().iceServers),
+      statsRes.json().status === 'ok' &&
+      statsRes.json().wsPath === '/ws/live-peer' &&
+      Array.isArray(statsRes.json().iceServers),
       'GET /api/live-call/peer/stats should return live presence stats and ICE servers'
     );
 
@@ -314,23 +314,29 @@ async function runLiveCallTests(): Promise<void> {
     assert(standaloneRes.status === 200, 'GET /live-call should return 200');
     assert(
       standaloneRes.text.includes('id="lcModeRandomBtn"') &&
-        standaloneRes.text.includes('id="lcModePrivateBtn"') &&
-        standaloneRes.text.includes('id="lcOnlineBadge"') &&
-        standaloneRes.text.includes('id="lcRemoteVideo"') &&
-        standaloneRes.text.includes('id="lcLocalVideo"') &&
-        standaloneRes.text.includes('id="lcMatchBtn"') &&
-        standaloneRes.text.includes('id="lcNextBtn"') &&
-        standaloneRes.text.includes('id="lcCamBtn"') &&
-        standaloneRes.text.includes('id="lcMicBtn"') &&
-        standaloneRes.text.includes('id="lcPrivacyBox"') &&
-        standaloneRes.text.includes('id="lcRoomCodeInput"') &&
-        standaloneRes.text.includes('/ws/live-peer') &&
-        standaloneRes.text.includes('nextMatch') &&
-        standaloneRes.text.includes('toggleCamera') &&
-        !standaloneRes.text.includes('Omegle') &&
-        !standaloneRes.text.includes('Jooji Raadinta') &&
-        !standaloneRes.text.includes('lcSidecarUrlInput'),
-      '/live-call should render pure CARDOSO Live UI with Next button, Camera On/Off, and zero Omegle/GPU clutter'
+      standaloneRes.text.includes('id="lcModePrivateBtn"') &&
+      standaloneRes.text.includes('id="lcOnlineBadge"') &&
+      standaloneRes.text.includes('id="lcRemoteVideo"') &&
+      standaloneRes.text.includes('id="lcLocalVideo"') &&
+      standaloneRes.text.includes('id="lcMatchBtn"') &&
+      standaloneRes.text.includes('id="lcNextBtn"') &&
+      standaloneRes.text.includes('id="lcCamBtn"') &&
+      standaloneRes.text.includes('id="lcMicBtn"') &&
+      standaloneRes.text.includes('id="lcPrivacyBox"') &&
+      standaloneRes.text.includes('id="lcRoomCodeInput"') &&
+      standaloneRes.text.includes('id="lcAudioUnlockBtn"') &&
+      standaloneRes.text.includes('id="lcChatDrawerBtn"') &&
+      standaloneRes.text.includes('enqueueServerMessage') &&
+      standaloneRes.text.includes('unlockRemoteMedia') &&
+      standaloneRes.text.includes('triggerIceRestart') &&
+      standaloneRes.text.includes('toggleMobileDrawer') &&
+      standaloneRes.text.includes('/ws/live-peer') &&
+      standaloneRes.text.includes('nextMatch') &&
+      standaloneRes.text.includes('toggleCamera') &&
+      !standaloneRes.text.includes('Omegle') &&
+      !standaloneRes.text.includes('Jooji Raadinta') &&
+      !standaloneRes.text.includes('lcSidecarUrlInput'),
+      '/live-call should render mobile-first responsive CARDOSO Live UI with serialized WebRTC, audio unlock, Next button, Camera On/Off, and zero clutter'
     );
     const liveCallScripts = [...standaloneRes.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
     assert(liveCallScripts.length > 0, '/live-call should contain inline JS controller');
@@ -342,15 +348,15 @@ async function runLiveCallTests(): Promise<void> {
     assert(appPageRes.status === 200, 'GET /app should return 200');
     assert(
       appPageRes.text.includes('id="pane-call"') &&
-        appPageRes.text.includes("switchAppTab('call')") &&
-        appPageRes.text.includes('id="lcModeRandomBtn"') &&
-        appPageRes.text.includes('id="lcPrivacyBox"') &&
-        appPageRes.text.includes('Barashada Coding') &&
-        appPageRes.text.includes('Jadwal Waxbarasho') &&
-        appPageRes.text.includes('Samee Sawir AI') &&
-        appPageRes.text.includes('pane-views') &&
-        appPageRes.text.includes('pane-tools') &&
-        appPageRes.text.includes('pane-settings'),
+      appPageRes.text.includes("switchAppTab('call')") &&
+      appPageRes.text.includes('id="lcModeRandomBtn"') &&
+      appPageRes.text.includes('id="lcPrivacyBox"') &&
+      appPageRes.text.includes('Barashada Coding') &&
+      appPageRes.text.includes('Jadwal Waxbarasho') &&
+      appPageRes.text.includes('Samee Sawir AI') &&
+      appPageRes.text.includes('pane-views') &&
+      appPageRes.text.includes('pane-tools') &&
+      appPageRes.text.includes('pane-settings'),
       '/app should embed CARDOSO Live tab while preserving ALL existing CARDOSO features'
     );
     const appScripts = [...appPageRes.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)];

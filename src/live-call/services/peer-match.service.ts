@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import http from 'http';
 import { URL } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { buildIceServers, getLiveCallConfig, LiveCallConfig } from '../live-call.config.js';
+import { buildIceServers, getLiveCallConfig, LiveCallConfig, resolveDynamicIceServers } from '../live-call.config.js';
 import { IceServerEntry, LivePeerStats, PeerMatchLanguage } from '../live-call.types.js';
 
 export type { LivePeerStats, PeerMatchLanguage };
@@ -91,7 +91,7 @@ function buildPeerIceServers(cfg: LiveCallConfig): IceServerEntry[] {
     'stun:stun.l.google.com:19302',
     'stun:stun1.l.google.com:19302',
     'stun:stun2.l.google.com:19302',
-    'stun:stun3.l.google.com:19302',
+    'stun:stun.cloudflare.com:3478',
   ].filter((u) => !existingUrls.has(u));
 
   if (extraStuns.length > 0) {
@@ -362,6 +362,13 @@ export function attachLivePeerWebSocket(
       iceServers,
       stats: getStats(),
     });
+    if (cfg.webrtc.meteredDomain && cfg.webrtc.meteredApiKey) {
+      void resolveDynamicIceServers(cfg).then((dynamicIce) => {
+        if (dynamicIce.length > iceServers.length && ws.readyState === WebSocket.OPEN) {
+          sendJson(ws, { type: 'ice.update', iceServers: dynamicIce });
+        }
+      });
+    }
     broadcastPresence();
 
     ws.on('pong', () => {

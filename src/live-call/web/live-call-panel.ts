@@ -10,64 +10,71 @@ function escapeAttr(str: string): string {
 }
 
 /**
- * Modular CSS for CARDOSO Live — Real-Time 2-Person Human Video & Voice Call
- * (Random Match + Private Room Links + Instant Camera On/Off).
- * Inherits CARDOSO AI's dark navy/cyan glassmorphism styling across Desktop & Android.
+ * Modular CSS for CARDOSO Live — Real-Time 2-Person Human Video & Voice Call.
+ * Mobile-first flex architecture guarantees Controls Dock & Video Stage ALWAYS fit
+ * cleanly inside any viewport (320px Android/iOS phones up to 4K desktops) with zero overlap.
  */
 export function renderLiveCallPanelCSS(): string {
   return `
-    /* ─── CARDOSO Live — Random Match & Private Room Video Call ─── */
+    /* ─── CARDOSO Live — Responsive P2P Video & Voice Call ─── */
     .lc-shell {
+      position: relative;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 335px;
-      gap: 0.85rem;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 0.75rem;
       flex: 1;
+      width: 100%;
+      height: 100%;
       min-height: 0;
-      padding: 0.8rem;
+      padding: 0.7rem;
       overflow: hidden;
     }
 
     .lc-stage-col {
       display: flex;
       flex-direction: column;
-      gap: 0.65rem;
+      gap: 0.55rem;
       min-height: 0;
       min-width: 0;
+      height: 100%;
+      overflow: hidden;
     }
 
     /* Top Mode & Live Online Counter Bar */
     .lc-mode-bar {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      padding: 0.45rem 0.65rem;
+      gap: 0.45rem;
+      padding: 0.4rem 0.58rem;
       border-radius: 14px;
-      background: rgba(12, 19, 36, 0.92);
+      background: rgba(12, 19, 36, 0.94);
       border: 1px solid rgba(56, 189, 248, 0.22);
+      min-width: 0;
     }
     .lc-mode-tabs {
       display: inline-flex;
-      gap: 0.35rem;
-      background: rgba(7, 11, 20, 0.86);
-      padding: 0.22rem;
-      border-radius: 11px;
+      gap: 0.28rem;
+      background: rgba(7, 11, 20, 0.88);
+      padding: 0.2rem;
+      border-radius: 10px;
       border: 1px solid rgba(148, 163, 184, 0.16);
+      min-width: 0;
     }
     .lc-mode-tab {
       border: none;
       background: transparent;
       color: #94a3b8;
-      font-size: 0.78rem;
+      font-size: 0.76rem;
       font-weight: 800;
-      padding: 0.42rem 0.85rem;
-      border-radius: 9px;
+      padding: 0.38rem 0.78rem;
+      border-radius: 8px;
       cursor: pointer;
       transition: all 0.16s ease;
       display: inline-flex;
       align-items: center;
-      gap: 0.38rem;
+      gap: 0.32rem;
       white-space: nowrap;
     }
     .lc-mode-tab:hover { color: #e2e8f0; }
@@ -84,66 +91,61 @@ export function renderLiveCallPanelCSS(): string {
     .lc-presence-row {
       display: flex;
       align-items: center;
-      gap: 0.42rem;
-      flex-wrap: wrap;
+      gap: 0.35rem;
+      flex-shrink: 0;
     }
     .lc-badge {
       display: inline-flex;
       align-items: center;
-      gap: 0.38rem;
-      padding: 0.3rem 0.68rem;
+      gap: 0.34rem;
+      padding: 0.28rem 0.6rem;
       border-radius: 999px;
-      font-size: 0.73rem;
+      font-size: 0.72rem;
       font-weight: 700;
-      background: rgba(7, 11, 20, 0.82);
-      backdrop-filter: blur(10px);
+      background: rgba(7, 11, 20, 0.85);
       border: 1px solid rgba(148, 163, 184, 0.22);
       color: #e2e8f0;
       text-decoration: none;
+      white-space: nowrap;
     }
     .lc-badge.live {
       border-color: rgba(16, 185, 129, 0.55);
       color: #6ee7b7;
     }
-    .lc-badge.waiting {
-      border-color: rgba(245, 158, 11, 0.55);
-      color: #fcd34d;
-    }
     .lc-dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       background: #94a3b8;
       flex-shrink: 0;
     }
-    .lc-dot.live { background: #10b981; box-shadow: 0 0 10px #10b981; animation: lcPulse 1.4s infinite; }
-    .lc-dot.waiting { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; animation: lcPulse 1.1s infinite; }
+    .lc-dot.live { background: #10b981; box-shadow: 0 0 9px #10b981; animation: lcPulse 1.4s infinite; }
     @keyframes lcPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.65; } }
 
-    /* 50/50 Split-Screen Two-Person Live Video Stage (Desktop Side-by-Side / Mobile Stacked) */
+    /* Desktop: 50/50 Side-by-Side Split-Screen Video Stage */
     .lc-video-stage {
       position: relative;
       flex: 1;
-      min-height: 320px;
-      border-radius: 20px;
+      min-height: 0;
+      border-radius: 18px;
       overflow: hidden;
       background:
-        radial-gradient(circle at 50% 25%, rgba(6, 182, 212, 0.16), rgba(7, 11, 20, 0.98) 72%),
+        radial-gradient(circle at 50% 25%, rgba(6, 182, 212, 0.14), rgba(7, 11, 20, 0.98) 72%),
         #070b14;
       border: 1px solid rgba(56, 189, 248, 0.24);
-      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 0.6rem;
-      padding: 0.65rem;
+      gap: 0.55rem;
+      padding: 0.55rem;
     }
 
     .lc-peer-tile {
       position: relative;
       width: 100%;
       height: 100%;
-      min-height: 230px;
-      border-radius: 16px;
+      min-height: 0;
+      border-radius: 14px;
       overflow: hidden;
       background: radial-gradient(circle at 50% 35%, rgba(15, 23, 42, 0.96), #050912);
       border: 2px solid rgba(148, 163, 184, 0.22);
@@ -154,12 +156,13 @@ export function renderLiveCallPanelCSS(): string {
     }
     .lc-peer-tile.connected {
       border-color: rgba(16, 185, 129, 0.72);
-      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.28), 0 0 26px rgba(16, 185, 129, 0.18);
+      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.28), 0 0 24px rgba(16, 185, 129, 0.18);
     }
     .lc-peer-tile.self-tile.cam-on {
       border-color: rgba(56, 189, 248, 0.55);
     }
 
+    /* IMPORTANT: Never use display:none on WebRTC <video> so Android/iOS always decode frames immediately! */
     .lc-stream-video {
       position: absolute;
       inset: 0;
@@ -167,39 +170,54 @@ export function renderLiveCallPanelCSS(): string {
       height: 100%;
       object-fit: cover;
       background: #050912;
-      display: none;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
       z-index: 2;
     }
-    .lc-stream-video.active { display: block; }
+    .lc-stream-video.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
     .lc-stream-video.mirrored { transform: scaleX(-1); }
 
-    /* Sleek Center Overlay for Idle, Searching Radar, Room Waiting, or Camera-Off Audio Mode */
+    /* Off-pixel remote audio element (NOT display:none so Safari/Android WebView never block playback!) */
+    .lc-hidden-audio {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Center State Overlay */
     .lc-tile-overlay {
       position: relative;
-      z-index: 3;
+      z-index: 4;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
-      gap: 0.55rem;
-      padding: 1.15rem;
-      max-width: 310px;
+      gap: 0.45rem;
+      padding: 2.3rem 0.9rem 2.4rem;
+      max-width: 300px;
       color: #e2e8f0;
     }
     .lc-tile-overlay.hidden { display: none; }
 
     .lc-avatar-orb {
-      width: 78px;
-      height: 78px;
+      width: 66px;
+      height: 66px;
       border-radius: 50%;
       background: linear-gradient(135deg, rgba(6, 182, 212, 0.22), rgba(16, 185, 129, 0.22));
       border: 2px solid rgba(56, 189, 248, 0.5);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 2rem;
-      box-shadow: 0 0 28px rgba(6, 182, 212, 0.22);
+      font-size: 1.75rem;
+      flex-shrink: 0;
+      box-shadow: 0 0 24px rgba(6, 182, 212, 0.2);
     }
     .lc-avatar-orb.radar {
       border-color: #22d3ee;
@@ -212,128 +230,151 @@ export function renderLiveCallPanelCSS(): string {
     }
     @keyframes lcRadar {
       0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55); }
-      70% { box-shadow: 0 0 0 20px rgba(34, 211, 238, 0); }
+      70% { box-shadow: 0 0 0 18px rgba(34, 211, 238, 0); }
       100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
     }
 
-    .lc-ov-title { font-size: 0.96rem; font-weight: 800; color: #f8fafc; line-height: 1.3; }
-    .lc-ov-sub { font-size: 0.78rem; color: #94a3b8; line-height: 1.45; }
+    .lc-ov-title { font-size: 0.92rem; font-weight: 800; color: #f8fafc; line-height: 1.28; }
+    .lc-ov-sub { font-size: 0.76rem; color: #94a3b8; line-height: 1.4; }
     .lc-ov-actions {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
-      gap: 0.45rem;
-      margin-top: 0.2rem;
+      gap: 0.4rem;
+      margin-top: 0.15rem;
     }
     .lc-room-code-big {
       font-family: monospace;
-      font-size: 1.2rem;
+      font-size: 1.12rem;
       font-weight: 900;
-      letter-spacing: 0.1em;
-      padding: 0.42rem 0.95rem;
+      letter-spacing: 0.08em;
+      padding: 0.36rem 0.85rem;
       border-radius: 10px;
-      background: rgba(15, 23, 42, 0.92);
+      background: rgba(15, 23, 42, 0.94);
       border: 1px dashed rgba(56, 189, 248, 0.65);
       color: #67e8f9;
     }
 
-    /* Corner Name / Status / Block Badges inside each Video Tile */
+    /* Prominent 1-Tap Audio Unlock Pill if Mobile Browser Blocks Autoplay */
+    .lc-audio-unlock {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 9;
+      display: none;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.65rem 1.1rem;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.85);
+      background: rgba(6, 78, 59, 0.94);
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+      white-space: nowrap;
+    }
+    .lc-audio-unlock.show { display: inline-flex; }
+
+    /* Corner Badges inside Video Tiles */
     .lc-tile-top {
       position: absolute;
-      top: 0.55rem;
-      left: 0.55rem;
-      right: 0.55rem;
+      top: 0.48rem;
+      left: 0.48rem;
+      right: 0.48rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.4rem;
-      z-index: 5;
+      gap: 0.35rem;
+      z-index: 6;
       pointer-events: none;
     }
     .lc-tile-bottom {
       position: absolute;
-      bottom: 0.55rem;
-      left: 0.55rem;
-      right: 0.55rem;
+      bottom: 0.48rem;
+      left: 0.48rem;
+      right: 0.48rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.4rem;
-      z-index: 5;
+      gap: 0.35rem;
+      z-index: 6;
       pointer-events: none;
     }
     .lc-tile-pill {
       display: inline-flex;
       align-items: center;
-      gap: 0.35rem;
-      padding: 0.25rem 0.62rem;
+      gap: 0.3rem;
+      padding: 0.22rem 0.56rem;
       border-radius: 999px;
       background: rgba(5, 9, 18, 0.78);
       backdrop-filter: blur(8px);
       border: 1px solid rgba(148, 163, 184, 0.26);
       color: #f8fafc;
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       font-weight: 800;
+      max-width: 72%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .lc-tile-pill.cam-off {
-      border-color: rgba(245, 158, 11, 0.55);
-      color: #fde68a;
-    }
-    .lc-tile-pill.muted {
-      border-color: rgba(239, 68, 68, 0.55);
-      color: #fca5a5;
-    }
-    .lc-tile-pill.ok {
-      border-color: rgba(16, 185, 129, 0.55);
-      color: #6ee7b7;
-    }
+    .lc-tile-pill.cam-off { border-color: rgba(245, 158, 11, 0.55); color: #fde68a; }
+    .lc-tile-pill.muted { border-color: rgba(239, 68, 68, 0.55); color: #fca5a5; }
+    .lc-tile-pill.ok { border-color: rgba(16, 185, 129, 0.55); color: #6ee7b7; }
     .lc-block-btn {
       pointer-events: auto;
       border: 1px solid rgba(239, 68, 68, 0.45);
-      background: rgba(127, 29, 29, 0.72);
+      background: rgba(127, 29, 29, 0.76);
       color: #fecaca;
       border-radius: 999px;
-      padding: 0.22rem 0.58rem;
-      font-size: 0.69rem;
+      padding: 0.2rem 0.52rem;
+      font-size: 0.68rem;
       font-weight: 700;
       cursor: pointer;
     }
-    .lc-block-btn:hover { background: rgba(220, 38, 38, 0.85); color: #fff; }
+    .lc-block-btn:hover { background: rgba(220, 38, 38, 0.88); color: #fff; }
 
-    /* Call Controls Dock */
+    /* Pinned Bottom Call Controls Dock (ALWAYS VISIBLE on Every Screen!) */
     .lc-controls-dock {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      padding: 0.62rem 0.78rem;
+      flex-wrap: nowrap;
+      gap: 0.45rem;
+      padding: 0.5rem 0.65rem;
       border-radius: 16px;
-      background: rgba(12, 19, 36, 0.92);
-      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(12, 19, 36, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      z-index: 15;
     }
 
     .lc-ctrl-btn {
-      min-width: 46px;
-      height: 46px;
-      padding: 0 0.9rem;
+      position: relative;
+      min-width: 44px;
+      height: 44px;
+      padding: 0 0.85rem;
       border-radius: 999px;
       border: 1px solid rgba(148, 163, 184, 0.24);
-      background: rgba(30, 41, 59, 0.85);
+      background: rgba(30, 41, 59, 0.86);
       color: #f8fafc;
-      font-size: 0.83rem;
+      font-size: 0.82rem;
       font-weight: 700;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.4rem;
-      transition: all 0.16s ease;
+      gap: 0.36rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
     }
     .lc-ctrl-btn:hover { background: rgba(51, 65, 85, 0.95); transform: translateY(-1px); }
     .lc-ctrl-btn.off {
-      background: rgba(239, 68, 68, 0.2);
-      border-color: rgba(239, 68, 68, 0.5);
+      background: rgba(239, 68, 68, 0.22);
+      border-color: rgba(239, 68, 68, 0.55);
       color: #fca5a5;
     }
     .lc-ctrl-btn.active {
@@ -345,34 +386,63 @@ export function renderLiveCallPanelCSS(): string {
       background: linear-gradient(135deg, #10b981, #059669);
       border-color: transparent;
       color: #fff;
-      padding: 0 1.3rem;
-      box-shadow: 0 6px 20px rgba(16, 185, 129, 0.32);
+      padding: 0 1.2rem;
+      box-shadow: 0 5px 18px rgba(16, 185, 129, 0.34);
     }
     .lc-ctrl-btn.call-next {
       background: linear-gradient(135deg, #06b6d4, #2563eb);
       border-color: transparent;
       color: #fff;
-      padding: 0 1.25rem;
-      box-shadow: 0 6px 20px rgba(6, 182, 212, 0.34);
+      padding: 0 1.15rem;
+      box-shadow: 0 5px 18px rgba(6, 182, 212, 0.34);
     }
     .lc-ctrl-btn.call-end {
       background: linear-gradient(135deg, #ef4444, #dc2626);
       border-color: transparent;
       color: #fff;
-      padding: 0 1.15rem;
-      box-shadow: 0 6px 18px rgba(239, 68, 68, 0.3);
+      padding: 0 1rem;
+      box-shadow: 0 5px 16px rgba(239, 68, 68, 0.3);
     }
+    .lc-mobile-chat-btn { display: none; }
+    .lc-unread-dot {
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      min-width: 17px;
+      height: 17px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: #10b981;
+      color: #fff;
+      font-size: 0.64rem;
+      font-weight: 900;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 0 2px #0c1324;
+    }
+    .lc-unread-dot.show { display: inline-flex; }
 
     /* Right Panel: Profile, Camera-Off Privacy Switch, Private Room & Live Text Chat */
+    .lc-drawer-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 15, 0.68);
+      backdrop-filter: blur(4px);
+      z-index: 110;
+    }
+    .lc-drawer-backdrop.open { display: block; }
+
     .lc-side-panel {
       display: flex;
       flex-direction: column;
-      gap: 0.65rem;
+      gap: 0.6rem;
       min-height: 0;
-      background: rgba(12, 19, 36, 0.92);
+      background: rgba(12, 19, 36, 0.94);
       border: 1px solid rgba(148, 163, 184, 0.16);
       border-radius: 18px;
-      padding: 0.85rem;
+      padding: 0.8rem;
       overflow: hidden;
     }
     .lc-side-head {
@@ -380,20 +450,23 @@ export function renderLiveCallPanelCSS(): string {
       align-items: center;
       justify-content: space-between;
       gap: 0.5rem;
+      flex-shrink: 0;
     }
-    .lc-side-head h3 { font-size: 0.88rem; font-weight: 800; color: #f8fafc; }
+    .lc-side-head h3 { font-size: 0.86rem; font-weight: 800; color: #f8fafc; }
+    .lc-drawer-close { display: none; }
 
     .lc-field-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.45rem;
+      gap: 0.42rem;
+      flex-shrink: 0;
     }
     .lc-input, .lc-select {
       width: 100%;
-      padding: 0.5rem 0.65rem;
+      padding: 0.48rem 0.62rem;
       border-radius: 10px;
       border: 1px solid rgba(148, 163, 184, 0.24);
-      background: rgba(7, 11, 20, 0.9);
+      background: rgba(7, 11, 20, 0.92);
       color: #f8fafc;
       font-size: 0.79rem;
       font-weight: 600;
@@ -401,29 +474,30 @@ export function renderLiveCallPanelCSS(): string {
     }
     .lc-input:focus, .lc-select:focus { border-color: #06b6d4; }
 
-    /* Camera Privacy Card (Explicit Camera-Off / Audio-Only Toggle!) */
+    /* Camera Privacy Card (Explicit Camera-Off / Audio-Only Toggle) */
     .lc-privacy-box {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.55rem;
-      padding: 0.55rem 0.72rem;
+      gap: 0.5rem;
+      padding: 0.5rem 0.68rem;
       border-radius: 12px;
-      background: rgba(7, 11, 20, 0.82);
+      background: rgba(7, 11, 20, 0.84);
       border: 1px solid rgba(56, 189, 248, 0.22);
       cursor: pointer;
     }
     .lc-privacy-box.cam-off {
-      border-color: rgba(245, 158, 11, 0.5);
+      border-color: rgba(245, 158, 11, 0.55);
       background: rgba(245, 158, 11, 0.08);
     }
-    .lc-privacy-info { display: flex; flex-direction: column; gap: 0.12rem; }
-    .lc-privacy-title { font-size: 0.77rem; font-weight: 800; color: #f8fafc; }
-    .lc-privacy-sub { font-size: 0.68rem; color: #94a3b8; }
+    .lc-privacy-info { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+    .lc-privacy-title { font-size: 0.76rem; font-weight: 800; color: #f8fafc; }
+    .lc-privacy-sub { font-size: 0.67rem; color: #94a3b8; }
     .lc-switch-pill {
-      padding: 0.24rem 0.62rem;
+      padding: 0.22rem 0.58rem;
       border-radius: 999px;
-      font-size: 0.69rem;
+      font-size: 0.68rem;
       font-weight: 800;
       background: rgba(16, 185, 129, 0.2);
       color: #6ee7b7;
@@ -438,20 +512,21 @@ export function renderLiveCallPanelCSS(): string {
 
     /* Private Room Panel */
     .lc-room-box {
+      flex-shrink: 0;
       display: none;
       flex-direction: column;
-      gap: 0.48rem;
-      padding: 0.65rem;
+      gap: 0.45rem;
+      padding: 0.6rem;
       border-radius: 12px;
-      background: rgba(7, 11, 20, 0.86);
-      border: 1px solid rgba(139, 92, 246, 0.32);
+      background: rgba(7, 11, 20, 0.88);
+      border: 1px solid rgba(139, 92, 246, 0.34);
     }
     .lc-room-box.show { display: flex; }
-    .lc-room-row { display: flex; gap: 0.38rem; }
+    .lc-room-row { display: flex; gap: 0.36rem; }
     .lc-room-share {
       display: none;
       flex-direction: column;
-      gap: 0.38rem;
+      gap: 0.36rem;
       padding-top: 0.35rem;
       border-top: 1px solid rgba(148, 163, 184, 0.15);
     }
@@ -460,18 +535,19 @@ export function renderLiveCallPanelCSS(): string {
     /* Live Text Chat List */
     .lc-transcript-list {
       flex: 1;
-      min-height: 120px;
+      min-height: 90px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 0.48rem;
+      gap: 0.45rem;
       padding-right: 0.2rem;
+      -webkit-overflow-scrolling: touch;
     }
     .lc-turn {
-      padding: 0.52rem 0.72rem;
+      padding: 0.5rem 0.7rem;
       border-radius: 12px;
-      font-size: 0.8rem;
-      line-height: 1.42;
+      font-size: 0.79rem;
+      line-height: 1.4;
       word-break: break-word;
     }
     .lc-turn.user {
@@ -490,22 +566,22 @@ export function renderLiveCallPanelCSS(): string {
       background: rgba(15, 23, 42, 0.85);
       border: 1px solid rgba(148, 163, 184, 0.18);
       color: #cbd5e1;
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       align-self: stretch;
       text-align: center;
     }
     .lc-turn-meta {
-      font-size: 0.67rem;
+      font-size: 0.66rem;
       color: #94a3b8;
-      margin-bottom: 0.16rem;
+      margin-bottom: 0.14rem;
       font-weight: 700;
     }
 
-    .lc-text-bar { display: flex; gap: 0.38rem; }
+    .lc-text-bar { display: flex; gap: 0.36rem; flex-shrink: 0; }
     .lc-text-bar input {
       flex: 1;
       min-width: 0;
-      padding: 0.54rem 0.72rem;
+      padding: 0.52rem 0.7rem;
       border-radius: 10px;
       border: 1px solid rgba(148, 163, 184, 0.24);
       background: rgba(7, 11, 20, 0.92);
@@ -517,11 +593,11 @@ export function renderLiveCallPanelCSS(): string {
 
     .lc-mini-btn {
       border: 1px solid rgba(148, 163, 184, 0.28);
-      background: rgba(15, 23, 42, 0.9);
+      background: rgba(15, 23, 42, 0.92);
       color: #f8fafc;
       border-radius: 9px;
-      padding: 0.38rem 0.72rem;
-      font-size: 0.74rem;
+      padding: 0.4rem 0.74rem;
+      font-size: 0.75rem;
       font-weight: 700;
       cursor: pointer;
       display: inline-flex;
@@ -529,10 +605,16 @@ export function renderLiveCallPanelCSS(): string {
       justify-content: center;
       gap: 0.3rem;
       text-decoration: none;
+      white-space: nowrap;
     }
     .lc-mini-btn:hover { border-color: #22d3ee; background: rgba(30, 41, 59, 0.95); }
     .lc-mini-btn.primary {
       background: linear-gradient(135deg, #10b981, #059669);
+      border-color: transparent;
+      color: #fff;
+    }
+    .lc-mini-btn.next-btn {
+      background: linear-gradient(135deg, #06b6d4, #2563eb);
       border-color: transparent;
       color: #fff;
     }
@@ -542,38 +624,173 @@ export function renderLiveCallPanelCSS(): string {
       color: #fff;
     }
 
-    /* Android & Mobile Responsive Stacked Layout */
+    /* ─── MOBILE & SMALL SCREEN LAYOUT (<= 900px): 100% Viewport Fit, Zero Clipped Buttons! ─── */
     @media (max-width: 900px) {
       .lc-shell {
-        grid-template-columns: 1fr;
-        grid-template-rows: minmax(0, 1fr) auto;
-        padding: 0.45rem;
-        gap: 0.5rem;
-        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        padding: 0.38rem;
+        gap: 0;
+        overflow: hidden;
       }
+      .lc-stage-col {
+        flex: 1;
+        min-height: 0;
+        gap: 0.4rem;
+      }
+      .lc-mode-bar {
+        padding: 0.3rem 0.42rem;
+        border-radius: 12px;
+        gap: 0.3rem;
+      }
+      .lc-mode-tab {
+        font-size: 0.72rem;
+        padding: 0.34rem 0.56rem;
+      }
+      .lc-mode-tab .lc-tab-long { display: none; }
+      .lc-badge {
+        padding: 0.24rem 0.5rem;
+        font-size: 0.69rem;
+      }
+      .lc-full-link { display: none; }
+
+      /* Mobile FaceTime Video Stage: Partner fills 100%, Your Camera floats cleanly in Corner PiP! */
       .lc-video-stage {
-        grid-template-columns: 1fr;
-        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-        min-height: 410px;
-        max-height: 60dvh;
-        gap: 0.45rem;
-        padding: 0.45rem;
+        display: block;
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        padding: 0;
+        border-radius: 16px;
       }
-      .lc-peer-tile { min-height: 185px; }
-      .lc-mode-bar { padding: 0.36rem 0.48rem; }
-      .lc-mode-tab { font-size: 0.73rem; padding: 0.36rem 0.65rem; }
-      .lc-ctrl-btn { min-width: 44px; height: 44px; padding: 0 0.74rem; font-size: 0.78rem; }
+      .lc-peer-tile.partner-tile {
+        width: 100%;
+        height: 100%;
+        border-radius: 15px;
+      }
+      .lc-peer-tile.self-tile {
+        position: absolute;
+        bottom: 0.55rem;
+        right: 0.55rem;
+        width: 92px;
+        height: 124px;
+        border-radius: 13px;
+        z-index: 8;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.72);
+        border-width: 2px;
+        cursor: pointer;
+      }
+      /* Keep Corner PiP ultra-clean on small screens — hide verbose text inside 92px box */
+      .lc-peer-tile.self-tile .lc-tile-top,
+      .lc-peer-tile.self-tile .lc-tile-bottom,
+      .lc-peer-tile.self-tile .lc-ov-sub,
+      .lc-peer-tile.self-tile .lc-ov-actions {
+        display: none !important;
+      }
+      .lc-peer-tile.self-tile .lc-tile-overlay {
+        padding: 0.35rem;
+        gap: 0.25rem;
+      }
+      .lc-peer-tile.self-tile .lc-avatar-orb {
+        width: 36px;
+        height: 36px;
+        font-size: 1.05rem;
+      }
+      .lc-peer-tile.self-tile .lc-ov-title {
+        font-size: 0.63rem;
+        line-height: 1.2;
+      }
+
+      /* Compact partner overlay so nothing ever collides on small phones (320px-430px) */
+      .lc-peer-tile.partner-tile .lc-tile-overlay {
+        padding: 2.2rem 0.85rem 2.2rem;
+        gap: 0.4rem;
+        max-width: 270px;
+      }
+      .lc-peer-tile.partner-tile .lc-avatar-orb {
+        width: 54px;
+        height: 54px;
+        font-size: 1.5rem;
+      }
+      .lc-peer-tile.partner-tile .lc-ov-title { font-size: 0.88rem; }
+      .lc-peer-tile.partner-tile .lc-ov-sub { font-size: 0.73rem; }
+      .lc-peer-tile.partner-tile .lc-tile-bottom {
+        right: 106px; /* Never overlap with bottom-right self PiP! */
+      }
+
+      /* Always-Visible Compact Single-Row Controls Dock */
+      .lc-controls-dock {
+        justify-content: space-between;
+        gap: 0.28rem;
+        padding: 0.38rem 0.44rem;
+        border-radius: 14px;
+      }
+      .lc-ctrl-btn {
+        min-width: 40px;
+        height: 40px;
+        padding: 0 0.58rem;
+        font-size: 0.92rem;
+      }
       .lc-ctrl-btn .lc-lbl { display: none; }
+      .lc-ctrl-btn.call-start,
+      .lc-ctrl-btn.call-next {
+        padding: 0 0.92rem;
+        font-size: 0.78rem;
+        flex: 1;
+        max-width: 150px;
+      }
       .lc-ctrl-btn.call-start .lc-lbl,
-      .lc-ctrl-btn.call-next .lc-lbl,
-      .lc-ctrl-btn.call-end .lc-lbl { display: inline; }
-      .lc-side-panel { max-height: 360px; }
+      .lc-ctrl-btn.call-next .lc-lbl { display: inline; }
+      .lc-ctrl-btn.call-end {
+        padding: 0 0.68rem;
+      }
+      .lc-mobile-chat-btn { display: inline-flex; }
+      #lcFlipBtn { display: none; }
+
+      /* Slide-Up Mobile Drawer for Chat, Name, Camera Privacy & Private Room */
+      .lc-side-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 74dvh;
+        max-height: 560px;
+        z-index: 120;
+        border-radius: 20px 20px 0 0;
+        border-bottom: none;
+        box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.72);
+        transform: translateY(105%);
+        transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: none;
+      }
+      .lc-side-panel.drawer-open {
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+      .lc-drawer-close {
+        display: inline-flex;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(30, 41, 59, 0.9);
+        color: #f8fafc;
+        border-radius: 8px;
+        padding: 0.24rem 0.6rem;
+        font-size: 0.73rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    }
+
+    @media (max-width: 370px) {
+      .lc-ctrl-btn { min-width: 36px; height: 38px; padding: 0 0.45rem; font-size: 0.86rem; }
+      .lc-ctrl-btn.call-start, .lc-ctrl-btn.call-next { padding: 0 0.7rem; font-size: 0.74rem; }
+      .lc-peer-tile.self-tile { width: 82px; height: 110px; }
+      .lc-peer-tile.partner-tile .lc-tile-bottom { right: 94px; }
     }
   `;
 }
 
 /**
- * Modular HTML markup for CARDOSO Live — Random Match + Private Room Video Call.
+ * Modular HTML markup for CARDOSO Live — Random Match + Private Room Video & Voice Call.
  */
 export function renderLiveCallPanelHTML(): string {
   return `
@@ -584,10 +801,10 @@ export function renderLiveCallPanelHTML(): string {
         <div class="lc-mode-bar">
           <div class="lc-mode-tabs" role="tablist">
             <button type="button" class="lc-mode-tab active" data-peer-mode="random" id="lcModeRandomBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.setPeerMode('random')">
-              🎲 Random Match
+              🎲 Random<span class="lc-tab-long"> Match</span>
             </button>
             <button type="button" class="lc-mode-tab" data-peer-mode="private" id="lcModePrivateBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.setPeerMode('private')">
-              🔗 Qol Gaar ah (Saaxiib)
+              🔗 Qol<span class="lc-tab-long"> Gaar ah</span>
             </button>
           </div>
           <div class="lc-presence-row">
@@ -596,16 +813,20 @@ export function renderLiveCallPanelHTML(): string {
               <span id="lcOnlineText">Online: 1</span>
             </span>
             <span class="lc-badge" id="lcTimerBadge" style="display:none;">00:00</span>
-            <a href="/live-call" class="lc-badge" title="Fur shaashad buuxda">⛶ Full</a>
+            <a href="/live-call" class="lc-badge lc-full-link" title="Fur shaashad buuxda">⛶ Full</a>
           </div>
         </div>
 
-        <!-- 50/50 Split-Screen Live Stage: Partner (Left/Top) + You (Right/Bottom) -->
+        <!-- Video Stage: 50/50 Split on Desktop | Full Partner + Floating Self PiP on Mobile -->
         <div class="lc-video-stage" id="lcVideoStage">
           <!-- TILE 1: REMOTE PARTNER -->
           <div class="lc-peer-tile partner-tile" id="lcPartnerTile">
-            <video id="lcRemoteVideo" class="lc-stream-video" autoplay playsinline></video>
-            <audio id="lcRemoteAudio" autoplay playsinline style="display:none;"></audio>
+            <video id="lcRemoteVideo" class="lc-stream-video" autoplay muted playsinline></video>
+            <audio id="lcRemoteAudio" class="lc-hidden-audio" autoplay playsinline></audio>
+
+            <button type="button" class="lc-audio-unlock" id="lcAudioUnlockBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.forceUnlockAudio()">
+              🔊 Guji si Codku u Furmo
+            </button>
 
             <div class="lc-tile-top">
               <span class="lc-tile-pill" id="lcPartnerStatusBadge">Diyaar</span>
@@ -614,8 +835,8 @@ export function renderLiveCallPanelHTML(): string {
 
             <div class="lc-tile-overlay" id="lcPartnerOverlay">
               <div class="lc-avatar-orb" id="lcPartnerOrb">🌍</div>
-              <div class="lc-ov-title" id="lcPartnerTitle">CARDOSO Live — Dadka Online-ka ah</div>
-              <div class="lc-ov-sub" id="lcPartnerSub">Guji <strong>Raadi Qof</strong> si aad si toos ah ula sheekaysato qof CARDOSO isticmaala — Video ama Cod Keliya (Kaamiro Xiran)!</div>
+              <div class="lc-ov-title" id="lcPartnerTitle">CARDOSO Live — Video &amp; Cod Toos ah</div>
+              <div class="lc-ov-sub" id="lcPartnerSub">Guji <strong>Raadi Qof</strong> si aad toos ula sheekaysato dadka online-ka ah — Video ama Cod Keliya!</div>
               <div class="lc-room-code-big" id="lcStageRoomCode" style="display:none;"></div>
               <div class="lc-ov-actions" id="lcPartnerActions">
                 <button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.findRandomMatch()">🔍 Raadi Qof Online ah</button>
@@ -624,12 +845,12 @@ export function renderLiveCallPanelHTML(): string {
 
             <div class="lc-tile-bottom">
               <span class="lc-tile-pill" id="lcPartnerNameTag">👤 Qofka Kula Hadlaya</span>
-              <span class="lc-tile-pill muted" id="lcPartnerMuteTag" style="display:none;">🔇 Cod Xiran</span>
+              <span class="lc-tile-pill muted" id="lcPartnerMuteTag" style="display:none;">🔇 Muted</span>
             </div>
           </div>
 
-          <!-- TILE 2: YOUR OWN CAMERA / VOICE-ONLY CARD -->
-          <div class="lc-peer-tile self-tile" id="lcSelfTile">
+          <!-- TILE 2: YOUR OWN CAMERA / VOICE-ONLY CARD (Floating Corner PiP on Mobile!) -->
+          <div class="lc-peer-tile self-tile" id="lcSelfTile" onclick="if (window.innerWidth <= 900 && window.cardosoLiveCall) window.cardosoLiveCall.toggleCamera();" title="Guji si aad u furto/xidho kaamirada">
             <video id="lcLocalVideo" class="lc-stream-video mirrored" autoplay muted playsinline></video>
 
             <div class="lc-tile-top">
@@ -638,11 +859,11 @@ export function renderLiveCallPanelHTML(): string {
             </div>
 
             <div class="lc-tile-overlay" id="lcSelfOverlay">
-              <div class="lc-avatar-orb" id="lcSelfOrb">🙈</div>
-              <div class="lc-ov-title" id="lcSelfOvTitle">Kaamiradaadu Way Xiran Tahay</div>
+              <div class="lc-avatar-orb" id="lcSelfOrb">📷</div>
+              <div class="lc-ov-title" id="lcSelfOvTitle">Kaamiradu Waa Diyaar</div>
               <div class="lc-ov-sub" id="lcSelfOvSub">Waad ku wada hadli kartaa <strong>Cod Keliya</strong>, ama hal gujis ku fur kaamiradaada mar kasta!</div>
               <div class="lc-ov-actions">
-                <button type="button" class="lc-mini-btn" id="lcSelfQuickCamBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleCamera()">📷 Fur Kaamirada</button>
+                <button type="button" class="lc-mini-btn" id="lcSelfQuickCamBtn" onclick="event.stopPropagation(); window.cardosoLiveCall && window.cardosoLiveCall.toggleCamera()">📷 Fur Kaamirada</button>
               </div>
             </div>
 
@@ -653,7 +874,7 @@ export function renderLiveCallPanelHTML(): string {
           </div>
         </div>
 
-        <!-- Live Call Controls Dock -->
+        <!-- Always-Visible Pinned Bottom Call Controls Dock -->
         <div class="lc-controls-dock">
           <button type="button" class="lc-ctrl-btn call-start" id="lcMatchBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.handlePrimaryAction()">
             🔍 <span class="lc-lbl">Raadi Qof</span>
@@ -664,7 +885,7 @@ export function renderLiveCallPanelHTML(): string {
           <button type="button" class="lc-ctrl-btn call-end" id="lcStopBtn" style="display:none;" onclick="window.cardosoLiveCall && window.cardosoLiveCall.leaveCall()" title="Ka bax wicitaanka">
             ⏹️ <span class="lc-lbl">Jooji</span>
           </button>
-          <button type="button" class="lc-ctrl-btn active" id="lcCamBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleCamera()" title="Fur ama Xidh Kaamirada (mar kasta)">
+          <button type="button" class="lc-ctrl-btn active" id="lcCamBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleCamera()" title="Fur ama Xidh Kaamirada">
             📷 <span class="lc-lbl">Cam On</span>
           </button>
           <button type="button" class="lc-ctrl-btn active" id="lcMicBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleMic()" title="Shid ama Dami Makarafoonka">
@@ -676,14 +897,23 @@ export function renderLiveCallPanelHTML(): string {
           <button type="button" class="lc-ctrl-btn" id="lcFlipBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.flipCamera()" title="Beddel kaamirada hore / dambe">
             🔄 <span class="lc-lbl">Flip</span>
           </button>
+          <button type="button" class="lc-ctrl-btn lc-mobile-chat-btn" id="lcChatDrawerBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleMobileDrawer()" title="Fur Chat &amp; Dejinta">
+            💬<span class="lc-unread-dot" id="lcChatUnreadBadge">0</span>
+          </button>
         </div>
       </div>
 
-      <!-- Right Panel: Name, Camera-Off Privacy Toggle, Private Room & Live Text Chat -->
-      <aside class="lc-side-panel">
+      <!-- Mobile Drawer Backdrop -->
+      <div class="lc-drawer-backdrop" id="lcDrawerBackdrop" onclick="window.cardosoLiveCall && window.cardosoLiveCall.closeMobileDrawer()"></div>
+
+      <!-- Right Sidebar (Desktop) / Slide-Up Drawer (Mobile): Name, Camera Privacy, Private Room & Live Chat -->
+      <aside class="lc-side-panel" id="lcSidePanel">
         <div class="lc-side-head">
-          <h3>📹 CARDOSO Live (Dadka Tooska ah)</h3>
-          <span style="font-size:0.7rem;color:#34d399;font-weight:800;" id="lcConnModeTag">WebRTC Free</span>
+          <h3>📹 CARDOSO Live · Chat &amp; Dejin</h3>
+          <div style="display:flex;align-items:center;gap:0.4rem;">
+            <span style="font-size:0.7rem;color:#34d399;font-weight:800;" id="lcConnModeTag">Live WebRTC</span>
+            <button type="button" class="lc-drawer-close" onclick="window.cardosoLiveCall && window.cardosoLiveCall.closeMobileDrawer()">✕ Xidh</button>
+          </div>
         </div>
 
         <div class="lc-field-grid">
@@ -695,7 +925,7 @@ export function renderLiveCallPanelHTML(): string {
           </select>
         </div>
 
-        <!-- One-Tap Camera Privacy Control (Works Before & During Any Call!) -->
+        <!-- One-Tap Camera Privacy Control -->
         <div class="lc-privacy-box" id="lcPrivacyBox" onclick="window.cardosoLiveCall && window.cardosoLiveCall.toggleCamera()">
           <div class="lc-privacy-info">
             <span class="lc-privacy-title" id="lcPrivacyTitle">📷 Kaamiradu Way Furan Tahay</span>
@@ -704,32 +934,32 @@ export function renderLiveCallPanelHTML(): string {
           <span class="lc-switch-pill" id="lcPrivacyPill">VIDEO ON</span>
         </div>
 
-        <!-- Private Room Box (Visible in Private Room mode) -->
+        <!-- Private Room Box -->
         <div class="lc-room-box" id="lcPrivateRoomBox">
           <div class="lc-room-row">
             <button type="button" class="lc-mini-btn primary" style="flex:1;" onclick="window.cardosoLiveCall && window.cardosoLiveCall.createPrivateRoom()">➕ Samee Qol Cusub</button>
           </div>
           <div class="lc-room-row">
-            <input type="text" id="lcRoomCodeInput" class="lc-input" placeholder="Geli koodhka qolka (tusaale: CAR-7429)" style="text-transform:uppercase;" />
+            <input type="text" id="lcRoomCodeInput" class="lc-input" placeholder="Koodhka qolka (CAR-7429)" style="text-transform:uppercase;" />
             <button type="button" class="lc-mini-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.joinPrivateRoom()">🔑 Gal</button>
           </div>
           <div class="lc-room-share" id="lcRoomShareBox">
-            <div style="font-size:0.73rem;color:#bae6fd;font-weight:700;">Link-ga qolkaaga u dir saaxiibkaa:</div>
+            <div style="font-size:0.72rem;color:#bae6fd;font-weight:700;">Link-ga qolkaaga u dir saaxiibkaa:</div>
             <div class="lc-room-row">
-              <button type="button" class="lc-mini-btn" style="flex:1;" onclick="window.cardosoLiveCall && window.cardosoLiveCall.copyRoomLink()">📋 Koobiyee Link</button>
+              <button type="button" class="lc-mini-btn" style="flex:1;" onclick="window.cardosoLiveCall && window.cardosoLiveCall.copyRoomLink()">📋 Copy Link</button>
               <a href="#" target="_blank" rel="noopener" class="lc-mini-btn wa" id="lcWaShareBtn" style="flex:1;">💬 WhatsApp</a>
             </div>
           </div>
         </div>
 
-        <div class="lc-side-head" style="margin-top:0.1rem;">
-          <h3>💬 Sheekada Qoraalka (Live Chat)</h3>
+        <div class="lc-side-head" style="margin-top:0.05rem;">
+          <h3>💬 Sheekada Qoraalka</h3>
           <button type="button" class="btn btn-ghost btn-sm" style="padding:0.2rem 0.5rem;font-size:0.7rem;" onclick="window.cardosoLiveCall && window.cardosoLiveCall.clearTranscript()">Tirtir</button>
         </div>
 
         <div class="lc-transcript-list" id="lcTranscriptList">
           <div class="lc-turn system">
-            Ku soo dhawoow <strong>CARDOSO Live</strong>! Guji <strong>🔍 Raadi Qof</strong> si aad ula hadasho qof online ah, ama dooro <strong>🔗 Qol Gaar ah</strong> si aad saaxiibkaa link ugu dirto. Kaamirada mar walba waad xidhi kartaa!
+            Ku soo dhawoow <strong>CARDOSO Live</strong>! Guji <strong>🔍 Raadi Qof</strong> si aad ula hadasho qof online ah, ama dooro <strong>🔗 Qol Gaar ah</strong>. Kaamirada mar walba waad xidhi kartaa!
           </div>
         </div>
 
@@ -744,7 +974,8 @@ export function renderLiveCallPanelHTML(): string {
 
 /**
  * Self-contained browser WebRTC P2P + Random Match + Private Room + Camera On/Off controller.
- * Connects to `/ws/live-peer` and negotiates real-time peer-to-peer Audio/Video with zero server GPU cost.
+ * Features serialized signaling queue (zero offer/match race), dedicated audio-only playback
+ * with mobile gesture unlock, automatic ICE restart, and responsive mobile drawer controls.
  * Verified syntactically with `new vm.Script()` in automated tests.
  */
 export function renderLiveCallClientJS(): string {
@@ -781,9 +1012,13 @@ export function renderLiveCallClientJS(): string {
       wsConnected: false,
       reconnectTimer: null,
       pingTimer: null,
+      signalChain: Promise.resolve(),
       peerId: '',
       mode: 'random',
       state: 'idle',
+      iceState: 'new',
+      iceRestartTimer: null,
+      iceRestartAttempts: 0,
       roomId: '',
       roomCode: '',
       initiator: false,
@@ -795,16 +1030,22 @@ export function renderLiveCallClientJS(): string {
       speakerEnabled: true,
       facingMode: 'user',
       localStream: null,
-      remoteStream: null,
+      remoteVideoStream: null,
+      remoteAudioStream: null,
+      hasRemoteVideoTrack: false,
+      hasRemoteAudioTrack: false,
+      audioBlocked: false,
       pc: null,
       pendingIce: [],
       iceServers: [
-        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
       ],
       callStartedAt: 0,
       timerHandle: null,
       stats: { onlineCount: 1, waitingCount: 0, activeCalls: 0 },
-      autoJoinRoomCode: ''
+      autoJoinRoomCode: '',
+      drawerOpen: false,
+      unreadChatCount: 0
     };
 
     function getDisplayName() {
@@ -823,6 +1064,54 @@ export function renderLiveCallClientJS(): string {
         return true;
       }
       return false;
+    }
+
+    // Unlock Android Chrome / iOS Safari autoplay policy synchronously inside user tap gestures!
+    function unlockRemoteMedia() {
+      try {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          if (!peer._audioCtx) peer._audioCtx = new AudioCtx();
+          if (peer._audioCtx.state === 'suspended') peer._audioCtx.resume().catch(function () {});
+        }
+      } catch (e) {}
+      try {
+        var ra = el('lcRemoteAudio');
+        if (ra) {
+          ra.muted = !peer.speakerEnabled;
+          if (ra.srcObject) {
+            var ap = ra.play();
+            if (ap && typeof ap.then === 'function') {
+              ap.then(function () { setAudioBlockedUI(false); }).catch(function () {});
+            }
+          }
+        }
+        var rv = el('lcRemoteVideo');
+        if (rv && rv.srcObject) {
+          var vp = rv.play();
+          if (vp && typeof vp.catch === 'function') vp.catch(function () {});
+        }
+      } catch (e) {}
+    }
+
+    function setAudioBlockedUI(blocked) {
+      peer.audioBlocked = Boolean(blocked);
+      var btn = el('lcAudioUnlockBtn');
+      if (btn) {
+        if (peer.audioBlocked && peer.state === 'matched' && peer.speakerEnabled) btn.classList.add('show');
+        else btn.classList.remove('show');
+      }
+    }
+
+    function updateUnreadBadge() {
+      var b = el('lcChatUnreadBadge');
+      if (!b) return;
+      if (peer.unreadChatCount > 0 && !peer.drawerOpen) {
+        b.textContent = peer.unreadChatCount > 9 ? '9+' : String(peer.unreadChatCount);
+        b.classList.add('show');
+      } else {
+        b.classList.remove('show');
+      }
     }
 
     function appendChat(kind, text, who) {
@@ -844,6 +1133,11 @@ export function renderLiveCallClientJS(): string {
       item.appendChild(body);
       list.appendChild(item);
       list.scrollTop = list.scrollHeight;
+      if (kind === 'partner' && !peer.drawerOpen && window.innerWidth <= 900) {
+        peer.unreadChatCount += 1;
+        updateUnreadBadge();
+        toast('💬 ' + (who || 'Fariin') + ': ' + text.slice(0, 60), false);
+      }
     }
 
     function updatePresenceUI(stats) {
@@ -856,8 +1150,7 @@ export function renderLiveCallClientJS(): string {
       }
       var txt = el('lcOnlineText');
       if (txt) {
-        var extra = peer.stats.waitingCount > 0 ? ' · Sugaya: ' + peer.stats.waitingCount : '';
-        txt.textContent = 'Online: ' + peer.stats.onlineCount + extra;
+        txt.textContent = 'Online: ' + peer.stats.onlineCount;
       }
     }
 
@@ -935,29 +1228,21 @@ export function renderLiveCallClientJS(): string {
       var selfSub = el('lcSelfOvSub');
       if (selfOrb) selfOrb.textContent = peer.camEnabled ? '📷' : '🙈';
       if (selfTitle) {
-        selfTitle.textContent = peer.camEnabled ? 'Kaamirada Waa La Furayaa Markaad Bilowdo' : 'Kaamiradaadu Way Xiran Tahay';
+        selfTitle.textContent = peer.camEnabled ? 'Kaamiro Diyaar' : 'Cam Off';
       }
       if (selfSub) {
         selfSub.innerHTML = peer.camEnabled
-          ? 'Guji <strong>Fur Kaamirada</strong> hadda ama bilow <strong>Raadi Qof</strong> — mar walba waad xidhi kartaa!'
-          : 'Qofku <strong>codkaaga keliya</strong> ayuu maqlayaa — kaamiradu gabi ahaanba way dansan tahay.';
+          ? 'Guji <strong>Fur Kaamirada</strong> ama <strong>Raadi Qof</strong> — mar walba waad xidhi kartaa!'
+          : 'Qofku <strong>codkaaga keliya</strong> ayuu maqlayaa — kaamiradu way dansan tahay.';
       }
       if (quickBtn) {
         quickBtn.textContent = peer.camEnabled ? '📷 Tijaabi Kaamirada' : '📷 Fur Kaamirada';
       }
 
-      if (privBox) {
-        privBox.className = 'lc-privacy-box' + (peer.camEnabled ? '' : ' cam-off');
-      }
-      if (privTitle) {
-        privTitle.textContent = peer.camEnabled ? '📷 Kaamiradu Way Furan Tahay' : '🙈 Kaamiradu Way Xiran Tahay (Cod Keliya)';
-      }
-      if (privSub) {
-        privSub.textContent = peer.camEnabled ? 'Guji si aad u xidho kaamirada (Cod Keliya)' : 'Guji mar kale si aad u furto muuqaalkaaga';
-      }
-      if (privSwitch) {
-        privSwitch.textContent = peer.camEnabled ? 'VIDEO ON' : 'CAM OFF';
-      }
+      if (privBox) privBox.className = 'lc-privacy-box' + (peer.camEnabled ? '' : ' cam-off');
+      if (privTitle) privTitle.textContent = peer.camEnabled ? '📷 Kaamiradu Way Furan Tahay' : '🙈 Kaamiradu Way Xiran Tahay (Cod Keliya)';
+      if (privSub) privSub.textContent = peer.camEnabled ? 'Guji si aad u xidho kaamirada (Cod Keliya)' : 'Guji mar kale si aad u furto muuqaalkaaga';
+      if (privSwitch) privSwitch.textContent = peer.camEnabled ? 'VIDEO ON' : 'CAM OFF';
     }
 
     function updatePartnerTileUI() {
@@ -974,24 +1259,25 @@ export function renderLiveCallClientJS(): string {
       var muteTag = el('lcPartnerMuteTag');
       var blockBtn = el('lcBlockBtn');
 
-      var hasRemoteVideo = Boolean(
+      // Show video as soon as a live remote video track exists & partner did not turn Cam OFF
+      // (Never wait on !track.muted, which causes a mobile decode deadlock!)
+      var liveRemoteVideoTracks = peer.remoteVideoStream
+        ? peer.remoteVideoStream.getVideoTracks().filter(function (t) { return t.readyState === 'live'; })
+        : [];
+      var showRemoteVideo = Boolean(
         peer.state === 'matched' &&
         peer.partner &&
         peer.partner.camOn !== false &&
-        peer.remoteStream &&
-        peer.remoteStream.getVideoTracks().some(function (t) { return t.readyState === 'live' && t.enabled && !t.muted; })
+        liveRemoteVideoTracks.length > 0 &&
+        (peer.iceState === 'connected' || peer.iceState === 'completed' || (vid && vid.readyState >= 2))
       );
 
       if (tile) {
         if (peer.state === 'matched') tile.classList.add('connected');
         else tile.classList.remove('connected');
       }
-      if (blockBtn) {
-        blockBtn.style.display = peer.state === 'matched' ? 'inline-flex' : 'none';
-      }
-      if (muteTag) {
-        muteTag.style.display = (peer.state === 'matched' && peer.partner && peer.partner.micOn === false) ? 'inline-flex' : 'none';
-      }
+      if (blockBtn) blockBtn.style.display = peer.state === 'matched' ? 'inline-flex' : 'none';
+      if (muteTag) muteTag.style.display = (peer.state === 'matched' && peer.partner && peer.partner.micOn === false) ? 'inline-flex' : 'none';
       if (nameTag) {
         nameTag.textContent = (peer.state === 'matched' && peer.partner)
           ? ('👤 ' + (peer.partner.name || 'Marti CARDOSO'))
@@ -1000,48 +1286,66 @@ export function renderLiveCallClientJS(): string {
       if (codeBox) codeBox.style.display = 'none';
 
       if (vid) {
-        if (hasRemoteVideo) {
-          vid.classList.add('active');
-        } else {
-          vid.classList.remove('active');
-        }
+        if (showRemoteVideo) vid.classList.add('active');
+        else vid.classList.remove('active');
       }
 
       if (peer.state === 'matched') {
+        var iceConnected = peer.iceState === 'connected' || peer.iceState === 'completed';
+        var iceFailed = peer.iceState === 'failed';
         if (statusBadge) {
-          statusBadge.className = 'lc-tile-pill ok';
-          statusBadge.textContent = hasRemoteVideo ? '🟢 Live Video' : '🎙️ Live Cod Keliya';
+          statusBadge.className = 'lc-tile-pill ' + (iceFailed ? 'muted' : iceConnected ? 'ok' : 'cam-off');
+          statusBadge.textContent = iceFailed
+            ? '⚠️ Shabakadda xidhay'
+            : !iceConnected
+              ? '🔄 Xidhiidhaya...'
+              : showRemoteVideo
+                ? '🟢 Live Video'
+                : '🎙️ Live Cod';
         }
         if (ov) {
-          if (hasRemoteVideo) {
+          if (showRemoteVideo) {
             ov.classList.add('hidden');
           } else {
             ov.classList.remove('hidden');
             var pName = (peer.partner && peer.partner.name) || 'Marti CARDOSO';
-            if (orb) { orb.className = 'lc-avatar-orb audio-live'; orb.textContent = '🎙️'; }
-            if (title) title.textContent = pName;
-            if (sub) {
-              sub.innerHTML = (peer.partner && peer.partner.camOn === false)
+            if (iceFailed) {
+              if (orb) { orb.className = 'lc-avatar-orb'; orb.textContent = '📡'; }
+              if (title) title.textContent = 'Xidhiidhka Video-ga wuu xirmay';
+              if (sub) sub.innerHTML = 'Shabakadda 4G/Firewall ayaa celisay muuqaalka tooska ah. Qoraalka (💬) weli wuu shaqaynayaa.';
+              if (actions) {
+                actions.innerHTML =
+                  '<button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.retryWebRtc()">🔄 Isku Day Mar Kale</button>' +
+                  '<button type="button" class="lc-mini-btn next-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.nextMatch()">⏭️ Next</button>';
+              }
+            } else if (peer.partner && peer.partner.camOn === false) {
+              if (orb) { orb.className = 'lc-avatar-orb audio-live'; orb.textContent = '🎙️'; }
+              if (title) title.textContent = pName;
+              if (sub) sub.innerHTML = iceConnected
                 ? '<strong>Kaamiro Xiran · Cod Keliya</strong> — Toos ayaad u wada hadlaysaan!'
-                : 'Xidhiidhka muuqaalka wuu furmayaa...';
+                : 'Xidhiidhka codka wuu furmayaa...';
+              if (actions) actions.innerHTML = '';
+            } else {
+              if (orb) { orb.className = 'lc-avatar-orb radar'; orb.textContent = '📡'; }
+              if (title) title.textContent = pName;
+              if (sub) sub.innerHTML = 'Muuqaalka & codka tooska ah way furmayaan...';
+              if (actions) actions.innerHTML = '';
             }
-            if (actions) actions.innerHTML = '';
           }
         }
         return;
       }
 
+      setAudioBlockedUI(false);
       if (ov) ov.classList.remove('hidden');
 
       if (peer.state === 'waiting') {
         if (statusBadge) { statusBadge.className = 'lc-tile-pill cam-off'; statusBadge.textContent = '🔍 Raadinaya...'; }
         if (orb) { orb.className = 'lc-avatar-orb radar'; orb.textContent = '📡'; }
         if (title) title.textContent = 'Waxaa la raadinayaa qof online ah...';
-        if (sub) {
-          sub.innerHTML = 'Fadlan sug waxyar — waxaa laguu xidhayaa qof online ah...';
-        }
+        if (sub) sub.innerHTML = 'Fadlan sug waxyar — waxaa laguu xidhayaa qof online ah...';
         if (actions) {
-          actions.innerHTML = '<button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.nextMatch()">⏭️ Next (Qof Kale)</button>';
+          actions.innerHTML = '<button type="button" class="lc-mini-btn next-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.nextMatch()">⏭️ Next (Qof Kale)</button>';
         }
         return;
       }
@@ -1049,18 +1353,17 @@ export function renderLiveCallClientJS(): string {
       if (peer.state === 'room_waiting') {
         if (statusBadge) { statusBadge.className = 'lc-tile-pill cam-off'; statusBadge.textContent = '🔗 Qol Sugaya'; }
         if (orb) { orb.className = 'lc-avatar-orb radar'; orb.textContent = '🔗'; }
-        if (title) title.textContent = 'Qolkaagu Waa Diyaar — Sugaya Saaxiibkaa';
-        if (sub) {
-          sub.innerHTML = 'U dir koodhkan ama link-ga WhatsApp saaxiibkaa — isla markuu gujiyo waad isku xidhmaysaan!';
-        }
+        if (title) title.textContent = 'Qolkaagu Waa Diyaar';
+        if (sub) sub.innerHTML = 'Koodhkan ama link-ga u dir saaxiibkaa!';
         if (codeBox && peer.roomCode) {
           codeBox.textContent = peer.roomCode;
           codeBox.style.display = 'inline-block';
         }
         if (actions) {
+          var waHref = 'https://wa.me/?text=' + encodeURIComponent('Ku soo biir CARDOSO Live (Koodh: ' + peer.roomCode + '): ' + getRoomShareUrl(peer.roomCode));
           actions.innerHTML =
-            '<button type="button" class="lc-mini-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.copyRoomLink()">📋 Koobiyee Link</button>' +
-            '<button type="button" class="lc-mini-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.leaveCall()">⏹️ Ka Bax</button>';
+            '<button type="button" class="lc-mini-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.copyRoomLink()">📋 Copy</button>' +
+            '<a href="' + waHref + '" target="_blank" rel="noopener" class="lc-mini-btn wa">💬 WhatsApp</a>';
         }
         return;
       }
@@ -1075,12 +1378,13 @@ export function renderLiveCallClientJS(): string {
       }
       if (sub) {
         sub.innerHTML = peer.mode === 'private'
-          ? 'Samee qol cusub oo link-ga <strong>WhatsApp</strong> ugu dir saaxiibkaa, ama geli koodhka qolkiisa!'
-          : 'Guji <strong>Raadi Qof</strong> si aad toos ula sheekaysato dadka online-ka ah — Video ama Cod Keliya!';
+          ? 'Samee qol cusub oo link-ga <strong>WhatsApp</strong> ugu dir saaxiibkaa, ama geli koodhka!'
+          : 'Guji <strong>Raadi Qof</strong> si aad toos ula sheekaysato dadka online-ka ah!';
       }
       if (actions) {
         actions.innerHTML = peer.mode === 'private'
-          ? '<button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.createPrivateRoom()">➕ Samee Qol Cusub</button>'
+          ? '<button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.createPrivateRoom()">➕ Samee Qol Cusub</button>' +
+            '<button type="button" class="lc-mini-btn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.openMobileDrawer()">🔑 Geli Koodh</button>'
           : '<button type="button" class="lc-mini-btn primary" onclick="window.cardosoLiveCall && window.cardosoLiveCall.findRandomMatch()">🔍 Raadi Qof Online ah</button>';
       }
     }
@@ -1184,7 +1488,6 @@ export function renderLiveCallClientJS(): string {
         peer.localStream = new MediaStream();
       }
 
-      // Acquire both at once on first prompt when both are enabled
       if (needAudio && needVideo && !hasLiveAudio && !hasLiveVideo) {
         try {
           var both = await navigator.mediaDevices.getUserMedia({
@@ -1194,9 +1497,7 @@ export function renderLiveCallClientJS(): string {
           both.getTracks().forEach(function (t) { peer.localStream.addTrack(t); });
           hasLiveAudio = peer.localStream.getAudioTracks().length > 0;
           hasLiveVideo = peer.localStream.getVideoTracks().length > 0;
-        } catch (e1) {
-          // Fall back to independent audio / video acquisition below
-        }
+        } catch (e1) {}
       }
 
       if (needAudio && !hasLiveAudio) {
@@ -1240,14 +1541,26 @@ export function renderLiveCallClientJS(): string {
 
     function teardownPeerConnection() {
       peer.pendingIce = [];
+      peer.iceState = 'new';
+      peer.iceRestartAttempts = 0;
+      if (peer.iceRestartTimer) {
+        clearTimeout(peer.iceRestartTimer);
+        peer.iceRestartTimer = null;
+      }
       if (peer.pc) {
         try { peer.pc.onicecandidate = null; } catch (e) {}
         try { peer.pc.ontrack = null; } catch (e) {}
+        try { peer.pc.oniceconnectionstatechange = null; } catch (e) {}
         try { peer.pc.onconnectionstatechange = null; } catch (e) {}
         try { peer.pc.close(); } catch (e) {}
         peer.pc = null;
       }
-      peer.remoteStream = null;
+      peer.remoteVideoStream = null;
+      peer.remoteAudioStream = null;
+      peer.hasRemoteVideoTrack = false;
+      peer.hasRemoteAudioTrack = false;
+      setAudioBlockedUI(false);
+
       var rv = el('lcRemoteVideo');
       if (rv) {
         try { rv.pause(); } catch (e) {}
@@ -1266,35 +1579,86 @@ export function renderLiveCallClientJS(): string {
       peer.callStartedAt = 0;
     }
 
-    function attachRemoteTrack(track, streams) {
-      if (!peer.remoteStream && typeof MediaStream !== 'undefined') {
-        peer.remoteStream = (streams && streams[0]) ? streams[0] : new MediaStream();
-      }
-      if (peer.remoteStream && !peer.remoteStream.getTracks().some(function (t) { return t.id === track.id; })) {
-        try { peer.remoteStream.addTrack(track); } catch (e) {}
+    function attachRemoteTrack(track) {
+      if (!track) return;
+
+      if (track.kind === 'video') {
+        peer.hasRemoteVideoTrack = true;
+        if (!peer.remoteVideoStream && typeof MediaStream !== 'undefined') {
+          peer.remoteVideoStream = new MediaStream();
+        }
+        if (peer.remoteVideoStream) {
+          peer.remoteVideoStream.getVideoTracks().forEach(function (oldT) {
+            if (oldT.id !== track.id) {
+              try { peer.remoteVideoStream.removeTrack(oldT); } catch (e) {}
+            }
+          });
+          if (!peer.remoteVideoStream.getVideoTracks().some(function (t) { return t.id === track.id; })) {
+            try { peer.remoteVideoStream.addTrack(track); } catch (e) {}
+          }
+        }
+        var rv = el('lcRemoteVideo');
+        if (rv && peer.remoteVideoStream) {
+          rv.muted = true; // Audio plays exclusively via dedicated #lcRemoteAudio (zero echo!)
+          rv.playsInline = true;
+          if (rv.srcObject !== peer.remoteVideoStream) rv.srcObject = peer.remoteVideoStream;
+          rv.onloadedmetadata = function () { updatePartnerTileUI(); };
+          rv.onloadeddata = function () { updatePartnerTileUI(); };
+          rv.onplaying = function () { updatePartnerTileUI(); };
+          rv.oncanplay = function () { updatePartnerTileUI(); };
+          rv.onresize = function () { updatePartnerTileUI(); };
+          var vp = rv.play();
+          if (vp && typeof vp.catch === 'function') vp.catch(function () {});
+        }
+      } else if (track.kind === 'audio') {
+        peer.hasRemoteAudioTrack = true;
+        if (!peer.remoteAudioStream && typeof MediaStream !== 'undefined') {
+          peer.remoteAudioStream = new MediaStream();
+        }
+        if (peer.remoteAudioStream) {
+          peer.remoteAudioStream.getAudioTracks().forEach(function (oldA) {
+            if (oldA.id !== track.id) {
+              try { peer.remoteAudioStream.removeTrack(oldA); } catch (e) {}
+            }
+          });
+          if (!peer.remoteAudioStream.getAudioTracks().some(function (t) { return t.id === track.id; })) {
+            try { peer.remoteAudioStream.addTrack(track); } catch (e) {}
+          }
+        }
+        var ra = el('lcRemoteAudio');
+        if (ra && peer.remoteAudioStream) {
+          ra.muted = !peer.speakerEnabled;
+          ra.volume = 1.0;
+          if (ra.srcObject !== peer.remoteAudioStream) ra.srcObject = peer.remoteAudioStream;
+          var ap = ra.play();
+          if (ap && typeof ap.then === 'function') {
+            ap.then(function () {
+              setAudioBlockedUI(false);
+            }).catch(function () {
+              setAudioBlockedUI(true);
+            });
+          }
+        }
       }
 
-      var rv = el('lcRemoteVideo');
-      var ra = el('lcRemoteAudio');
-      if (rv && peer.remoteStream) {
-        if (rv.srcObject !== peer.remoteStream) rv.srcObject = peer.remoteStream;
-        rv.muted = !peer.speakerEnabled;
-        var vp = rv.play();
-        if (vp && typeof vp.catch === 'function') vp.catch(function () {});
-      }
-      if (ra && track.kind === 'audio' && peer.remoteStream) {
-        // Backup audio element ensures audio plays cleanly even when remote video is hidden (Camera Off!)
-        if (ra.srcObject !== peer.remoteStream) ra.srcObject = peer.remoteStream;
-        ra.muted = !peer.speakerEnabled;
-        var ap = ra.play();
-        if (ap && typeof ap.catch === 'function') ap.catch(function () {});
-        if (rv) rv.muted = true; // Prevent double audio echo when audio element handles sound
-      }
-
-      track.onmute = function () { updatePartnerTileUI(); };
       track.onunmute = function () { updatePartnerTileUI(); };
+      track.onmute = function () { updatePartnerTileUI(); };
       track.onended = function () { updatePartnerTileUI(); };
       updatePartnerTileUI();
+    }
+
+    async function triggerIceRestart() {
+      if (!peer.pc || peer.state !== 'matched') return;
+      if (peer.iceRestartAttempts >= 2) {
+        updatePartnerTileUI();
+        return;
+      }
+      peer.iceRestartAttempts += 1;
+      try {
+        var offer = await peer.pc.createOffer({ iceRestart: true });
+        await peer.pc.setLocalDescription(offer);
+        sendWs({ type: 'rtc.offer', sdp: offer.sdp });
+      } catch (e) {}
     }
 
     async function setupWebRtcForMatch(isInitiator) {
@@ -1305,37 +1669,46 @@ export function renderLiveCallClientJS(): string {
       }
 
       await ensureLocalMedia(false);
+      // Guard: call may have ended while awaiting getUserMedia
+      if (peer.state !== 'matched') return;
 
-      var pc = new RTCPeerConnection({ iceServers: peer.iceServers });
+      var pc = new RTCPeerConnection({
+        iceServers: peer.iceServers,
+        iceCandidatePoolSize: 4
+      });
       peer.pc = pc;
       peer.initiator = Boolean(isInitiator);
-      peer.remoteStream = typeof MediaStream !== 'undefined' ? new MediaStream() : null;
+      peer.iceState = 'checking';
 
+      var addedAudio = false;
+      var addedVideo = false;
       if (peer.localStream) {
         peer.localStream.getTracks().forEach(function (track) {
           if (track.readyState === 'live') {
             pc.addTrack(track, peer.localStream);
+            if (track.kind === 'audio') addedAudio = true;
+            if (track.kind === 'video') addedVideo = true;
           }
         });
       }
 
-      // Ensure we can always receive partner's audio & video even if we joined Cam-Off or Mic-Off!
+      // Always ensure we can receive remote audio & video even if we joined Cam-Off or Mic-Off!
       if (typeof pc.addTransceiver === 'function') {
-        var hasAudioSender = pc.getSenders().some(function (s) { return s.track && s.track.kind === 'audio'; });
-        var hasVideoSender = pc.getSenders().some(function (s) { return s.track && s.track.kind === 'video'; });
-        if (!hasAudioSender) {
+        if (!addedAudio) {
           try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
         }
-        if (!hasVideoSender) {
+        if (!addedVideo) {
           try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
         }
       }
 
       pc.ontrack = function (ev) {
-        attachRemoteTrack(ev.track, ev.streams);
+        if (peer.pc !== pc) return;
+        attachRemoteTrack(ev.track);
       };
 
       pc.onicecandidate = function (ev) {
+        if (peer.pc !== pc) return;
         if (ev.candidate) {
           sendWs({
             type: 'rtc.ice',
@@ -1344,22 +1717,66 @@ export function renderLiveCallClientJS(): string {
         }
       };
 
-      pc.onconnectionstatechange = function () {
-        if (!peer.pc || peer.pc !== pc) return;
-        if (pc.connectionState === 'connected') {
-          updatePartnerTileUI();
-        } else if (pc.connectionState === 'failed') {
-          toast('⚠️ Xidhiidhka WebRTC wuu goay — isku day Qof Kale', true);
+      var syncConnState = function () {
+        if (peer.pc !== pc) return;
+        var iceSt = pc.iceConnectionState || 'new';
+        var connSt = pc.connectionState || 'new';
+        var st = (iceSt === 'connected' || iceSt === 'completed' || connSt === 'connected')
+          ? 'connected'
+          : (iceSt === 'failed' || connSt === 'failed')
+            ? 'failed'
+            : (iceSt === 'disconnected' || connSt === 'disconnected')
+              ? 'disconnected'
+              : 'checking';
+        peer.iceState = st;
+        if (st === 'connected' || st === 'completed') {
+          peer.iceRestartAttempts = 0;
+          if (peer.iceRestartTimer) { clearTimeout(peer.iceRestartTimer); peer.iceRestartTimer = null; }
+          // Ensure remote media starts playing cleanly once ICE connects
+          var rv = el('lcRemoteVideo');
+          if (rv && rv.srcObject) {
+            var vp = rv.play();
+            if (vp && typeof vp.catch === 'function') vp.catch(function () {});
+          }
+          var ra = el('lcRemoteAudio');
+          if (ra && ra.srcObject && peer.speakerEnabled) {
+            var ap = ra.play();
+            if (ap && typeof ap.then === 'function') {
+              ap.then(function () { setAudioBlockedUI(false); }).catch(function () { setAudioBlockedUI(true); });
+            }
+          }
+        } else if (st === 'failed') {
+          if (peer.initiator && peer.iceRestartAttempts < 2) {
+            triggerIceRestart();
+          }
+        } else if (st === 'disconnected') {
+          if (peer.initiator && !peer.iceRestartTimer) {
+            peer.iceRestartTimer = setTimeout(function () {
+              peer.iceRestartTimer = null;
+              if (peer.pc === pc && (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed')) {
+                triggerIceRestart();
+              }
+            }, 3500);
+          }
         }
+        updatePartnerTileUI();
       };
+
+      pc.oniceconnectionstatechange = syncConnState;
+      pc.onconnectionstatechange = syncConnState;
+
+      // Sync our actual media status immediately after acquiring tracks
+      sendWs({ type: 'media.state', camOn: peer.camEnabled, micOn: peer.micEnabled });
 
       if (isInitiator) {
         try {
           var offer = await pc.createOffer();
+          if (peer.pc !== pc) return;
           await pc.setLocalDescription(offer);
           sendWs({ type: 'rtc.offer', sdp: offer.sdp });
         } catch (e) {}
       }
+      updatePartnerTileUI();
     }
 
     async function flushPendingIce() {
@@ -1397,7 +1814,7 @@ export function renderLiveCallClientJS(): string {
       } catch (e) {}
     }
 
-    async function handleServerMessage(msg) {
+    async function processServerMessage(msg) {
       if (!msg || !msg.type) return;
 
       switch (msg.type) {
@@ -1414,6 +1831,12 @@ export function renderLiveCallClientJS(): string {
             var inp = el('lcRoomCodeInput');
             if (inp) inp.value = code;
             api.joinPrivateRoom();
+          }
+          break;
+
+        case 'ice.update':
+          if (Array.isArray(msg.iceServers) && msg.iceServers.length > 0) {
+            peer.iceServers = msg.iceServers;
           }
           break;
 
@@ -1448,17 +1871,22 @@ export function renderLiveCallClientJS(): string {
           if (peer.timerHandle) clearInterval(peer.timerHandle);
           peer.timerHandle = setInterval(updateCallTimer, 1000);
           refreshControlsUI();
-          appendChat('system', '🟢 Waxaad ku xidhantay: ' + (peer.partner.name || 'Marti CARDOSO') + (peer.partner.camOn === false ? ' (Kaamiro Xiran · Cod Keliya)' : ''));
+          appendChat('system', '🟢 Waxaad ku xidhantay: ' + (peer.partner.name || 'Marti CARDOSO') + (peer.partner.camOn === false ? ' (Cod Keliya)' : ''));
           toast('🟢 Waa laguu helay: ' + (peer.partner.name || 'Marti CARDOSO'), false);
           await setupWebRtcForMatch(Boolean(msg.initiator));
           break;
 
         case 'rtc.offer':
-          if (!peer.pc && peer.state === 'matched') {
+          if (peer.state !== 'matched') break;
+          if (!peer.pc) {
             await setupWebRtcForMatch(false);
           }
           if (peer.pc && msg.sdp) {
             try {
+              // Handle glare cleanly if both peers offered simultaneously
+              if (peer.pc.signalingState !== 'stable') {
+                try { await peer.pc.setLocalDescription({ type: 'rollback' }); } catch (rbErr) {}
+              }
               await peer.pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
               await flushPendingIce();
               var ans = await peer.pc.createAnswer();
@@ -1469,7 +1897,7 @@ export function renderLiveCallClientJS(): string {
           break;
 
         case 'rtc.answer':
-          if (peer.pc && msg.sdp) {
+          if (peer.pc && msg.sdp && peer.pc.signalingState === 'have-local-offer') {
             try {
               await peer.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.sdp }));
               await flushPendingIce();
@@ -1478,12 +1906,13 @@ export function renderLiveCallClientJS(): string {
           break;
 
         case 'rtc.ice':
-          if (msg.candidate && peer.pc) {
-            if (peer.pc.remoteDescription) {
+          if (msg.candidate) {
+            if (peer.pc && peer.pc.remoteDescription) {
               try {
                 await peer.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
               } catch (e) {}
             } else {
+              // Buffer even if peer.pc is still initializing — NEVER drop early ICE candidates!
               peer.pendingIce.push(msg.candidate);
             }
           }
@@ -1535,6 +1964,13 @@ export function renderLiveCallClientJS(): string {
       }
     }
 
+    // Strictly serialize all WebSocket signaling messages so match.found & rtc.offer NEVER race!
+    function enqueueServerMessage(msg) {
+      peer.signalChain = peer.signalChain
+        .then(function () { return processServerMessage(msg); })
+        .catch(function () {});
+    }
+
     function connectPeerSocket() {
       if (peer.ws && (peer.ws.readyState === WebSocket.OPEN || peer.ws.readyState === WebSocket.CONNECTING)) {
         return;
@@ -1559,7 +1995,7 @@ export function renderLiveCallClientJS(): string {
 
       ws.onmessage = function (ev) {
         try {
-          handleServerMessage(JSON.parse(ev.data));
+          enqueueServerMessage(JSON.parse(ev.data));
         } catch (e) {}
       };
 
@@ -1623,6 +2059,49 @@ export function renderLiveCallClientJS(): string {
         }
       },
 
+      openMobileDrawer: function () {
+        peer.drawerOpen = true;
+        peer.unreadChatCount = 0;
+        updateUnreadBadge();
+        var panel = el('lcSidePanel');
+        var bg = el('lcDrawerBackdrop');
+        if (panel) panel.classList.add('drawer-open');
+        if (bg) bg.classList.add('open');
+      },
+
+      closeMobileDrawer: function () {
+        peer.drawerOpen = false;
+        var panel = el('lcSidePanel');
+        var bg = el('lcDrawerBackdrop');
+        if (panel) panel.classList.remove('drawer-open');
+        if (bg) bg.classList.remove('open');
+      },
+
+      toggleMobileDrawer: function () {
+        if (peer.drawerOpen) api.closeMobileDrawer();
+        else api.openMobileDrawer();
+      },
+
+      forceUnlockAudio: function () {
+        peer.speakerEnabled = true;
+        unlockRemoteMedia();
+        setAudioBlockedUI(false);
+        refreshControlsUI();
+        toast('🔊 Codka qofka kale waa furmay!', false);
+      },
+
+      retryWebRtc: function () {
+        if (peer.state !== 'matched') return;
+        peer.iceRestartAttempts = 0;
+        peer.iceState = 'checking';
+        updatePartnerTileUI();
+        if (peer.pc) {
+          triggerIceRestart();
+        } else {
+          setupWebRtcForMatch(true);
+        }
+      },
+
       setPeerMode: function (mode) {
         var next = mode === 'private' ? 'private' : 'random';
         if (peer.mode === next) return;
@@ -1650,11 +2129,13 @@ export function renderLiveCallClientJS(): string {
       },
 
       handlePrimaryAction: function () {
+        unlockRemoteMedia();
         if (peer.mode === 'private') api.createPrivateRoom();
         else api.findRandomMatch();
       },
 
       findRandomMatch: async function () {
+        unlockRemoteMedia();
         peer.mode = 'random';
         await ensureLocalMedia(false);
         ensureSocketReady(function () {
@@ -1669,6 +2150,7 @@ export function renderLiveCallClientJS(): string {
       },
 
       nextMatch: async function () {
+        unlockRemoteMedia();
         teardownPeerConnection();
         peer.partner = null;
         peer.state = 'waiting';
@@ -1686,7 +2168,9 @@ export function renderLiveCallClientJS(): string {
       },
 
       createPrivateRoom: async function () {
+        unlockRemoteMedia();
         peer.mode = 'private';
+        api.closeMobileDrawer();
         await ensureLocalMedia(false);
         ensureSocketReady(function () {
           sendWs({
@@ -1699,6 +2183,7 @@ export function renderLiveCallClientJS(): string {
       },
 
       joinPrivateRoom: async function () {
+        unlockRemoteMedia();
         var inp = el('lcRoomCodeInput');
         var code = String((inp && inp.value) || '').trim().toUpperCase();
         if (!code || code.length < 3) {
@@ -1707,6 +2192,7 @@ export function renderLiveCallClientJS(): string {
         }
         peer.mode = 'private';
         peer.roomCode = code;
+        api.closeMobileDrawer();
         await ensureLocalMedia(false);
         ensureSocketReady(function () {
           sendWs({
@@ -1757,7 +2243,6 @@ export function renderLiveCallClientJS(): string {
       toggleCamera: async function () {
         var wantOn = !peer.camEnabled;
         if (!wantOn) {
-          // TRUE PRIVACY CAMERA-OFF: stop hardware camera tracks so the webcam light turns OFF!
           peer.camEnabled = false;
           if (peer.localStream) {
             peer.localStream.getVideoTracks().forEach(function (t) {
@@ -1778,7 +2263,6 @@ export function renderLiveCallClientJS(): string {
           return;
         }
 
-        // Turn Camera ON (works cleanly before OR mid-call!)
         peer.camEnabled = true;
         await ensureLocalMedia(true);
         var liveVid = peer.localStream ? peer.localStream.getVideoTracks().find(function (t) { return t.readyState === 'live'; }) : null;
@@ -1807,13 +2291,17 @@ export function renderLiveCallClientJS(): string {
 
       toggleSpeaker: function () {
         peer.speakerEnabled = !peer.speakerEnabled;
-        var rv = el('lcRemoteVideo');
         var ra = el('lcRemoteAudio');
-        if (ra && ra.srcObject) {
+        if (ra) {
           ra.muted = !peer.speakerEnabled;
-        } else if (rv) {
-          rv.muted = !peer.speakerEnabled;
+          if (peer.speakerEnabled && ra.srcObject) {
+            var ap = ra.play();
+            if (ap && typeof ap.then === 'function') {
+              ap.then(function () { setAudioBlockedUI(false); }).catch(function () {});
+            }
+          }
         }
+        if (!peer.speakerEnabled) setAudioBlockedUI(false);
         refreshControlsUI();
       },
 
@@ -1907,27 +2395,27 @@ export function renderStandaloneLiveCallHTML(options?: {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.65rem 1rem;
-      background: rgba(7, 11, 20, 0.92);
+      gap: 0.65rem;
+      padding: 0.5rem 0.85rem;
+      background: rgba(7, 11, 20, 0.94);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .standalone-brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 800; font-size: 0.98rem; }
-    .standalone-brand img { width: 32px; height: 32px; border-radius: 9px; }
+    .standalone-brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 800; font-size: 0.92rem; }
+    .standalone-brand img { width: 28px; height: 28px; border-radius: 8px; }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
-      border: none; border-radius: 10px; padding: 0.48rem 0.85rem;
-      font-size: 0.8rem; font-weight: 700; cursor: pointer; text-decoration: none;
+      border: none; border-radius: 10px; padding: 0.45rem 0.8rem;
+      font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: none;
     }
     .btn-primary { background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; }
     .btn-ghost { background: rgba(148, 163, 184, 0.14); color: #e2e8f0; border: 1px solid var(--border); }
-    .btn-sm { padding: 0.42rem 0.75rem; font-size: 0.78rem; }
+    .btn-sm { padding: 0.38rem 0.7rem; font-size: 0.76rem; }
     .toast-banner {
-      position: fixed; top: 0.9rem; right: 1rem; z-index: 250;
-      padding: 0.72rem 1rem; border-radius: 12px;
+      position: fixed; top: 0.8rem; right: 0.8rem; z-index: 250;
+      padding: 0.68rem 0.95rem; border-radius: 12px;
       background: #0f172a; border: 1px solid var(--primary);
-      color: #fff; font-weight: 600; font-size: 0.84rem; display: none; max-width: 340px;
+      color: #fff; font-weight: 600; font-size: 0.8rem; display: none; max-width: 310px;
     }
     .toast-banner.show { display: block; }
     ${renderLiveCallPanelCSS()}
@@ -1937,10 +2425,10 @@ export function renderStandaloneLiveCallHTML(options?: {
   <header class="standalone-bar">
     <div class="standalone-brand">
       <img src="/pwa/icon-192.png" alt="CARDOSO AI" />
-      <span>${escapeAttr(botName)} · 📹 Live Video Chat</span>
+      <span>${escapeAttr(botName)} · 📹 Live</span>
     </div>
-    <div style="display:flex;gap:0.45rem;">
-      <a href="/app" class="btn btn-ghost btn-sm">← Ku Noqo App</a>
+    <div style="display:flex;gap:0.4rem;">
+      <a href="/app" class="btn btn-ghost btn-sm">← App</a>
     </div>
   </header>
 
