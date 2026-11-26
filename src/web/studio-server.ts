@@ -1362,8 +1362,13 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       }
     }
 
-    // 3. If browser navigates directly to root HTML page, redirect to /admin-login
-    if (req.method === 'GET' && req.accepts && req.accepts('html') && (req.path === '/' || req.path === '/admin' || req.path === '/dashboard')) {
+    // 3. Public visitors opening the root URL (`/`) go straight to the User App (`/app`),
+    //    never to Admin Login! Admins access the dashboard via `/admin`, `/dashboard`, or `/admin-login`.
+    if (req.method === 'GET' && req.path === '/') {
+      res.redirect('/app');
+      return;
+    }
+    if (req.method === 'GET' && req.accepts && req.accepts('html') && (req.path === '/admin' || req.path === '/dashboard')) {
       res.redirect('/admin-login');
       return;
     }

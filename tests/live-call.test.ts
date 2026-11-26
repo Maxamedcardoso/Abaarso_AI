@@ -382,6 +382,12 @@ async function runLiveCallTests(): Promise<void> {
     const headHealthRes = await invoke('HEAD', '/health');
     assert(headHealthRes.status === 200, 'HEAD /health should return 200 OK for UptimeRobot/cron-job monitors');
 
+    const rootGuestRes = await invoke('GET', '/');
+    assert(
+      rootGuestRes.status === 302 && rootGuestRes.headers.location === '/app',
+      `Public GET / should redirect straight to /app (never /admin-login), got ${rootGuestRes.status} -> ${rootGuestRes.headers.location}`
+    );
+
     console.log('  ✅ PASS: /api/live-call/peer/stats, Gzip compression, HEAD /health, OG preview & standalone /live-call + /app verified');
 
     console.log('\n🎉 All CARDOSO Live Peer-to-Peer Video Call tests passed cleanly!\n');
