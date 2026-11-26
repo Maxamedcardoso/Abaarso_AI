@@ -821,7 +821,7 @@ export function renderLiveCallPanelHTML(): string {
         <div class="lc-video-stage" id="lcVideoStage">
           <!-- TILE 1: REMOTE PARTNER -->
           <div class="lc-peer-tile partner-tile" id="lcPartnerTile">
-            <video id="lcRemoteVideo" class="lc-stream-video" autoplay muted playsinline></video>
+            <video id="lcRemoteVideo" class="lc-stream-video" autoplay playsinline></video>
             <audio id="lcRemoteAudio" class="lc-hidden-audio" autoplay playsinline></audio>
 
             <button type="button" class="lc-audio-unlock" id="lcAudioUnlockBtn" onclick="window.cardosoLiveCall && window.cardosoLiveCall.forceUnlockAudio()">
@@ -1030,11 +1030,12 @@ export function renderLiveCallClientJS(): string {
       speakerEnabled: true,
       facingMode: 'user',
       localStream: null,
-      remoteVideoStream: null,
+      remoteStream: null,
       remoteAudioStream: null,
       hasRemoteVideoTrack: false,
       hasRemoteAudioTrack: false,
       audioBlocked: false,
+      audioUnlocked: false,
       pc: null,
       pendingIce: [],
       iceServers: [
@@ -1066,32 +1067,64 @@ export function renderLiveCallClientJS(): string {
       return false;
     }
 
-    // Unlock Android Chrome / iOS Safari autoplay policy synchronously inside user tap gestures!
+    // Synchronize remote audio output cleanly: use visible <video> when video is active,
+    // or dedicated <audio> when audio-only (Camera Off) — NEVER both unmuted at once (0 echo)!
+    function syncRemoteAudioOutput() {
+      var rv = el('lcRemoteVideo');
+      var ra = el('lcRemoteAudio');
+      var videoActive = Boolean(rv && rv.classList.contains('active') && peer.hasRemoteVideoTrack);
+      var wantSound = Boolean(peer.speakerEnabled);
+
+      if (rv) {
+        rv.volume = 1.0;
+        rv.muted = !(wantSound && videoActive);
+      }
+      if (ra) {
+        ra.volume = 1.0;
+        ra.muted = !(wantSound && !videoActive);
+      }
+
+      if (!wantSound) {
+        setAudioBlockedUI(false);
+        return;
+      }
+
+      var activeEl = (videoActive && rv && rv.srcObject) ? rv : (ra && ra.srcObject ? ra : (rv && rv.srcObject ? rv : null));
+      if (activeEl) {
+        try {
+          var p = activeEl.play();
+          if (p && typeof p.then === 'function') {
+            p.then(function () {
+              setAudioBlockedUI(false);
+            }).catch(function () {
+              setAudioBlockedUI(true);
+            });
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Unlock Android Chrome / iOS Safari audio autoplay permanently inside ANY user tap gesture!
     function unlockRemoteMedia() {
       try {
         var AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
           if (!peer._audioCtx) peer._audioCtx = new AudioCtx();
-          if (peer._audioCtx.state === 'suspended') peer._audioCtx.resume().catch(function () {});
-        }
-      } catch (e) {}
-      try {
-        var ra = el('lcRemoteAudio');
-        if (ra) {
-          ra.muted = !peer.speakerEnabled;
-          if (ra.srcObject) {
-            var ap = ra.play();
-            if (ap && typeof ap.then === 'function') {
-              ap.then(function () { setAudioBlockedUI(false); }).catch(function () {});
-            }
+          if (peer._audioCtx.state === 'suspended') {
+            peer._audioCtx.resume().catch(function () {});
+          }
+          if (!peer.audioUnlocked) {
+            // Play a 1-sample silent buffer inside the tap gesture so mobile OS activates speaker audio session!
+            var silentBuf = peer._audioCtx.createBuffer(1, 1, 22050);
+            var src = peer._audioCtx.createBufferSource();
+            src.buffer = silentBuf;
+            src.connect(peer._audioCtx.destination);
+            src.start(0);
+            peer.audioUnlocked = true;
           }
         }
-        var rv = el('lcRemoteVideo');
-        if (rv && rv.srcObject) {
-          var vp = rv.play();
-          if (vp && typeof vp.catch === 'function') vp.catch(function () {});
-        }
       } catch (e) {}
+      syncRemoteAudioOutput();
     }
 
     function setAudioBlockedUI(blocked) {
@@ -1261,8 +1294,8 @@ export function renderLiveCallClientJS(): string {
 
       // Show video as soon as a live remote video track exists & partner did not turn Cam OFF
       // (Never wait on !track.muted, which causes a mobile decode deadlock!)
-      var liveRemoteVideoTracks = peer.remoteVideoStream
-        ? peer.remoteVideoStream.getVideoTracks().filter(function (t) { return t.readyState === 'live'; })
+      var liveRemoteVideoTracks = peer.remoteStream
+        ? peer.remoteStream.getVideoTracks().filter(function (t) { return t.readyState === 'live'; })
         : [];
       var showRemoteVideo = Boolean(
         peer.state === 'matched' &&
@@ -1288,6 +1321,9 @@ export function renderLiveCallClientJS(): string {
       if (vid) {
         if (showRemoteVideo) vid.classList.add('active');
         else vid.classList.remove('active');
+      }
+      if (peer.state === 'matched') {
+        syncRemoteAudioOutput();
       }
 
       if (peer.state === 'matched') {
@@ -1495,17 +1531,31 @@ export function renderLiveCallClientJS(): string {
             video: { facingMode: peer.facingMode, width: { ideal: 640 }, height: { ideal: 480 } }
           });
           both.getTracks().forEach(function (t) { peer.localStream.addTrack(t); });
-          hasLiveAudio = peer.localStream.getAudioTracks().length > 0;
-          hasLiveVideo = peer.localStream.getVideoTracks().length > 0;
-        } catch (e1) {}
+          hasLiveAudio = peer.localStream.getAudioTracks().some(function (t) { return t.readyState === 'live'; });
+          hasLiveVideo = peer.localStream.getVideoTracks().some(function (t) { return t.readyState === 'live'; });
+        } catch (e1) {
+          // Plain { audio: true, video: true } fallback for Android/Bluetooth/Windows devices
+          try {
+            var bothPlain = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            bothPlain.getTracks().forEach(function (t) { peer.localStream.addTrack(t); });
+            hasLiveAudio = peer.localStream.getAudioTracks().some(function (t) { return t.readyState === 'live'; });
+            hasLiveVideo = peer.localStream.getVideoTracks().some(function (t) { return t.readyState === 'live'; });
+          } catch (e2) {}
+        }
       }
 
       if (needAudio && !hasLiveAudio) {
         try {
-          var aStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            video: false
-          });
+          var aStream = null;
+          try {
+            aStream = await navigator.mediaDevices.getUserMedia({
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+              video: false
+            });
+          } catch (acErr) {
+            // CRITICAL: Plain { audio: true } fallback just like Camera has { video: true }!
+            aStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          }
           aStream.getAudioTracks().forEach(function (t) { peer.localStream.addTrack(t); });
         } catch (aErr) {
           peer.micEnabled = false;
@@ -1555,7 +1605,7 @@ export function renderLiveCallClientJS(): string {
         try { peer.pc.close(); } catch (e) {}
         peer.pc = null;
       }
-      peer.remoteVideoStream = null;
+      peer.remoteStream = null;
       peer.remoteAudioStream = null;
       peer.hasRemoteVideoTrack = false;
       peer.hasRemoteAudioTrack = false;
@@ -1582,36 +1632,27 @@ export function renderLiveCallClientJS(): string {
     function attachRemoteTrack(track) {
       if (!track) return;
 
+      // Always keep unified remoteStream (audio + video together!) on the VISIBLE <video> element
+      // so mobile Chrome, Android & iOS Safari play voice IMMEDIATELY alongside video!
+      if (!peer.remoteStream && typeof MediaStream !== 'undefined') {
+        peer.remoteStream = new MediaStream();
+      }
+      if (peer.remoteStream) {
+        peer.remoteStream.getTracks().forEach(function (oldT) {
+          if (oldT.kind === track.kind && oldT.id !== track.id) {
+            try { peer.remoteStream.removeTrack(oldT); } catch (e) {}
+          }
+        });
+        if (!peer.remoteStream.getTracks().some(function (t) { return t.id === track.id; })) {
+          try { peer.remoteStream.addTrack(track); } catch (e) {}
+        }
+      }
+
       if (track.kind === 'video') {
         peer.hasRemoteVideoTrack = true;
-        if (!peer.remoteVideoStream && typeof MediaStream !== 'undefined') {
-          peer.remoteVideoStream = new MediaStream();
-        }
-        if (peer.remoteVideoStream) {
-          peer.remoteVideoStream.getVideoTracks().forEach(function (oldT) {
-            if (oldT.id !== track.id) {
-              try { peer.remoteVideoStream.removeTrack(oldT); } catch (e) {}
-            }
-          });
-          if (!peer.remoteVideoStream.getVideoTracks().some(function (t) { return t.id === track.id; })) {
-            try { peer.remoteVideoStream.addTrack(track); } catch (e) {}
-          }
-        }
-        var rv = el('lcRemoteVideo');
-        if (rv && peer.remoteVideoStream) {
-          rv.muted = true; // Audio plays exclusively via dedicated #lcRemoteAudio (zero echo!)
-          rv.playsInline = true;
-          if (rv.srcObject !== peer.remoteVideoStream) rv.srcObject = peer.remoteVideoStream;
-          rv.onloadedmetadata = function () { updatePartnerTileUI(); };
-          rv.onloadeddata = function () { updatePartnerTileUI(); };
-          rv.onplaying = function () { updatePartnerTileUI(); };
-          rv.oncanplay = function () { updatePartnerTileUI(); };
-          rv.onresize = function () { updatePartnerTileUI(); };
-          var vp = rv.play();
-          if (vp && typeof vp.catch === 'function') vp.catch(function () {});
-        }
       } else if (track.kind === 'audio') {
         peer.hasRemoteAudioTrack = true;
+        // Also populate dedicated audio-only stream for Camera-Off / Audio-Only mode!
         if (!peer.remoteAudioStream && typeof MediaStream !== 'undefined') {
           peer.remoteAudioStream = new MediaStream();
         }
@@ -1627,24 +1668,29 @@ export function renderLiveCallClientJS(): string {
         }
         var ra = el('lcRemoteAudio');
         if (ra && peer.remoteAudioStream) {
-          ra.muted = !peer.speakerEnabled;
-          ra.volume = 1.0;
           if (ra.srcObject !== peer.remoteAudioStream) ra.srcObject = peer.remoteAudioStream;
-          var ap = ra.play();
-          if (ap && typeof ap.then === 'function') {
-            ap.then(function () {
-              setAudioBlockedUI(false);
-            }).catch(function () {
-              setAudioBlockedUI(true);
-            });
-          }
         }
       }
 
-      track.onunmute = function () { updatePartnerTileUI(); };
+      var rv = el('lcRemoteVideo');
+      if (rv && peer.remoteStream) {
+        rv.playsInline = true;
+        if (rv.srcObject !== peer.remoteStream) rv.srcObject = peer.remoteStream;
+        rv.onloadedmetadata = function () { updatePartnerTileUI(); };
+        rv.onloadeddata = function () { updatePartnerTileUI(); };
+        rv.onplaying = function () { updatePartnerTileUI(); };
+        rv.oncanplay = function () { updatePartnerTileUI(); };
+        rv.onresize = function () { updatePartnerTileUI(); };
+      }
+
+      track.onunmute = function () {
+        updatePartnerTileUI();
+        syncRemoteAudioOutput();
+      };
       track.onmute = function () { updatePartnerTileUI(); };
       track.onended = function () { updatePartnerTileUI(); };
       updatePartnerTileUI();
+      syncRemoteAudioOutput();
     }
 
     async function triggerIceRestart() {
@@ -1732,18 +1778,12 @@ export function renderLiveCallClientJS(): string {
         if (st === 'connected' || st === 'completed') {
           peer.iceRestartAttempts = 0;
           if (peer.iceRestartTimer) { clearTimeout(peer.iceRestartTimer); peer.iceRestartTimer = null; }
-          // Ensure remote media starts playing cleanly once ICE connects
+          // Ensure remote media & speaker audio start immediately once ICE connects
+          syncRemoteAudioOutput();
           var rv = el('lcRemoteVideo');
           if (rv && rv.srcObject) {
             var vp = rv.play();
             if (vp && typeof vp.catch === 'function') vp.catch(function () {});
-          }
-          var ra = el('lcRemoteAudio');
-          if (ra && ra.srcObject && peer.speakerEnabled) {
-            var ap = ra.play();
-            if (ap && typeof ap.then === 'function') {
-              ap.then(function () { setAudioBlockedUI(false); }).catch(function () { setAudioBlockedUI(true); });
-            }
           }
         } else if (st === 'failed') {
           if (peer.initiator && peer.iceRestartAttempts < 2) {
@@ -1789,22 +1829,22 @@ export function renderLiveCallClientJS(): string {
       }
     }
 
-    async function renegotiateWithNewVideoTrack(newTrack) {
-      if (!peer.pc || peer.state !== 'matched') return;
+    async function renegotiateWithNewTrack(kind, newTrack) {
+      if (!peer.pc || peer.state !== 'matched' || !newTrack) return;
       try {
         var senders = peer.pc.getSenders ? peer.pc.getSenders() : [];
-        var videoSender = senders.find(function (s) { return s.track && s.track.kind === 'video'; });
-        if (!videoSender && peer.pc.getTransceivers) {
-          var vt = peer.pc.getTransceivers().find(function (tr) {
-            return tr.receiver && tr.receiver.track && tr.receiver.track.kind === 'video';
+        var targetSender = senders.find(function (s) { return s.track && s.track.kind === kind; });
+        if (!targetSender && peer.pc.getTransceivers) {
+          var trMatch = peer.pc.getTransceivers().find(function (tr) {
+            return tr.receiver && tr.receiver.track && tr.receiver.track.kind === kind;
           });
-          if (vt && vt.sender) {
-            videoSender = vt.sender;
-            try { vt.direction = 'sendrecv'; } catch (e) {}
+          if (trMatch && trMatch.sender) {
+            targetSender = trMatch.sender;
+            try { trMatch.direction = 'sendrecv'; } catch (e) {}
           }
         }
-        if (videoSender) {
-          await videoSender.replaceTrack(newTrack);
+        if (targetSender) {
+          await targetSender.replaceTrack(newTrack);
         } else {
           peer.pc.addTrack(newTrack, peer.localStream);
         }
@@ -2053,6 +2093,15 @@ export function renderLiveCallClientJS(): string {
 
           refreshControlsUI();
           connectPeerSocket();
+          // Auto-unlock mobile speaker playback on ANY first tap anywhere on screen!
+          if (!peer._tapUnlockBound) {
+            peer._tapUnlockBound = true;
+            document.addEventListener('pointerdown', function () {
+              if (!peer.audioUnlocked || peer.audioBlocked) {
+                unlockRemoteMedia();
+              }
+            }, { passive: true });
+          }
         } else {
           connectPeerSocket();
           refreshControlsUI();
@@ -2268,7 +2317,7 @@ export function renderLiveCallClientJS(): string {
         var liveVid = peer.localStream ? peer.localStream.getVideoTracks().find(function (t) { return t.readyState === 'live'; }) : null;
         if (liveVid) {
           if (peer.pc && peer.state === 'matched') {
-            await renegotiateWithNewVideoTrack(liveVid);
+            await renegotiateWithNewTrack('video', liveVid);
           }
           sendWs({ type: 'media.state', camOn: true, micOn: peer.micEnabled });
           toast('📷 Kaamiradu way furantay!', false);
@@ -2277,9 +2326,21 @@ export function renderLiveCallClientJS(): string {
       },
 
       toggleMic: async function () {
+        unlockRemoteMedia();
         peer.micEnabled = !peer.micEnabled;
         if (peer.micEnabled) {
           await ensureLocalMedia(false);
+          var liveAud = peer.localStream ? peer.localStream.getAudioTracks().find(function (t) { return t.readyState === 'live'; }) : null;
+          if (liveAud) {
+            liveAud.enabled = true;
+            // Attach & renegotiate audio track on active call JUST LIKE Camera!
+            if (peer.pc && peer.state === 'matched') {
+              var hasSentAudio = peer.pc.getSenders && peer.pc.getSenders().some(function (s) { return s.track && s.track.kind === 'audio' && s.track.readyState === 'live'; });
+              if (!hasSentAudio) {
+                await renegotiateWithNewTrack('audio', liveAud);
+              }
+            }
+          }
         }
         if (peer.localStream) {
           peer.localStream.getAudioTracks().forEach(function (t) { t.enabled = peer.micEnabled; });
@@ -2291,17 +2352,11 @@ export function renderLiveCallClientJS(): string {
 
       toggleSpeaker: function () {
         peer.speakerEnabled = !peer.speakerEnabled;
-        var ra = el('lcRemoteAudio');
-        if (ra) {
-          ra.muted = !peer.speakerEnabled;
-          if (peer.speakerEnabled && ra.srcObject) {
-            var ap = ra.play();
-            if (ap && typeof ap.then === 'function') {
-              ap.then(function () { setAudioBlockedUI(false); }).catch(function () {});
-            }
-          }
+        if (peer.speakerEnabled) {
+          unlockRemoteMedia();
+        } else {
+          syncRemoteAudioOutput();
         }
-        if (!peer.speakerEnabled) setAudioBlockedUI(false);
         refreshControlsUI();
       },
 
@@ -2320,7 +2375,7 @@ export function renderLiveCallClientJS(): string {
         await ensureLocalMedia(true);
         var liveVid = peer.localStream ? peer.localStream.getVideoTracks().find(function (t) { return t.readyState === 'live'; }) : null;
         if (liveVid && peer.pc && peer.state === 'matched') {
-          await renegotiateWithNewVideoTrack(liveVid);
+          await renegotiateWithNewTrack('video', liveVid);
         }
         var lv = el('lcLocalVideo');
         if (lv) {
