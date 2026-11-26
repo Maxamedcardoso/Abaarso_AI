@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import http from 'http';
 import vm from 'vm';
+import zlib from 'zlib';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -261,7 +262,8 @@ async function runLiveCallTests(): Promise<void> {
     const invoke = (
       method: string,
       urlPath: string,
-      body?: any
+      body?: any,
+      extraHeaders?: Record<string, string>
     ): Promise<{ status: number; headers: Record<string, any>; buffer: Buffer; text: string; json: () => any }> => {
       return new Promise((resolve, reject) => {
         const socket: any = new PassThrough();
@@ -269,7 +271,7 @@ async function runLiveCallTests(): Promise<void> {
         const req: any = new http.IncomingMessage(socket);
         req.method = method;
         req.url = urlPath;
-        req.headers = { host: 'localhost' };
+        req.headers = { host: 'localhost', ...(extraHeaders || {}) };
         if (body !== undefined) {
           const payload = JSON.stringify(body);
           req.headers['content-type'] = 'application/json';
@@ -363,7 +365,24 @@ async function runLiveCallTests(): Promise<void> {
     for (const m of appScripts) {
       new vm.Script(m[1], { filename: 'app-with-live-call.js' });
     }
-    console.log('  ✅ PASS: /api/live-call/peer/stats, standalone /live-call & integrated /app verified with valid JS and zero dead code');
+
+    // Verify zero-dependency Gzip compression (~4-5x smaller mobile payload), HEAD /health & WhatsApp OG preview tags
+    const gzipLiveRes = await invoke('GET', '/live-call', undefined, { 'accept-encoding': 'gzip, deflate, br' });
+    assert(
+      gzipLiveRes.status === 200 &&
+        gzipLiveRes.headers['content-encoding'] === 'gzip' &&
+        gzipLiveRes.buffer.length < standaloneRes.buffer.length * 0.4,
+      `Gzip middleware should shrink /live-call by >60% (raw=${standaloneRes.buffer.length}B, gzip=${gzipLiveRes.buffer.length}B)`
+    );
+    const unzippedHtml = zlib.gunzipSync(gzipLiveRes.buffer).toString('utf8');
+    assert(
+      unzippedHtml.includes('og:title') && unzippedHtml.includes('id="lcModeRandomBtn"'),
+      'Gunzipped /live-call HTML should contain OpenGraph WhatsApp preview tags and live call UI'
+    );
+    const headHealthRes = await invoke('HEAD', '/health');
+    assert(headHealthRes.status === 200, 'HEAD /health should return 200 OK for UptimeRobot/cron-job monitors');
+
+    console.log('  ✅ PASS: /api/live-call/peer/stats, Gzip compression, HEAD /health, OG preview & standalone /live-call + /app verified');
 
     console.log('\n🎉 All CARDOSO Live Peer-to-Peer Video Call tests passed cleanly!\n');
   } finally {

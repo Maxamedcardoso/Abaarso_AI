@@ -472,6 +472,13 @@ export const PWA_HEAD_TAGS = `
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="theme-color" content="#06b6d4" />
   <meta name="application-name" content="CARDOSO AI" />
+  <meta name="description" content="CARDOSO AI — Smart Assistant (Af-Soomaali & English), Sawirro, Views Hub & Live Video Chat." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="CARDOSO AI" />
+  <meta property="og:title" content="CARDOSO AI — Smart App & Live Video Chat" />
+  <meta property="og:description" content="La hadal CARDOSO AI (Af-Soomaali & English) ama gal Live Video & Voice Chat toos ah — 100% Free!" />
+  <meta property="og:image" content="/pwa/icon-512.png" />
+  <meta name="twitter:card" content="summary" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

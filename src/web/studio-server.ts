@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import http from 'http';
+import zlib from 'zlib';
 import crypto from 'crypto';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
 import { StudentAdvisorEngine } from '../advisor/advisor-engine.js';
@@ -112,7 +113,57 @@ function sanitizePlanTier(raw: any, fallback: PlanTier = 'trial_free'): PlanTier
 
 export function createStudioServer(options: StudioServerOptions): http.Server {
   const app = express();
+  app.disable('x-powered-by');
   app.use(express.json({ limit: '15mb' }));
+
+  // Zero-dependency Gzip compression (~5x smaller HTML/JS/JSON on mobile networks!)
+  app.use((req: Request, res: Response, next) => {
+    const acceptEnc = String(req.headers['accept-encoding'] || '');
+    if (!/\bgzip\b/i.test(acceptEnc)) {
+      next();
+      return;
+    }
+    const origSend = res.send.bind(res);
+    (res as any).send = (body?: any) => {
+      if (res.headersSent || res.getHeader('Content-Encoding')) {
+        return origSend(body);
+      }
+      if (body === undefined || body === null) {
+        return origSend(body);
+      }
+      const ct = String(res.getHeader('Content-Type') || '').toLowerCase();
+      const isTextLike =
+        typeof body === 'string' ||
+        ct.includes('text/') ||
+        ct.includes('json') ||
+        ct.includes('javascript') ||
+        ct.includes('svg') ||
+        ct.includes('manifest');
+      if (!isTextLike) {
+        return origSend(body);
+      }
+      const rawBuf = Buffer.isBuffer(body)
+        ? body
+        : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8');
+      if (rawBuf.length < 1024) {
+        return origSend(body);
+      }
+      try {
+        const zipped = zlib.gzipSync(rawBuf, { level: 6 });
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.setHeader('Content-Length', String(zipped.length));
+        if (!res.getHeader('Content-Type')) {
+          res.setHeader('Content-Type', typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
+        }
+        res.end(zipped);
+        return res;
+      } catch {
+        return origSend(body);
+      }
+    };
+    next();
+  });
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   const { config, tenantManager } = options;
@@ -728,6 +779,10 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       config: liveCallCfg,
     })
   );
+
+  app.head(['/health', '/healthz'], (_req: Request, res: Response) => {
+    res.status(200).end();
+  });
 
   app.get(['/health', '/healthz'], (req: Request, res: Response) => {
     res.json({
