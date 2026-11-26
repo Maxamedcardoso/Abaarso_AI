@@ -1,6 +1,11 @@
 import { Request, Response, Router } from 'express';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
-import { buildIceServers, getLiveCallConfig, LiveCallConfig } from './live-call.config.js';
+import {
+  getLiveCallConfig,
+  getTurnDiagnostics,
+  LiveCallConfig,
+  resolveDynamicIceServers,
+} from './live-call.config.js';
 import { LivePeerStats } from './live-call.types.js';
 import { renderStandaloneLiveCallHTML } from './web/live-call-panel.js';
 
@@ -25,15 +30,17 @@ export function createLiveCallRouter(deps: LiveCallRouterDeps): Router {
   const router = Router();
   const cfg = deps.config || getLiveCallConfig();
 
-  // 1. Live Peer-to-Peer Human Video Call Presence Stats & WebRTC ICE Servers
-  router.get('/api/live-call/peer/stats', (_req: Request, res: Response) => {
+  // 1. Live Peer-to-Peer Human Video Call Presence Stats & WebRTC ICE Servers (including dynamic Metered TURN)
+  router.get('/api/live-call/peer/stats', async (_req: Request, res: Response) => {
     const stats = deps.getPeerStats ? deps.getPeerStats() : { onlineCount: 0, waitingCount: 0, activeCalls: 0 };
+    const resolvedIce = await resolveDynamicIceServers(cfg);
     res.json({
       status: 'ok',
       enabled: cfg.enabled,
       ...stats,
       wsPath: '/ws/live-peer',
-      iceServers: buildIceServers(cfg),
+      turn: getTurnDiagnostics(cfg, resolvedIce),
+      iceServers: resolvedIce,
     });
   });
 

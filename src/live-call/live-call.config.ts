@@ -86,10 +86,32 @@ export function buildIceServers(cfg: LiveCallConfig): IceServerEntry[] {
 }
 
 let cachedMeteredTurn: { expiresAt: number; servers: IceServerEntry[] } | null = null;
+let lastMeteredStatus = 'not_configured';
+
+export function hasTurnServer(servers: IceServerEntry[]): boolean {
+  return servers.some((s) => {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    return urls.some((u) => /^turns?:/i.test(String(u || '').trim()));
+  });
+}
+
+export function getTurnDiagnostics(cfg: LiveCallConfig, resolved: IceServerEntry[]) {
+  return {
+    turnReady: hasTurnServer(resolved),
+    meteredConfigured: Boolean(cfg.webrtc.meteredDomain && cfg.webrtc.meteredApiKey),
+    meteredDomain: cfg.webrtc.meteredDomain || '',
+    staticTurnConfigured: Boolean(cfg.webrtc.turnUrl),
+    status: hasTurnServer(resolved)
+      ? 'active'
+      : cfg.webrtc.meteredDomain && cfg.webrtc.meteredApiKey
+        ? lastMeteredStatus
+        : 'not_configured',
+  };
+}
 
 /**
  * Resolves live ICE servers, optionally fetching dynamic free-tier TURN credentials
- * from Metered.ca (50 GB/mo free) when LIVE_CALL_METERED_DOMAIN + LIVE_CALL_METERED_API_KEY are set.
+ * from Metered.ca (free tier) when LIVE_CALL_METERED_DOMAIN + LIVE_CALL_METERED_API_KEY are set.
  */
 export async function resolveDynamicIceServers(cfg: LiveCallConfig): Promise<IceServerEntry[]> {
   const base = buildIceServers(cfg);
@@ -100,24 +122,36 @@ export async function resolveDynamicIceServers(cfg: LiveCallConfig): Promise<Ice
   if (cachedMeteredTurn && cachedMeteredTurn.expiresAt > now) {
     return [...base, ...cachedMeteredTurn.servers];
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    const url = `https://${cfg.webrtc.meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(cfg.webrtc.meteredApiKey)}`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-    if (res.ok) {
-      const list = (await res.json()) as unknown;
-      if (Array.isArray(list) && list.length > 0) {
-        const clean = list.filter((e: any) => e && e.urls) as IceServerEntry[];
-        if (clean.length > 0) {
-          cachedMeteredTurn = { expiresAt: now + 10 * 60 * 1000, servers: clean };
-          return [...base, ...clean];
+
+  const candidateUrls = [
+    `https://${cfg.webrtc.meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(cfg.webrtc.meteredApiKey)}`,
+    `https://${cfg.webrtc.meteredDomain}/api/v1/turn/credentials?secretKey=${encodeURIComponent(cfg.webrtc.meteredApiKey)}`,
+  ];
+
+  for (const url of candidateUrls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6500);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const list = (await res.json()) as unknown;
+        if (Array.isArray(list) && list.length > 0) {
+          const clean = list.filter((e: any) => e && e.urls) as IceServerEntry[];
+          if (clean.length > 0) {
+            cachedMeteredTurn = { expiresAt: now + 10 * 60 * 1000, servers: clean };
+            lastMeteredStatus = `ok_${clean.length}_servers`;
+            return [...base, ...clean];
+          }
         }
+        lastMeteredStatus = 'empty_response';
+      } else {
+        lastMeteredStatus = `http_${res.status}`;
       }
+    } catch (err: any) {
+      clearTimeout(timer);
+      lastMeteredStatus = `fetch_error_${err?.name || 'failed'}`;
     }
-  } catch {
-    clearTimeout(timer);
   }
   return base;
 }

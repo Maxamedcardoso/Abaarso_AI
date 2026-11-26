@@ -2,7 +2,13 @@ import crypto from 'crypto';
 import http from 'http';
 import { URL } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { buildIceServers, getLiveCallConfig, LiveCallConfig, resolveDynamicIceServers } from '../live-call.config.js';
+import {
+  buildIceServers,
+  getLiveCallConfig,
+  hasTurnServer,
+  LiveCallConfig,
+  resolveDynamicIceServers,
+} from '../live-call.config.js';
 import { IceServerEntry, LivePeerStats, PeerMatchLanguage } from '../live-call.types.js';
 
 export type { LivePeerStats, PeerMatchLanguage };
@@ -127,6 +133,14 @@ export function attachLivePeerWebSocket(
   const cfg = deps.config || getLiveCallConfig();
   const heartbeatMs = Math.max(5000, deps.heartbeatIntervalMs ?? 20_000);
   const iceServers = buildPeerIceServers(cfg);
+  let latestIceServers: IceServerEntry[] = iceServers;
+  if (cfg.webrtc.meteredDomain && cfg.webrtc.meteredApiKey) {
+    void resolveDynamicIceServers(cfg).then((dynamicIce) => {
+      if (hasTurnServer(dynamicIce)) {
+        latestIceServers = dynamicIce;
+      }
+    });
+  }
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -359,13 +373,16 @@ export function attachLivePeerWebSocket(
     sendJson(ws, {
       type: 'welcome',
       peerId,
-      iceServers,
+      iceServers: latestIceServers,
       stats: getStats(),
     });
     if (cfg.webrtc.meteredDomain && cfg.webrtc.meteredApiKey) {
       void resolveDynamicIceServers(cfg).then((dynamicIce) => {
-        if (dynamicIce.length > iceServers.length && ws.readyState === WebSocket.OPEN) {
-          sendJson(ws, { type: 'ice.update', iceServers: dynamicIce });
+        if (hasTurnServer(dynamicIce)) {
+          latestIceServers = dynamicIce;
+          if (ws.readyState === WebSocket.OPEN) {
+            sendJson(ws, { type: 'ice.update', iceServers: dynamicIce });
+          }
         }
       });
     }
