@@ -21,6 +21,7 @@ const testFiles = [
   'tests/podcast.test.ts',
   'tests/voice-groups.test.ts',
   'tests/human-voice-broadcast.test.ts',
+  'tests/live-call.test.ts',
 ];
 
 console.log(`\n================================================================`);

@@ -37,6 +37,9 @@ import { renderPortalLoginHTML } from './views/portal-login-page.js';
 import { renderAdminLoginHTML } from './views/admin-login-page.js';
 import { renderPwaAppHTML } from './views/app-page.js';
 import { renderViewsHubHTML } from './views/views-hub-page.js';
+import { createLiveCallRouter } from '../live-call/live-call.routes.js';
+import { attachLivePeerWebSocket, LivePeerWebSocketHandle } from '../live-call/services/peer-match.service.js';
+import { getLiveCallConfig } from '../live-call/live-call.config.js';
 
 export interface StudioServerOptions {
   port: number | string;
@@ -435,6 +438,7 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
           visionUpload: true,
           prayerTimes: true,
           pwaInstallable: true,
+          liveVideoCall: true,
         },
       });
     } catch (err: any) {
@@ -712,6 +716,18 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
       res.status(500).json({ status: 'error', message: err.message || 'Khalad ayaa ka dhacay samaynta podcast-ka' });
     }
   });
+
+  // ─── 1b. CARDOSO Live Peer-to-Peer Video & Voice Call APIs (/api/live-call/*) ────
+  const liveCallCfg = getLiveCallConfig();
+  let livePeerWsHandle: LivePeerWebSocketHandle | null = null;
+
+  app.use(
+    createLiveCallRouter({
+      resolveAppTarget,
+      getPeerStats: () => (livePeerWsHandle ? livePeerWsHandle.getStats() : { onlineCount: 0, waitingCount: 0, activeCalls: 0 }),
+      config: liveCallCfg,
+    })
+  );
 
   app.get(['/health', '/healthz'], (req: Request, res: Response) => {
     res.json({
@@ -2271,5 +2287,11 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
     res.send(renderAdminDashboardHTML(adminLabel));
   });
 
-  return http.createServer(app);
+  const httpServer = http.createServer(app);
+  livePeerWsHandle = attachLivePeerWebSocket(httpServer, {
+    config: liveCallCfg,
+  });
+  (httpServer as any).__livePeerWsHandle = livePeerWsHandle;
+
+  return httpServer;
 }

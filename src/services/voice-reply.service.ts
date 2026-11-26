@@ -418,6 +418,9 @@ export class VoiceReplyService {
     } else if (language === 'mohamed' || language === 'muuse') {
       voiceName = 'so-SO-MuuseNeural';
       speechLang = 'so';
+    } else if (language === 'en_female') {
+      voiceName = 'en-US-JennyNeural';
+      speechLang = 'en';
     } else if (language === 'en') {
       voiceName = 'en-US-ChristopherNeural';
     } else if (language === 'ar') {

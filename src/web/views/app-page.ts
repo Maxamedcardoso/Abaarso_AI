@@ -1,5 +1,10 @@
 import { PWA_HEAD_TAGS } from '../pwa-assets.js';
 import { COMMON_CLIENT_JS } from './styles.js';
+import {
+  renderLiveCallClientJS,
+  renderLiveCallPanelCSS,
+  renderLiveCallPanelHTML,
+} from '../../live-call/web/live-call-panel.js';
 
 export interface RenderAppPageOptions {
   botName?: string;
@@ -615,7 +620,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       backdrop-filter: blur(14px);
       border-top: 1px solid var(--border);
       padding: 0.4rem 0.4rem calc(0.45rem + var(--safe-bottom));
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 0.25rem;
     }
 
@@ -678,6 +683,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       .hub-grid { grid-template-columns: 1fr; }
       .msg-bubble { max-width: 88%; }
     }
+    ${renderLiveCallPanelCSS()}
   </style>
 </head>
 <body>
@@ -696,6 +702,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
 
       <nav class="side-nav">
         <button class="side-nav-btn active" data-tab="chat" onclick="switchAppTab('chat')">💬 Sheeko AI (Chat)</button>
+        <button class="side-nav-btn" data-tab="call" onclick="switchAppTab('call')">📹 Live Video Call</button>
         <button class="side-nav-btn" data-tab="views" onclick="switchAppTab('views')">📈 Views &amp; .vcf Hub</button>
         <button class="side-nav-btn" data-tab="tools" onclick="switchAppTab('tools')">🛠️ Adeegyada &amp; Salaadda</button>
         <button class="side-nav-btn" data-tab="settings" onclick="switchAppTab('settings')">⚙️ Dejinta &amp; Install App</button>
@@ -704,6 +711,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
       <div class="side-divider"></div>
 
       <div class="side-links">
+        <a href="/live-call" class="side-link">📹 Live Video Call (/live-call)</a>
         <a href="/views" class="side-link">📈 Bogga Views Hub (/views)</a>
         <a href="/portal" class="side-link">🔑 Client Portal (/portal)</a>
         <a href="/join" class="side-link">📝 Isdiiwaangeli (/join)</a>
@@ -804,6 +812,11 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- TAB 1a: AI LIVE VIDEO CALL (INDEPENDENT MODULE) -->
+      <section id="pane-call" class="view-pane">
+        ${renderLiveCallPanelHTML()}
       </section>
 
       <!-- TAB 1b: VIEWS & .VCF CONTACT EXCHANGE HUB -->
@@ -1101,6 +1114,10 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
           <span class="ico">💬</span>
           <span>Sheeko</span>
         </button>
+        <button class="bnav-btn" data-tab="call" onclick="switchAppTab('call')">
+          <span class="ico">📹</span>
+          <span>Video</span>
+        </button>
         <button class="bnav-btn" data-tab="views" onclick="switchAppTab('views')">
           <span class="ico">📈</span>
           <span>Views</span>
@@ -1216,6 +1233,7 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
 
       if (tabName === 'tools') loadPrayerTimes();
       if (tabName === 'views') loadAppViewsHub();
+      if (tabName === 'call' && window.cardosoLiveCall) window.cardosoLiveCall.onTabActivated();
     }
 
     let appViewsMember = null;
@@ -2134,6 +2152,8 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
       loadBootstrap();
       loadHistory();
     })();
+
+    ${renderLiveCallClientJS()}
   </script>
 </body>
 </html>`;

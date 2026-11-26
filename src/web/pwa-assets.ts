@@ -61,6 +61,13 @@ export function buildWebManifest(options?: PwaManifestOptions) {
         icons: [{ src: '/pwa/icon-192.png', sizes: '192x192', type: 'image/png' }],
       },
       {
+        name: 'CARDOSO Live Video Call',
+        short_name: 'Live Call',
+        description: 'Wicitaan muuqaal & cod toos ah (Video ama Cod Keliya)',
+        url: '/live-call',
+        icons: [{ src: '/pwa/icon-192.png', sizes: '192x192', type: 'image/png' }],
+      },
+      {
         name: 'Status Views & .vcf Hub',
         short_name: 'Views Hub',
         description: 'Hel 200+ Status Views adigoon ban la kulmin (.vcf)',
