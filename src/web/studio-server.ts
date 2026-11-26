@@ -1,5 +1,7 @@
 import express, { NextFunction, Request, Response } from 'express';
+import fs from 'fs';
 import http from 'http';
+import path from 'path';
 import zlib from 'zlib';
 import crypto from 'crypto';
 import { SQLiteStudentMemory } from '../memory/sqlite-memory.js';
@@ -448,6 +450,25 @@ export function createStudioServer(options: StudioServerOptions): http.Server {
   app.get('/pwa/offline', (_req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderOfflineHTML());
+  });
+
+  // Direct Android APK download (signed 77KB native WebView wrapper for users who prefer an installable .apk)
+  const apkFilePath = path.resolve(process.cwd(), 'assets', 'apk', 'CARDOSO-AI.apk');
+  app.get(['/download/cardoso-ai.apk', '/apk'], (_req: Request, res: Response) => {
+    try {
+      if (!fs.existsSync(apkFilePath)) {
+        res.status(404).json({ status: 'error', message: 'Faylka Android APK weli lama dhisin.' });
+        return;
+      }
+      const stat = fs.statSync(apkFilePath);
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="CARDOSO-AI.apk"');
+      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      fs.createReadStream(apkFilePath).pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err?.message || 'APK download failed' });
+    }
   });
 
   interface CachedHtmlEntry {

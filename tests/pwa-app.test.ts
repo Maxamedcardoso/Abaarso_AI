@@ -143,6 +143,19 @@ async function runPwaAppTests(): Promise<void> {
     assert(offlineRes.status === 200 && offlineRes.text.includes('Khadka Internet-ku'), '/pwa/offline should render Somali offline fallback');
     console.log('  ✅ PASS: /pwa/icon.svg and /pwa/offline render properly');
 
+    // 4b. Signed Android APK download route
+    const apkRes = await invokeServer('GET', '/download/cardoso-ai.apk');
+    assert(apkRes.status === 200, `/download/cardoso-ai.apk should return 200, got ${apkRes.status}`);
+    assert(
+      String(apkRes.headers['content-type'] || '').includes('application/vnd.android.package-archive'),
+      'APK route should serve application/vnd.android.package-archive'
+    );
+    assert(
+      apkRes.buffer.length > 20000 && apkRes.buffer.subarray(0, 4).toString('hex') === '504b0304',
+      'APK payload must be a valid signed ZIP/APK binary'
+    );
+    console.log('  ✅ PASS: /download/cardoso-ai.apk serves valid signed Android APK binary');
+
     // 5. Main /app shell & PWA tags across public views + Admin Dashboard (+ inline JS syntax check!)
     const adminAuth = 'Basic ' + Buffer.from('admin:test-pass').toString('base64');
     const routeChecks: Array<{ route: string; headers?: Record<string, string> }> = [

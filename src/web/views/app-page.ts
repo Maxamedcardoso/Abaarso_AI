@@ -1288,6 +1288,7 @@ export function renderPwaAppHTML(options?: RenderAppPageOptions): string {
           </div>
           <p>U fur CARDOSO AI sidii App degdeg ah — hal gujis.</p>
           <button class="btn btn-primary btn-sm" type="button" style="width:100%;" data-pwa-install-btn onclick="triggerCardosoInstall()">Install App</button>
+          <a href="/download/cardoso-ai.apk" class="btn btn-ghost btn-sm" style="width:100%;margin-top:0.4rem;" data-pwa-install-btn download="CARDOSO-AI.apk">Android APK (.apk)</a>
           <div data-pwa-installed-badge style="display:none;color:var(--accent);font-size:0.78rem;font-weight:700;">App Mode Waa Shidan Yahay</div>
         </div>
       </div>
@@ -1771,6 +1772,7 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
               <p class="sub">Ku dar shaashaddaada adigoon Play Store ama App Store u baahnayn.</p>
               <div style="display:flex;gap:0.55rem;flex-wrap:wrap;margin-bottom:0.85rem;">
                 <button class="btn btn-primary" type="button" data-pwa-install-btn onclick="triggerCardosoInstall()">Install CARDOSO AI</button>
+                <a href="/download/cardoso-ai.apk" class="btn btn-emerald" data-pwa-install-btn download="CARDOSO-AI.apk">Soo Deji Android (.apk)</a>
                 <button class="btn btn-ghost" type="button" onclick="document.getElementById('pwaInstallHelpModal').classList.add('open')">Tilmaanta Install-ka</button>
               </div>
               <div class="install-step">
@@ -1854,6 +1856,11 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
         1. Ku fur <b>Safari</b>.<br/>
         2. Guji badhanka <b>Share</b> ee hoose.<br/>
         3. Dooro <b>Add to Home Screen</b> kadibna guji <b>Add</b>.
+      </div>
+      <div class="install-step">
+        <strong>Android (APK Toos ah — 77 KB)</strong>
+        Guji hoos si aad toos u soo dejiso faylka Android App-ka (<b>CARDOSO-AI.apk</b>), kadibna ku dhufo <b>Install</b>:<br/>
+        <a href="/download/cardoso-ai.apk" class="btn btn-emerald btn-sm" style="margin-top:0.5rem;" download="CARDOSO-AI.apk">Soo Deji CARDOSO-AI.apk</a>
       </div>
       <div class="install-step">
         <strong>Android (Google Chrome)</strong>

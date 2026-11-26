@@ -25,6 +25,9 @@ data/tenants/
 
 # Build output
 dist/
+android-app/build/
+android-app/keystore/
+*.jks
 
 # Logs
 logs/

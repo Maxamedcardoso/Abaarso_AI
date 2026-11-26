@@ -410,8 +410,15 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept .vcf downloads, dynamic /api/ requests, or WebSockets
-  if (url.pathname.endsWith('.vcf') || url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) return;
+  // Never intercept .vcf/.apk downloads, dynamic /api/ requests, or WebSockets
+  if (
+    url.pathname.endsWith('.vcf') ||
+    url.pathname.endsWith('.apk') ||
+    url.pathname.startsWith('/download/') ||
+    url.pathname === '/apk' ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/ws/')
+  ) return;
 
   // Cache-first for static PWA assets (icons & manifest)
   if (url.pathname.startsWith('/pwa/') || url.pathname === '/manifest.webmanifest') {
@@ -541,7 +548,8 @@ export const PWA_INSTALL_CLIENT_JS = `
 
     const isStandalone = () =>
       window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true;
+      window.navigator.standalone === true ||
+      /CardosoAIApp/i.test(navigator.userAgent || '');
 
     const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || '');
 

@@ -13,7 +13,8 @@
     "test": "tsx tests/all.ts",
     "export-session": "node scripts/export-session.js",
     "generate-pdf": "node scripts/generate-commands-pdf.js",
-    "build": "tsc"
+    "build": "tsc",
+    "build:apk": "node scripts/build-apk.mjs"
   },
   "keywords": [
     "ai",
