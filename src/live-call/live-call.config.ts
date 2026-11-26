@@ -36,6 +36,18 @@ function parseStunUrls(raw: string | undefined): string[] {
  * Metered.ca Free Tier TURN (50 GB/mo free) for 4G/5G symmetric NAT traversal.
  */
 export function getLiveCallConfig(env: NodeJS.ProcessEnv = process.env): LiveCallConfig {
+  const rawMeteredDomain = (env.LIVE_CALL_METERED_DOMAIN || '').trim();
+  const rawMeteredKey = (env.LIVE_CALL_METERED_API_KEY || '').trim();
+  let meteredDomain = rawMeteredDomain
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .trim();
+  let meteredApiKey = rawMeteredKey;
+  // Foolproof: if user pasted the entire Metered credentials URL into LIVE_CALL_METERED_DOMAIN
+  if (!meteredApiKey && /[?&]apiKey=([^&]+)/i.test(rawMeteredDomain)) {
+    const m = rawMeteredDomain.match(/[?&]apiKey=([^&]+)/i);
+    if (m && m[1]) meteredApiKey = decodeURIComponent(m[1]).trim();
+  }
   return {
     enabled: parseBool(env.LIVE_CALL_ENABLED, true),
     webrtc: {
@@ -43,8 +55,8 @@ export function getLiveCallConfig(env: NodeJS.ProcessEnv = process.env): LiveCal
       turnUrl: (env.LIVE_CALL_TURN_URL || '').trim(),
       turnUsername: (env.LIVE_CALL_TURN_USERNAME || '').trim(),
       turnCredential: (env.LIVE_CALL_TURN_CREDENTIAL || '').trim(),
-      meteredDomain: (env.LIVE_CALL_METERED_DOMAIN || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, ''),
-      meteredApiKey: (env.LIVE_CALL_METERED_API_KEY || '').trim(),
+      meteredDomain,
+      meteredApiKey,
     },
   };
 }

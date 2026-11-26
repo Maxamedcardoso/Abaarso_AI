@@ -1707,6 +1707,35 @@ export function renderLiveCallClientJS(): string {
       } catch (e) {}
     }
 
+    async function attachLocalTracksToAnswerPc(pc) {
+      if (!pc || !peer.localStream) return;
+      var liveTracks = peer.localStream.getTracks().filter(function (t) { return t.readyState === 'live'; });
+      var transceivers = typeof pc.getTransceivers === 'function' ? pc.getTransceivers() : [];
+
+      for (var i = 0; i < liveTracks.length; i++) {
+        var track = liveTracks[i];
+        // Match existing remote-created transceiver of the same kind so Unified Plan m-lines NEVER mismatch!
+        var matchedTr = transceivers.find(function (tr) {
+          var recvKind = tr && tr.receiver && tr.receiver.track ? tr.receiver.track.kind : '';
+          var sendKind = tr && tr.sender && tr.sender.track ? tr.sender.track.kind : '';
+          return (recvKind === track.kind || sendKind === track.kind) && (!tr.sender || !tr.sender.track);
+        });
+        if (matchedTr && matchedTr.sender) {
+          try { matchedTr.direction = 'sendrecv'; } catch (e) {}
+          if (typeof matchedTr.sender.replaceTrack === 'function') {
+            try {
+              await matchedTr.sender.replaceTrack(track);
+              continue;
+            } catch (e) {}
+          }
+        }
+        var alreadySending = pc.getSenders && pc.getSenders().some(function (s) { return s.track && s.track.id === track.id; });
+        if (!alreadySending) {
+          try { pc.addTrack(track, peer.localStream); } catch (e) {}
+        }
+      }
+    }
+
     async function setupWebRtcForMatch(isInitiator) {
       teardownPeerConnection();
       if (typeof RTCPeerConnection === 'undefined') {
@@ -1726,25 +1755,33 @@ export function renderLiveCallClientJS(): string {
       peer.initiator = Boolean(isInitiator);
       peer.iceState = 'checking';
 
-      var addedAudio = false;
-      var addedVideo = false;
-      if (peer.localStream) {
-        peer.localStream.getTracks().forEach(function (track) {
-          if (track.readyState === 'live') {
-            pc.addTrack(track, peer.localStream);
-            if (track.kind === 'audio') addedAudio = true;
-            if (track.kind === 'video') addedVideo = true;
-          }
-        });
-      }
-
-      // Always ensure we can receive remote audio & video even if we joined Cam-Off or Mic-Off!
-      if (typeof pc.addTransceiver === 'function') {
-        if (!addedAudio) {
-          try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
+      // CRITICAL (Unified Plan): ONLY the initiator creates initial transceivers before offer!
+      // The answerer attaches local tracks AFTER setRemoteDescription(offer) so m-lines ALWAYS match 1:1
+      // across Android Chrome, iOS Safari, Android APK WebView & Desktop!
+      if (isInitiator) {
+        var addedAudio = false;
+        var addedVideo = false;
+        if (peer.localStream) {
+          peer.localStream.getAudioTracks().forEach(function (track) {
+            if (track.readyState === 'live') {
+              pc.addTrack(track, peer.localStream);
+              addedAudio = true;
+            }
+          });
+          peer.localStream.getVideoTracks().forEach(function (track) {
+            if (track.readyState === 'live') {
+              pc.addTrack(track, peer.localStream);
+              addedVideo = true;
+            }
+          });
         }
-        if (!addedVideo) {
-          try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
+        if (typeof pc.addTransceiver === 'function') {
+          if (!addedAudio) {
+            try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
+          }
+          if (!addedVideo) {
+            try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
+          }
         }
       }
 
@@ -1928,11 +1965,15 @@ export function renderLiveCallClientJS(): string {
                 try { await peer.pc.setLocalDescription({ type: 'rollback' }); } catch (rbErr) {}
               }
               await peer.pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
+              // Attach answerer's local audio/video tracks directly onto the offer's matched transceivers
+              await attachLocalTracksToAnswerPc(peer.pc);
               await flushPendingIce();
               var ans = await peer.pc.createAnswer();
               await peer.pc.setLocalDescription(ans);
               sendWs({ type: 'rtc.answer', sdp: ans.sdp });
-            } catch (e) {}
+            } catch (e) {
+              toast('⚠️ Xidhiidhka WebRTC wuu hakaday — dib u isku day', true);
+            }
           }
           break;
 
