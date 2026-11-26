@@ -1998,7 +1998,10 @@ Mohamed: [calm] Ku soo dhawaada CARDOSO AI Studio — nabad gelyo iyo horumar wa
 
       if (tabName === 'tools') loadPrayerTimes();
       if (tabName === 'views') loadAppViewsHub();
-      if (tabName === 'call' && window.cardosoLiveCall) window.cardosoLiveCall.onTabActivated();
+      if (window.cardosoLiveCall) {
+        if (tabName === 'call') window.cardosoLiveCall.onTabActivated();
+        else if (typeof window.cardosoLiveCall.onTabDeactivated === 'function') window.cardosoLiveCall.onTabDeactivated();
+      }
     }
 
     let appViewsMember = null;

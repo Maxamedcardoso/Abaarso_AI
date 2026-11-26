@@ -2147,6 +2147,30 @@ export function renderLiveCallClientJS(): string {
           connectPeerSocket();
           refreshControlsUI();
         }
+        // Automatically open Camera & Mic preview as soon as user enters Live Video Call!
+        // (After the 1st-ever browser Allow, Camera & Mic turn on with zero extra taps.)
+        unlockRemoteMedia();
+        if ((peer.camEnabled || peer.micEnabled) && !peer._mediaBooting) {
+          var hasLive = Boolean(peer.localStream && peer.localStream.getTracks().some(function (t) { return t.readyState === 'live'; }));
+          if (!hasLive) {
+            peer._mediaBooting = true;
+            ensureLocalMedia(false).finally(function () {
+              peer._mediaBooting = false;
+              refreshControlsUI();
+            });
+          }
+        }
+      },
+
+      onTabDeactivated: function () {
+        // Turn off hardware Camera/Mic LED cleanly if user switches to another tab while idle (not in an active call)
+        if (peer.state === 'idle' && peer.localStream) {
+          peer.localStream.getTracks().forEach(function (t) {
+            try { t.stop(); } catch (e) {}
+          });
+          peer.localStream = null;
+          updateSelfTileUI();
+        }
       },
 
       openMobileDrawer: function () {
